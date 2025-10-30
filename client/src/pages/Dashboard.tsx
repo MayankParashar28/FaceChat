@@ -8,9 +8,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Video, Plus, Users, Clock, Settings, LogOut, LayoutDashboard, MessageSquare, Search } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useAuth } from "@/lib/auth";
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
+  const { user, logout } = useAuth();
   const [roomId, setRoomId] = useState("");
 
   const recentCalls = [
@@ -34,7 +36,7 @@ export default function Dashboard() {
 
   const sidebarItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
-    { title: "Chats", icon: MessageSquare, url: "/dashboard" },
+    { title: "Chats", icon: MessageSquare, url: "/chats" },
     { title: "Settings", icon: Settings, url: "/settings" }
   ];
 
@@ -76,14 +78,20 @@ export default function Dashboard() {
             <div className="mt-auto pt-4 border-t">
               <div className="flex items-center gap-3 p-2 rounded-lg hover-elevate cursor-pointer">
                 <Avatar className="h-9 w-9">
-                  <AvatarImage src="" />
-                  <AvatarFallback className="bg-primary text-primary-foreground">JD</AvatarFallback>
+                  <AvatarImage src={user?.photoURL || (user?.displayName || user?.email) ? `https://api.dicebear.com/9.x/adventurer/svg?seed=${encodeURIComponent(user?.uid || user?.email || 'user')}` : ''} />
+                  <AvatarFallback className="bg-primary text-primary-foreground">{user?.displayName?.charAt(0)}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">John Doe</p>
-                  <p className="text-xs text-muted-foreground truncate">john@example.com</p>
+                  <p className="text-sm font-medium truncate">{user?.displayName || "User"}</p>
+                  <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
                 </div>
-                <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-logout">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8" 
+                  onClick={logout}
+                  data-testid="button-logout"
+                >
                   <LogOut className="h-4 w-4" />
                 </Button>
               </div>
@@ -110,7 +118,7 @@ export default function Dashboard() {
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-6xl mx-auto space-y-8">
               <div>
-                <h1 className="text-3xl font-bold mb-2">Welcome back, John</h1>
+                <h1 className="text-3xl font-bold mb-2">Welcome back, {user?.displayName}</h1>
                 <p className="text-muted-foreground">Ready to connect with your team?</p>
               </div>
 
