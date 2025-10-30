@@ -5,12 +5,16 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { io, Socket } from "socket.io-client";
+import { useAuth } from "@/lib/auth";
+import { auth } from "@/lib/firebase";
+import { User as FirebaseUser } from "firebase/auth";
+import { searchUsers } from "@/lib/utils";
 
 type Message = {
   id: string;
@@ -33,6 +37,8 @@ type Conversation = {
   isGroup: boolean;
   participants: Array<{
     id: string;
+    firebaseUid?: string;
+    avatar?: string | null;
     name: string;
     username: string;
     online: boolean;
@@ -41,25 +47,45 @@ type Conversation = {
   unreadCount: number;
 };
 
-const currentUserId = "7ca9cd11-37fb-4546-8199-0b273e13d225"; // TODO: Get from auth context
+type SearchedUser = {
+  id: string;
+  name: string;
+  username: string;
+  email: string;
+  avatar?: string;
+};
 
 export default function Chats() {
+  const { user } = useAuth();
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [searchedUsers, setSearchedUsers] = useState<SearchedUser[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [newConversation, setNewConversation] = useState<Conversation | null>(null);
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      setFirebaseUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const { data: conversations = [], refetch: refetchConversations } = useQuery<Conversation[]>({
     queryKey: ["/api/conversations"],
     queryFn: async () => {
-      const res = await fetch(`/api/conversations?userId=${currentUserId}`);
+      const res = await fetch(`/api/conversations?userId=${user?.uid}`);
       if (!res.ok) throw new Error("Failed to fetch conversations");
       return res.json();
-    }
+    },
+    enabled: !!user?.uid
   });
 
   useEffect(() => {
@@ -67,9 +93,16 @@ export default function Chats() {
       transports: ['websocket', 'polling']
     });
 
-    newSocket.on("connect", () => {
+    newSocket.on("connect", async () => {
       console.log("WebSocket connected");
-      newSocket.emit("user:online", currentUserId);
+      if (firebaseUser) {
+        try {
+          const token = await firebaseUser.getIdToken();
+          newSocket.emit("user:online", { firebaseToken: token });
+        } catch (error) {
+          console.error("Failed to get Firebase token:", error);
+        }
+      }
     });
 
     newSocket.on("message:new", (newMessage: Message) => {
@@ -80,9 +113,9 @@ export default function Chats() {
       });
       refetchConversations();
       
-      if (newMessage.senderId !== currentUserId && selectedChat === newMessage.conversationId) {
+      if (newMessage.senderId !== user?.uid && selectedChat === newMessage.conversationId) {
         setTimeout(() => {
-          newSocket.emit("message:seen", { messageId: newMessage.id, userId: currentUserId });
+          newSocket.emit("message:seen", { messageId: newMessage.id, userId: user?.uid });
         }, 500);
       }
       
@@ -120,30 +153,62 @@ export default function Chats() {
       });
     });
 
+    newSocket.on("user:status", ({ userId, online }) => {
+      setOnlineUsers(prev => {
+        const newSet = new Set(prev);
+        if (online) {
+          newSet.add(userId);
+        } else {
+          newSet.delete(userId);
+        }
+        return newSet;
+      });
+    });
+
+    newSocket.on("conversation:updated", (updatedConv: Conversation) => {
+      // Refetch conversations to update the list
+      refetchConversations();
+    });
+
     setSocket(newSocket);
 
     return () => {
       newSocket.close();
     };
-  }, [refetchConversations]);
+  }, [refetchConversations, firebaseUser]);
 
   useEffect(() => {
-    if (selectedChat && socket) {
-      fetch(`/api/conversations/${selectedChat}/messages?userId=${currentUserId}`)
-        .then(res => res.json())
+    if (selectedChat && socket && user?.uid) {
+      // Join the conversation room
+      socket.emit("join:conversation", selectedChat);
+      
+      // Mark all messages as read
+      socket.emit("mark:read", { conversationId: selectedChat, userId: user.uid });
+      
+      fetch(`/api/conversations/${selectedChat}/messages?userId=${user.uid}`)
+        .then(res => {
+          if (!res.ok) throw new Error("Failed to fetch messages");
+          return res.json();
+        })
         .then((data: Message[]) => {
-          setMessages(data.map(msg => ({ ...msg, status: "seen" })));
+          // Ensure data is an array before mapping
+          const messagesArray = Array.isArray(data) ? data : [];
+          setMessages(messagesArray.map(msg => ({ ...msg, status: "seen" })));
           
-          data.forEach(msg => {
-            if (msg.senderId !== currentUserId) {
-              socket.emit("message:seen", { messageId: msg.id, userId: currentUserId });
+          messagesArray.forEach(msg => {
+            if (msg.senderId !== user?.uid) {
+              socket.emit("message:seen", { messageId: msg.id, userId: user.uid });
             }
           });
           
           setTimeout(() => scrollToBottom(), 100);
+        })
+        .catch(error => {
+          console.error("Error fetching messages:", error);
+          setMessages([]);
         });
     }
-  }, [selectedChat, socket]);
+  }, [selectedChat, socket, user?.uid]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -161,10 +226,10 @@ export default function Chats() {
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && socket && selectedChat) {
+    if (message.trim() && socket && selectedChat && user?.uid) {
       socket.emit("message:send", {
         conversationId: selectedChat,
-        senderId: currentUserId,
+        senderId: user.uid,
         content: message
       });
       setMessage("");
@@ -172,7 +237,7 @@ export default function Chats() {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
-      socket.emit("typing:stop", { conversationId: selectedChat, userId: currentUserId });
+      socket.emit("typing:stop", { conversationId: selectedChat, userId: user.uid });
     }
   };
 
@@ -190,14 +255,58 @@ export default function Chats() {
     console.log("File attachment clicked");
   };
 
+  const handleStartConversation = async (userId: string) => {
+    if (!user?.uid) return;
+    
+    try {
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          participantIds: [user.uid, userId],
+          createdBy: user.uid
+        })
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        console.error('Failed to create conversation:', error);
+        return;
+      }
+
+      const conversation = await res.json();
+      
+      // Store the newly created conversation
+      setNewConversation({
+        id: conversation.id,
+        name: conversation.name,
+        isGroup: conversation.isGroup,
+        participants: conversation.participants,
+        unreadCount: 0
+      });
+      
+      // Clear search
+      setSearchQuery("");
+      setSearchedUsers([]);
+      
+      // Set the selected chat immediately
+      setSelectedChat(conversation.id);
+      
+      // Refetch conversations in the background
+      refetchConversations();
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+    }
+  };
+
   const handleTyping = (value: string) => {
     setMessage(value);
     
-    if (socket && selectedChat && value) {
+    if (socket && selectedChat && value && user?.uid) {
       socket.emit("typing:start", { 
         conversationId: selectedChat, 
-        userId: currentUserId,
-        userName: "You"
+        userId: user.uid,
+        userName: user.displayName || "You"
       });
 
       if (typingTimeoutRef.current) {
@@ -205,37 +314,85 @@ export default function Chats() {
       }
       
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit("typing:stop", { conversationId: selectedChat, userId: currentUserId });
+        socket.emit("typing:stop", { conversationId: selectedChat, userId: user.uid });
       }, 2000);
     }
   };
 
+  // Handle search query changes
+  useEffect(() => {
+    const performSearch = async () => {
+      if (searchQuery.trim().length >= 2) {
+        setIsSearching(true);
+        try {
+          const users = await searchUsers(searchQuery);
+          setSearchedUsers(users.filter(u => u.id !== user?.uid)); // Exclude current user
+        } catch (error) {
+          console.error("Error searching users:", error);
+          setSearchedUsers([]);
+        } finally {
+          setIsSearching(false);
+        }
+      } else {
+        setSearchedUsers([]);
+      }
+    };
+
+    const timeoutId = setTimeout(performSearch, 300);
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, user?.uid]);
+
   const filteredConversations = conversations.filter(conv => {
     const displayName = conv.isGroup 
       ? (conv.name || "Group Chat")
-      : (conv.participants.find(p => p.id !== currentUserId)?.name || "Unknown");
+      : (conv.participants.find(p => p.firebaseUid !== user?.uid)?.name || "Unknown");
     return displayName.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  const selectedConversation = conversations.find(c => c.id === selectedChat);
+  // Use newConversation as fallback if not in conversations list yet
+  const selectedConversation = conversations.find(c => c.id === selectedChat) || 
+    (newConversation?.id === selectedChat ? newConversation : null);
   const pinnedMessages = messages.filter(m => m.isPinned);
+
+  // Clear newConversation once it appears in the conversations list
+  useEffect(() => {
+    if (newConversation && conversations.find(c => c.id === newConversation.id)) {
+      setNewConversation(null);
+    }
+  }, [conversations, newConversation]);
 
   const getConversationName = (conv: Conversation) => {
     if (conv.isGroup) return conv.name || "Group Chat";
-    const otherUser = conv.participants.find(p => p.id !== currentUserId);
+    const otherUser = conv.participants.find(p => p.firebaseUid !== user?.uid);
     return otherUser?.name || "Unknown";
   };
 
   const getConversationAvatar = (conv: Conversation) => {
     if (conv.isGroup) return conv.name?.substring(0, 2).toUpperCase() || "GC";
-    const otherUser = conv.participants.find(p => p.id !== currentUserId);
+    const otherUser = conv.participants.find(p => p.firebaseUid !== user?.uid);
     return otherUser?.name.split(' ').map(n => n[0]).join('').toUpperCase() || "??";
   };
 
   const isUserOnline = (conv: Conversation) => {
     if (conv.isGroup) return false;
-    const otherUser = conv.participants.find(p => p.id !== currentUserId);
-    return otherUser?.online || false;
+    const otherUser = conv.participants.find(p => p.firebaseUid !== user?.uid);
+    if (!otherUser?.firebaseUid) return false;
+    return onlineUsers.has(otherUser.firebaseUid);
+  };
+
+  const isUserTyping = () => {
+    if (!selectedConversation) return false;
+    const otherUser = selectedConversation.participants.find(p => p.firebaseUid !== user?.uid);
+    return otherUser && typingUsers.has(otherUser.firebaseUid || '');
+  };
+
+  const getTypingUser = () => {
+    if (!selectedConversation) return null;
+    const otherUser = selectedConversation.participants.find(p => p.firebaseUid !== user?.uid);
+    if (otherUser && typingUsers.has(otherUser.firebaseUid || '')) {
+      return otherUser.name;
+    }
+    return null;
   };
 
   const formatTime = (date: Date) => {
@@ -280,12 +437,13 @@ export default function Chats() {
 
             <div className="mt-auto pt-4 border-t">
               <div className="flex items-center gap-3 p-2 rounded-lg hover-elevate cursor-pointer">
-                <Avatar className="h-9 w-9">
-                  <AvatarFallback className="bg-primary text-primary-foreground">JD</AvatarFallback>
+              <Avatar className="h-9 w-9">
+                  <AvatarImage src={user?.photoURL || (user?.displayName || user?.email) ? `https://api.dicebear.com/9.x/adventurer/svg?seed=${encodeURIComponent(user?.uid || user?.email || 'user')}` : ''} />
+                  <AvatarFallback className="bg-primary text-primary-foreground">{user?.displayName?.charAt(0)}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">John Doe</p>
-                  <p className="text-xs text-muted-foreground truncate">john@example.com</p>
+                  <p className="text-sm font-medium truncate">{firebaseUser?.displayName}</p>
+                  <p className="text-xs text-muted-foreground truncate">{firebaseUser?.email}</p>
                 </div>
                 <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-logout">
                   <LogOut className="h-4 w-4" />
@@ -321,45 +479,143 @@ export default function Chats() {
 
               <ScrollArea className="flex-1">
                 <div className="p-2">
-                  {filteredConversations.map((conv) => (
-                    <div
-                      key={conv.id}
-                      onClick={() => setSelectedChat(conv.id)}
-                      className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1 ${
-                        selectedChat === conv.id ? 'bg-accent' : ''
-                      }`}
-                      data-testid={`conversation-${conv.id}`}
-                    >
-                      <div className="relative">
-                        <Avatar className="h-12 w-12">
-                          <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
-                            {getConversationAvatar(conv)}
-                          </AvatarFallback>
-                        </Avatar>
-                        {isUserOnline(conv) && (
-                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-chart-3 border-2 border-background rounded-full" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
-                          {conv.lastMessage && (
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">
-                              {formatTime(conv.lastMessage.createdAt)}
-                            </span>
+                  {/* Show searched users first if search is active */}
+                  {searchedUsers.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-muted-foreground px-3 py-2">Search Results</p>
+                      {searchedUsers.map((searchedUser) => (
+                        <div
+                          key={searchedUser.id}
+                          onClick={() => handleStartConversation(searchedUser.id)}
+                          className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1"
+                          data-testid={`search-user-${searchedUser.id}`}
+                        >
+                          <div className="relative">
+                            <Avatar className="h-12 w-12">
+                              {searchedUser.avatar && (
+                                <AvatarImage src={searchedUser.avatar} alt={searchedUser.name} />
+                              )}
+                              <AvatarFallback className="bg-primary/10 text-primary">
+                                {searchedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            {/* Note: Search results don't have online status yet */}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{searchedUser.name}</p>
+                            <p className="text-xs text-muted-foreground truncate">@{searchedUser.username}</p>
+                          </div>
+                          <Badge variant="outline" className="text-xs">New Chat</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {searchQuery && searchedUsers.length === 0 && !isSearching && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>No users found matching &quot;{searchQuery}&quot;</p>
+                    </div>
+                  )}
+
+                  {isSearching && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>Searching...</p>
+                    </div>
+                  )}
+
+                  {/* Show conversations */}
+                  {filteredConversations.length > 0 && !searchQuery && (
+                    <div>
+                      {filteredConversations.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => setSelectedChat(conv.id)}
+                          className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1 ${
+                            selectedChat === conv.id ? 'bg-accent' : ''
+                          }`}
+                          data-testid={`conversation-${conv.id}`}
+                        >
+                          <div className="relative">
+                            <Avatar className="h-12 w-12">
+                              {!conv.isGroup && (conv.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
+                                <AvatarImage src={(conv.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(conv)} />
+                              )}
+                              <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                                {getConversationAvatar(conv)}
+                              </AvatarFallback>
+                            </Avatar>
+                            {isUserOnline(conv) && (
+                              <div className="absolute bottom-0 right-0 w-3 h-3 bg-chart-3 border-2 border-background rounded-full" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
+                              {conv.lastMessage && (
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                  {formatTime(conv.lastMessage.createdAt)}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {conv.lastMessage?.content || "No messages yet"}
+                            </p>
+                          </div>
+                          {conv.unreadCount > 0 && (
+                            <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5">
+                              {conv.unreadCount}
+                            </Badge>
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {conv.lastMessage?.content || "No messages yet"}
-                        </p>
-                      </div>
-                      {conv.unreadCount > 0 && (
-                        <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5">
-                          {conv.unreadCount}
-                        </Badge>
-                      )}
+                      ))}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Show conversations when search is active and filtered */}
+                  {filteredConversations.length > 0 && searchQuery && searchedUsers.length === 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-muted-foreground px-3 py-2">Existing Conversations</p>
+                      {filteredConversations.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => setSelectedChat(conv.id)}
+                          className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1 ${
+                            selectedChat === conv.id ? 'bg-accent' : ''
+                          }`}
+                          data-testid={`conversation-${conv.id}`}
+                        >
+                          <div className="relative">
+                            <Avatar className="h-12 w-12">
+                              <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                                {getConversationAvatar(conv)}
+                              </AvatarFallback>
+                            </Avatar>
+                            {isUserOnline(conv) && (
+                              <div className="absolute bottom-0 right-0 w-3 h-3 bg-chart-3 border-2 border-background rounded-full" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
+                              {conv.lastMessage && (
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                  {formatTime(conv.lastMessage.createdAt)}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {conv.lastMessage?.content || "No messages yet"}
+                            </p>
+                          </div>
+                          {conv.unreadCount > 0 && (
+                            <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5">
+                              {conv.unreadCount}
+                            </Badge>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </ScrollArea>
             </div>
@@ -368,19 +624,35 @@ export default function Chats() {
               <div className="flex-1 flex flex-col">
                 <div className="p-4 border-b flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10">
-                      <AvatarFallback className={selectedConversation.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
-                        {getConversationAvatar(selectedConversation)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="font-semibold">{getConversationName(selectedConversation)}</p>
+                    <div className="relative">
+                      <Avatar className="h-10 w-10">
+                        {!selectedConversation.isGroup && (selectedConversation.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
+                          <AvatarImage src={(selectedConversation.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(selectedConversation)} />
+                        )}
+                        <AvatarFallback className={selectedConversation.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                          {getConversationAvatar(selectedConversation)}
+                        </AvatarFallback>
+                      </Avatar>
                       {!selectedConversation.isGroup && isUserOnline(selectedConversation) && (
-                        <p className="text-xs text-chart-3">Online</p>
+                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full" />
                       )}
-                      {selectedConversation.isGroup && (
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold">{getConversationName(selectedConversation)}</p>
+                        {isUserOnline(selectedConversation) && (
+                          <span className="text-xs text-muted-foreground">•</span>
+                        )}
+                      </div>
+                      {isUserTyping() ? (
+                        <p className="text-xs text-chart-3 italic">{getTypingUser()} is typing...</p>
+                      ) : !selectedConversation.isGroup && isUserOnline(selectedConversation) ? (
+                        <p className="text-xs text-green-600">Online</p>
+                      ) : !selectedConversation.isGroup ? (
+                        <p className="text-xs text-muted-foreground">Offline</p>
+                      ) : selectedConversation.isGroup ? (
                         <p className="text-xs text-muted-foreground">{selectedConversation.participants.length} members</p>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -409,7 +681,7 @@ export default function Chats() {
                 <ScrollArea className="flex-1 p-4">
                   <div className="space-y-4">
                     {messages.map((msg) => {
-                      const isMe = msg.senderId === currentUserId;
+                      const isMe = msg.senderId === user?.uid;
                       return (
                         <div
                           key={msg.id}
@@ -418,6 +690,9 @@ export default function Chats() {
                         >
                           {!isMe && (
                             <Avatar className="h-8 w-8">
+                              {(selectedConversation.participants.find(p => p.id === msg.sender.id)?.avatar) && (
+                                <AvatarImage src={(selectedConversation.participants.find(p => p.id === msg.sender.id) as any).avatar} alt={msg.sender.name} />
+                              )}
                               <AvatarFallback className="bg-primary/10 text-primary text-xs">
                                 {msg.sender.name.split(' ').map(n => n[0]).join('').toUpperCase()}
                               </AvatarFallback>
@@ -468,8 +743,15 @@ export default function Chats() {
                 </ScrollArea>
 
                 {typingUsers.size > 0 && (
-                  <div className="px-4 py-2 text-sm text-muted-foreground">
-                    {Array.from(typingUsers)[0]} is typing...
+                  <div className="px-4 py-2 border-t bg-muted/30">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
+                        <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.2s' }} />
+                        <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.4s' }} />
+                      </div>
+                      <span className="italic">{Array.from(typingUsers)[0]} is typing...</span>
+                    </div>
                   </div>
                 )}
 

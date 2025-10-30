@@ -5,26 +5,92 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, Scan, Mail, Lock, User } from "lucide-react";
+import { Video, Scan, Mail, Lock, User, AlertCircle, CheckCircle2 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useAuth } from "@/lib/auth";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export default function Login() {
   const [, setLocation] = useLocation();
+  const { signIn, signUp, checkUsername, getUsernameSuggestions } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [isFaceScanning, setIsFaceScanning] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [usernameError, setUsernameError] = useState("");
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const handleEmailLogin = (e: React.FormEvent) => {
+  const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Email login:", email);
-    setLocation("/dashboard");
+    setLoading(true);
+    setError("");
+    
+    try {
+      await signIn(email, password);
+      setLocation("/dashboard");
+    } catch (error: any) {
+      setError(error.message || "Login failed");
+      setLoading(false);
+    }
   };
 
-  const handleEmailSignup = (e: React.FormEvent) => {
+  const handleEmailSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Email signup:", { name, email, password });
-    setLocation("/dashboard");
+    
+    // Validate all fields
+    if (!email || !password || !name || !username) {
+      setError("Please fill in all fields");
+      return;
+    }
+    
+    if (username.length < 3) {
+      setError("Username must be at least 3 characters");
+      return;
+    }
+    
+    setLoading(true);
+    setError("");
+    setUsernameError("");
+    
+    try {
+      await signUp(email, password, name, username);
+      setLocation("/dashboard");
+    } catch (error: any) {
+      setError(error.message || "Signup failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUsernameChange = async (value: string) => {
+    setUsername(value);
+    setUsernameError("");
+    setShowSuggestions(false);
+    
+    if (value.length >= 3) {
+      try {
+        const usernameCheck = await checkUsername(value);
+        if (!usernameCheck.available) {
+          setUsernameError(usernameCheck.message);
+          // Get suggestions
+          const suggestions = await getUsernameSuggestions(value);
+          setUsernameSuggestions(suggestions);
+          setShowSuggestions(true);
+        }
+      } catch (error) {
+        console.error('Error checking username:', error);
+      }
+    }
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setUsername(suggestion);
+    setUsernameError("");
+    setShowSuggestions(false);
   };
 
   const handleFaceLogin = () => {
@@ -61,6 +127,12 @@ export default function Login() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {error && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
             <Tabs defaultValue="login" className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-6">
                 <TabsTrigger value="login" data-testid="tab-login">Login</TabsTrigger>
@@ -122,8 +194,8 @@ export default function Login() {
                         />
                       </div>
                     </div>
-                    <Button type="submit" className="w-full" data-testid="button-submit-login">
-                      Sign In
+                    <Button type="submit" className="w-full" data-testid="button-submit-login" disabled={loading}>
+                      {loading ? "Signing In..." : "Sign In"}
                     </Button>
                   </form>
                 </div>
@@ -146,6 +218,42 @@ export default function Login() {
                         required
                       />
                     </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-username">Username</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signup-username"
+                        type="text"
+                        placeholder="johndoe"
+                        className="pl-10"
+                        value={username}
+                        onChange={(e) => handleUsernameChange(e.target.value)}
+                        data-testid="input-signup-username"
+                        required
+                      />
+                    </div>
+                    {usernameError && (
+                      <p className="text-sm text-destructive">{usernameError}</p>
+                    )}
+                    {showSuggestions && usernameSuggestions.length > 0 && (
+                      <div className="mt-2 p-2 border rounded-lg bg-background">
+                        <p className="text-sm text-muted-foreground mb-2">Suggestions:</p>
+                        <div className="space-y-1">
+                          {usernameSuggestions.map((suggestion, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              className="block w-full text-left px-2 py-1 text-sm hover:bg-accent rounded"
+                              onClick={() => handleSuggestionClick(suggestion)}
+                            >
+                              @{suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-email">Email</Label>
@@ -179,8 +287,8 @@ export default function Login() {
                       />
                     </div>
                   </div>
-                  <Button type="submit" className="w-full" data-testid="button-submit-signup">
-                    Create Account
+                  <Button type="submit" className="w-full" data-testid="button-submit-signup" disabled={loading}>
+                    {loading ? "Creating Account..." : "Create Account"}
                   </Button>
                   <p className="text-xs text-center text-muted-foreground">
                     By signing up, you'll be able to set up facial recognition for quick login

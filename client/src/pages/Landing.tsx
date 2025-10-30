@@ -1,7 +1,6 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Video, Sparkles, Users, Shield, BarChart3, Zap } from "lucide-react";
-import heroImage from "@assets/generated_images/AI_video_call_hero_illustration_778de1ae.png";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function Landing() {
@@ -96,11 +95,9 @@ export default function Landing() {
             </div>
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-chart-2/20 blur-3xl" />
-              <img 
-                src={heroImage} 
-                alt="AI-powered video calling interface" 
-                className="relative rounded-2xl w-full"
-              />
+              <div className="relative rounded-2xl w-full h-96 bg-gradient-to-br from-primary/20 via-chart-2/20 to-primary/30 flex items-center justify-center">
+                <Video className="w-32 h-32 text-primary/50" />
+              </div>
             </div>
           </div>
         </div>

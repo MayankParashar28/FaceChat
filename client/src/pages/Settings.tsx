@@ -9,10 +9,12 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { Video, Settings as SettingsIcon, LogOut, LayoutDashboard, MessageSquare, Camera, Mic, Monitor, Palette } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/components/ThemeProvider";
+import { useAuth } from "@/lib/auth";
 
 export default function Settings() {
   const [, setLocation] = useLocation();
   const { theme } = useTheme();
+  const { user, logout } = useAuth();
   const [autoJoinAudio, setAutoJoinAudio] = useState(true);
   const [autoJoinVideo, setAutoJoinVideo] = useState(true);
   const [backgroundBlur, setBackgroundBlur] = useState(false);
@@ -22,7 +24,7 @@ export default function Settings() {
 
   const sidebarItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
-    { title: "Chats", icon: MessageSquare, url: "/dashboard" },
+    { title: "Chats", icon: MessageSquare, url: "/chats" },
     { title: "Settings", icon: SettingsIcon, url: "/settings" }
   ];
 
@@ -65,7 +67,7 @@ export default function Settings() {
               <Button 
                 variant="ghost" 
                 className="w-full justify-start gap-2"
-                onClick={() => setLocation("/")}
+                onClick={logout}
                 data-testid="button-logout"
               >
                 <LogOut className="w-4 h-4" />
