@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Video, Scan, Mail, Lock, User, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Scan, Mail, Lock, User, AlertCircle, CheckCircle2 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { LogoMark } from "@/components/LogoMark";
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -108,9 +109,7 @@ export default function Login() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <Link href="/">
             <div className="flex items-center gap-2 cursor-pointer" data-testid="link-home">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Video className="w-5 h-5 text-primary-foreground" />
-              </div>
+              <LogoMark className="h-8 w-8" />
               <span className="text-xl font-semibold">AI Meet</span>
             </div>
           </Link>

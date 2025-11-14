@@ -7,8 +7,10 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Video, Plus, Users, Clock, Settings, LogOut, LayoutDashboard, MessageSquare, Search } from "lucide-react";
+import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
+import { getAvatarUrl, getInitials } from "@/lib/utils";
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
@@ -22,15 +24,14 @@ export default function Dashboard() {
   ];
 
   const createCall = () => {
-    const newRoomId = Math.random().toString(36).substring(2, 10);
-    console.log("Created room:", newRoomId);
+    // Generate a random room ID
+    const newRoomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     setLocation(`/call/${newRoomId}`);
   };
 
   const joinCall = () => {
     if (roomId.trim()) {
-      console.log("Joining room:", roomId);
-      setLocation(`/call/${roomId}`);
+      setLocation(`/call/${roomId.trim()}`);
     }
   };
 
@@ -51,9 +52,7 @@ export default function Dashboard() {
         <Sidebar>
           <SidebarContent className="p-4">
             <div className="flex items-center gap-2 px-2 mb-6">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Video className="w-5 h-5 text-primary-foreground" />
-              </div>
+              <LogoMark className="h-8 w-8" />
               <span className="text-lg font-semibold">AI Meet</span>
             </div>
 
@@ -78,8 +77,13 @@ export default function Dashboard() {
             <div className="mt-auto pt-4 border-t">
               <div className="flex items-center gap-3 p-2 rounded-lg hover-elevate cursor-pointer">
                 <Avatar className="h-9 w-9">
-                  <AvatarImage src={user?.photoURL || (user?.displayName || user?.email) ? `https://api.dicebear.com/9.x/adventurer/svg?seed=${encodeURIComponent(user?.uid || user?.email || 'user')}` : ''} />
-                  <AvatarFallback className="bg-primary text-primary-foreground">{user?.displayName?.charAt(0)}</AvatarFallback>
+                  <AvatarImage
+                    src={getAvatarUrl(user?.photoURL, user?.uid, user?.email)}
+                    alt={user?.displayName || user?.email || "User avatar"}
+                  />
+                  <AvatarFallback className="bg-primary text-primary-foreground">
+                    {getInitials(user?.displayName, user?.email)}
+                  </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{user?.displayName || "User"}</p>
