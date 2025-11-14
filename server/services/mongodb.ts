@@ -445,13 +445,18 @@ export class MongoDBService {
     }
   }
 
-  async getConversationMessages(conversationId: string, limit: number = 50): Promise<any[]> {
+  async getConversationMessages(conversationId: string, viewerId?: string, limit: number = 50, beforeDate?: Date): Promise<any[]> {
     try {
-      console.log("Getting messages for conversation:", conversationId);
+      console.log("Getting messages for conversation:", conversationId, "beforeDate:", beforeDate);
       
-      const messages = await Message.find({
-        conversationId,
-      })
+      const query: any = { conversationId };
+      
+      // If beforeDate is provided, only get messages before that date (for pagination)
+      if (beforeDate) {
+        query.createdAt = { $lt: beforeDate };
+      }
+      
+      const messages = await Message.find(query)
       .populate('senderId', 'username name avatar')
       .sort({ createdAt: -1 })
       .limit(limit);
@@ -470,6 +475,16 @@ export class MongoDBService {
           name: (msg.senderId as any).name,
           username: (msg.senderId as any).username
         };
+
+        // Determine status: only show status for messages sent by the viewer
+        let status: "sent" | "delivered" | "seen" | undefined;
+        if (viewerId && senderId === viewerId) {
+          // Message was sent by the viewer
+          // If read, it's "seen", otherwise "delivered" (assuming it was delivered if we're viewing)
+          // For loaded messages, if isRead is true, it's "seen", otherwise "delivered"
+          status = msg.isRead ? "seen" : "delivered";
+        }
+        // If message is from someone else, no status (it's not our message to track)
         
         return {
           id: msg._id.toString(),
@@ -479,7 +494,7 @@ export class MongoDBService {
           isPinned: msg.isPinned,
           createdAt: msg.createdAt,
           sender: sender || { id: senderId, name: 'Unknown', username: 'unknown' },
-          status: 'seen' as const
+          status
         };
       });
 

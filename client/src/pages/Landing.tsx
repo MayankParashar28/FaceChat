@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Video, Sparkles, Users, Shield, BarChart3, Zap } from "lucide-react";
+import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function Landing() {
@@ -42,9 +43,7 @@ export default function Landing() {
       <nav className="fixed top-0 left-0 right-0 z-50 backdrop-blur-lg bg-background/80 border-b">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Video className="w-5 h-5 text-primary-foreground" />
-            </div>
+            <LogoMark className="h-8 w-8" />
             <span className="text-xl font-semibold">AI Meet</span>
           </div>
           <div className="hidden md:flex items-center gap-8">

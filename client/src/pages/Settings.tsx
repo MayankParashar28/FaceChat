@@ -6,10 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { Video, Settings as SettingsIcon, LogOut, LayoutDashboard, MessageSquare, Camera, Mic, Monitor, Palette } from "lucide-react";
+import { Settings as SettingsIcon, LogOut, LayoutDashboard, MessageSquare, Camera, Mic, Monitor, Palette } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/components/ThemeProvider";
 import { useAuth } from "@/lib/auth";
+import { LogoMark } from "@/components/LogoMark";
 
 export default function Settings() {
   const [, setLocation] = useLocation();
@@ -39,9 +40,7 @@ export default function Settings() {
         <Sidebar>
           <SidebarContent className="p-4">
             <div className="flex items-center gap-2 px-2 mb-6">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Video className="w-5 h-5 text-primary-foreground" />
-              </div>
+              <LogoMark className="h-8 w-8" />
               <span className="text-lg font-semibold">AI Meet</span>
             </div>
 

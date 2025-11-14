@@ -17,6 +17,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const userSockets = new Map<string, string>();
+  const roomParticipants = new Map<string, Set<string>>(); // roomId -> Set of socketIds
 
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
@@ -53,8 +54,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
 
-    socket.on("join:conversation", (conversationId: string) => {
+    socket.on("join:conversation", async (conversationId: string) => {
       socket.join(`conversation:${conversationId}`);
+      
+      // Mark messages sent by others as delivered when user joins conversation
+      // Get the socket's user from userSockets map
+      const userId = Array.from(userSockets.entries()).find(([, socketId]) => socketId === socket.id)?.[0];
+      if (userId) {
+        try {
+          const dbUser = await mongoService.getUserByFirebaseUid(userId);
+          if (dbUser) {
+            // Find all messages in this conversation that are not from this user
+            // These are messages sent by others that this user is receiving
+            const receivedMessages = await Message.find({
+              conversationId,
+              senderId: { $ne: dbUser._id.toString() },
+              isRead: false
+            }).populate('senderId', '_id');
+
+            // For each message received, update its status to "delivered" for the sender
+            // This tells the sender that their message was delivered
+            for (const msg of receivedMessages) {
+              // Emit status update to conversation room (sender will see "delivered")
+              io.to(`conversation:${conversationId}`).emit("message:status", { 
+                messageId: msg._id.toString(), 
+                status: "delivered" 
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Error marking messages as delivered:", error);
+        }
+      }
     });
 
     socket.on("leave:conversation", (conversationId: string) => {
@@ -143,9 +174,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           messageType: 'text'
         });
 
-        // Populate sender info
+        // Populate sender info (including firebaseUid for client matching)
         const populatedMessage = await Message.findById(message._id)
-          .populate('senderId', 'username name avatar');
+          .populate('senderId', 'username name avatar firebaseUid');
 
         if (!populatedMessage) {
           socket.emit("message:error", { error: "Message not found" });
@@ -165,22 +196,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
               username: (populatedMessage.senderId as any).username
             };
 
+        // Get Firebase UID for matching optimistic messages
+        const senderFirebaseUid = (populatedMessage.senderId as any)?.firebaseUid || data.senderId;
+
         const formattedMessage = {
           id: populatedMessage._id.toString(),
           conversationId: populatedMessage.conversationId.toString(),
-          senderId,
+          senderId: senderFirebaseUid, // Use Firebase UID for client matching
           content: populatedMessage.content,
           isPinned: populatedMessage.isPinned,
           createdAt: populatedMessage.createdAt,
-          sender,
+          sender: {
+            ...sender,
+            firebaseUid: senderFirebaseUid // Include Firebase UID in sender object too
+          },
           status: "sent" as const
         };
 
         // Join the conversation room if not already joined
         socket.join(`conversation:${data.conversationId}`);
         
+        // Get conversation participants to determine who should receive the message
+        const conversation = await Conversation.findById(data.conversationId)
+          .populate('participants', 'firebaseUid');
+        
         // Broadcast to all users in the conversation
         io.to(`conversation:${data.conversationId}`).emit("message:new", formattedMessage);
+        
+        // After a short delay, mark as delivered for recipients who are in the room
+        // This simulates the message being delivered to their devices
+        setTimeout(async () => {
+          if (conversation) {
+            const participants = conversation.participants as any[];
+            const recipientIds = participants
+              .filter((p: any) => p.firebaseUid && p.firebaseUid !== data.senderId)
+              .map((p: any) => p.firebaseUid);
+            
+            if (recipientIds.length === 0) {
+              return; // No recipients
+            }
+            
+            // Check which recipients are currently in the conversation room
+            const socketsInRoom = await io.in(`conversation:${data.conversationId}`).fetchSockets();
+            const activeRecipients = new Set<string>();
+            
+            for (const s of socketsInRoom) {
+              const socketUserId = Array.from(userSockets.entries()).find(([, socketId]) => socketId === s.id)?.[0];
+              if (socketUserId && recipientIds.includes(socketUserId)) {
+                activeRecipients.add(socketUserId);
+              }
+            }
+            
+            // If any recipients are active in the room, mark as delivered
+            // The status update will be received by the sender (who sees the status)
+            if (activeRecipients.size > 0) {
+              io.to(`conversation:${data.conversationId}`).emit("message:status", { 
+                messageId: formattedMessage.id, 
+                status: "delivered" 
+              });
+            }
+            // If no recipients are in the room, status stays as "sent"
+            // It will be updated to "delivered" when they join the conversation
+          }
+        }, 200);
       } catch (error) {
         console.error("Error sending message:", error);
         socket.emit("message:error", { error: "Failed to send message" });
@@ -204,8 +282,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Get the conversation to update unread count
         const message = await Message.findById(messageId);
         if (message) {
-          // Emit status update to all clients
-          io.emit("message:status", { messageId, status: "seen" });
+          // Emit status update to conversation room (not all clients)
+          io.to(`conversation:${message.conversationId.toString()}`).emit("message:status", { 
+            messageId, 
+            status: "seen" 
+          });
           
           // Broadcast updated conversation with new unread count
           const conversation = await Conversation.findById(message.conversationId.toString());
@@ -233,12 +314,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               unreadCount
             };
 
-            // Broadcast to all participants
-            conversation.participants.forEach((p: any) => {
-              if (p.firebaseUid) {
-                io.emit("conversation:updated", formattedConv);
-              }
-            });
+            // Broadcast to all participants in the conversation room
+            io.to(`conversation:${message.conversationId.toString()}`).emit("conversation:updated", formattedConv);
           }
         }
       } catch (error) {
@@ -255,8 +332,219 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
 
+    // Video call signaling handlers
+    socket.on("call:join", async ({ roomId, userId }: { roomId: string; userId: string }) => {
+      console.log(`User ${userId} joining call room: ${roomId}`);
+      socket.join(`call:${roomId}`);
+      
+      // Track participants
+      if (!roomParticipants.has(roomId)) {
+        roomParticipants.set(roomId, new Set());
+      }
+      roomParticipants.get(roomId)!.add(socket.id);
+      
+      // Get user data for the joining user
+      let userName: string | undefined;
+      let userAvatar: string | undefined;
+      try {
+        const dbUser = await mongoService.getUserByFirebaseUid(userId);
+        if (dbUser) {
+          userName = dbUser.name;
+          userAvatar = dbUser.avatar;
+        }
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+      }
+      
+      // Notify others in the room
+      socket.to(`call:${roomId}`).emit("call:user-joined", { 
+        socketId: socket.id, 
+        userId,
+        userName,
+        userAvatar
+      });
+      
+      // Send list of existing participants to the new user with their user data
+      const existingSocketIds = Array.from(roomParticipants.get(roomId) || [])
+        .filter(id => id !== socket.id);
+      
+      // Fetch user data for all existing participants
+      const participantsWithData = await Promise.all(
+        existingSocketIds.map(async (socketId) => {
+          // Find userId for this socketId
+          const participantUserId = Array.from(userSockets.entries())
+            .find(([, sid]) => sid === socketId)?.[0];
+          
+          if (participantUserId) {
+            try {
+              const dbUser = await mongoService.getUserByFirebaseUid(participantUserId);
+              return {
+                socketId,
+                userId: participantUserId,
+                userName: dbUser?.name,
+                userAvatar: dbUser?.avatar
+              };
+            } catch (error) {
+              console.error("Error fetching participant data:", error);
+            }
+          }
+          
+          return {
+            socketId,
+            userId: participantUserId || "",
+            userName: undefined,
+            userAvatar: undefined
+          };
+        })
+      );
+      
+      socket.emit("call:existing-users", { participants: participantsWithData });
+    });
+
+    socket.on("call:leave", ({ roomId }: { roomId: string }) => {
+      console.log(`User leaving call room: ${roomId}`);
+      socket.leave(`call:${roomId}`);
+      
+      if (roomParticipants.has(roomId)) {
+        roomParticipants.get(roomId)!.delete(socket.id);
+        if (roomParticipants.get(roomId)!.size === 0) {
+          roomParticipants.delete(roomId);
+        }
+      }
+      
+      socket.to(`call:${roomId}`).emit("call:user-left", { socketId: socket.id });
+    });
+
+    // WebRTC signaling
+    socket.on("call:offer", ({ roomId, offer, targetSocketId }: { 
+      roomId: string; 
+      offer: RTCSessionDescriptionInit; 
+      targetSocketId: string 
+    }) => {
+      socket.to(targetSocketId).emit("call:offer", {
+        offer,
+        socketId: socket.id
+      });
+    });
+
+    socket.on("call:answer", ({ roomId, answer, targetSocketId }: { 
+      roomId: string; 
+      answer: RTCSessionDescriptionInit; 
+      targetSocketId: string 
+    }) => {
+      socket.to(targetSocketId).emit("call:answer", {
+        answer,
+        socketId: socket.id
+      });
+    });
+
+    socket.on("call:ice-candidate", ({ roomId, candidate, targetSocketId }: { 
+      roomId: string; 
+      candidate: RTCIceCandidateInit; 
+      targetSocketId: string 
+    }) => {
+      socket.to(targetSocketId).emit("call:ice-candidate", {
+        candidate,
+        socketId: socket.id
+      });
+    });
+
+    socket.on("call:toggle-media", ({ roomId, mediaType, enabled }: { 
+      roomId: string; 
+      mediaType: "audio" | "video"; 
+      enabled: boolean 
+    }) => {
+      socket.to(`call:${roomId}`).emit("call:media-toggled", {
+        socketId: socket.id,
+        mediaType,
+        enabled
+      });
+    });
+
+    // Call chat messages
+    socket.on("call:chat-message", async ({ roomId, message, userId }: { 
+      roomId: string; 
+      message: string; 
+      userId: string 
+    }) => {
+      try {
+        console.log("=== SERVER: Received chat message ===");
+        console.log("Room ID:", roomId);
+        console.log("Message:", message);
+        console.log("User ID:", userId);
+        console.log("Socket ID:", socket.id);
+        
+        if (!roomId || !message || !userId) {
+          console.error("Missing required fields:", { roomId, message, userId });
+          return;
+        }
+        
+        // Verify socket is in the room
+        const roomName = `call:${roomId}`;
+        const socketRooms = Array.from(socket.rooms);
+        console.log("Socket rooms:", socketRooms);
+        console.log("Target room name:", roomName);
+        console.log("Is socket in room?", socketRooms.includes(roomName));
+        
+        if (!socketRooms.includes(roomName)) {
+          console.warn(`Socket ${socket.id} not in room ${roomName}, joining now`);
+          socket.join(roomName);
+          console.log("Socket joined room, new rooms:", Array.from(socket.rooms));
+        }
+        
+        // Get user data for the sender
+        let userName: string | undefined;
+        let userAvatar: string | undefined;
+        try {
+          const dbUser = await mongoService.getUserByFirebaseUid(userId);
+          if (dbUser) {
+            userName = dbUser.name;
+            userAvatar = dbUser.avatar;
+          }
+        } catch (error) {
+          console.error("Error fetching user data for chat:", error);
+        }
+
+        const messageData = {
+          id: Date.now().toString(),
+          socketId: socket.id,
+          userId,
+          sender: userName || "Unknown",
+          avatar: userAvatar,
+          message: message.trim(),
+          time: new Date().toISOString()
+        };
+
+        console.log("=== SERVER: Broadcasting chat message ===");
+        console.log("Room name:", roomName);
+        console.log("Message data:", JSON.stringify(messageData, null, 2));
+        console.log("Socket rooms:", Array.from(socket.rooms));
+        
+        // Broadcast message to all participants in the room (including sender)
+        // Use io.to() to broadcast to all sockets in the room
+        console.log("Broadcasting to room:", roomName);
+        io.to(roomName).emit("call:chat-message", messageData);
+        
+        console.log("=== SERVER: Message broadcast complete ===");
+      } catch (error) {
+        console.error("Error handling chat message:", error);
+      }
+    });
+
     socket.on("disconnect", async () => {
       console.log("Client disconnected:", socket.id);
+      
+      // Remove from all call rooms
+      for (const [roomId, participants] of roomParticipants.entries()) {
+        if (participants.has(socket.id)) {
+          participants.delete(socket.id);
+          io.to(`call:${roomId}`).emit("call:user-left", { socketId: socket.id });
+          if (participants.size === 0) {
+            roomParticipants.delete(roomId);
+          }
+        }
+      }
+      
       const userId = Array.from(userSockets.entries()).find(([, socketId]) => socketId === socket.id)?.[0];
       if (userId) {
         userSockets.delete(userId);
@@ -725,16 +1013,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/conversations/:conversationId/messages", async (req, res) => {
     try {
       const { conversationId } = req.params;
-      const { userId } = req.query;
+      const { userId, beforeDate, limit } = req.query;
 
       if (!userId) {
         return res.status(400).json({ error: "User ID is required" });
       }
 
-      console.log("Fetching messages for conversation:", conversationId, "userId:", userId);
+      console.log("Fetching messages for conversation:", conversationId, "userId:", userId, "beforeDate:", beforeDate);
 
-      // Get messages from MongoDB
-      const messages = await mongoService.getConversationMessages(conversationId);
+      const dbUser = await mongoService.getUserByFirebaseUid(userId as string);
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const limitNum = limit ? parseInt(limit as string, 10) : 50;
+      const beforeDateObj = beforeDate ? new Date(beforeDate as string) : undefined;
+
+      // Get messages from MongoDB with pagination
+      const messages = await mongoService.getConversationMessages(
+        conversationId, 
+        dbUser._id.toString(),
+        limitNum,
+        beforeDateObj
+      );
       
       console.log("Returning messages:", messages.length);
       res.json(messages);

@@ -10,7 +10,10 @@ import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Chats from "@/pages/Chats";
+import { lazy, Suspense } from "react";
 import VideoCall from "@/pages/VideoCall";
+// Lazy load VideoCall for better initial load performance
+// const VideoCall = lazy(() => import("@/pages/VideoCall"));
 import CallSummary from "@/pages/CallSummary";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
