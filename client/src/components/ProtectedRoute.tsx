@@ -14,6 +14,10 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     if (!loading && !user) {
       // Redirect to login if not authenticated
       setLocation("/login");
+    } else if (!loading && user && !user.isEmailVerified && !user.emailVerified) {
+      // Redirect to email verification if email is not verified
+      const email = user.email || "";
+      setLocation(`/verify-email?email=${encodeURIComponent(email)}`);
     }
   }, [user, loading, setLocation]);
 
@@ -31,6 +35,11 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   // Show nothing while redirecting
   if (!user) {
+    return null;
+  }
+
+  // Redirect if email not verified (handled in useEffect, but check again here)
+  if (!user.isEmailVerified && !user.emailVerified) {
     return null;
   }
 

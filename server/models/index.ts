@@ -8,9 +8,17 @@ export interface IUser extends Document {
   _id: Types.ObjectId;
   firebaseUid: string;
   email: string;
+  password?: string; // Hashed password (optional if using only Firebase Auth)
   name: string;
   username: string;
   avatar?: string;
+  phone?: string;
+  bio?: string;
+  dateOfBirth?: Date;
+  location?: string;
+  website?: string;
+  isEmailVerified: boolean;
+  lastLogin?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,6 +31,13 @@ const UserSchema = new Schema<IUser>(
       required: true,
       unique: true,
       match: /.+\@.+\..+/,
+      lowercase: true,
+      trim: true,
+    },
+    password: {
+      type: String,
+      select: false, // Don't return password in queries by default
+      minlength: 8,
     },
     name: { type: String, required: true, trim: true },
     username: {
@@ -31,8 +46,50 @@ const UserSchema = new Schema<IUser>(
       unique: true,
       minlength: 3,
       maxlength: 30,
+      lowercase: true,
+      trim: true,
+      match: /^[a-z0-9_]+$/, // Only lowercase letters, numbers, and underscores
     },
     avatar: { type: String },
+    phone: {
+      type: String,
+      trim: true,
+      match: /^\+?[1-9]\d{1,14}$/, // E.164 format
+    },
+    bio: {
+      type: String,
+      maxlength: 500,
+      trim: true,
+    },
+    dateOfBirth: {
+      type: Date,
+      validate: {
+        validator: function (this: IUser, value: Date) {
+          if (!value) return true;
+          const age = Math.floor((Date.now() - value.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+          return age >= 13; // Minimum age 13
+        },
+        message: "You must be at least 13 years old to register.",
+      },
+    },
+    location: {
+      type: String,
+      maxlength: 100,
+      trim: true,
+    },
+    website: {
+      type: String,
+      maxlength: 200,
+      trim: true,
+      match: /^https?:\/\/.+/,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    lastLogin: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );
@@ -292,3 +349,7 @@ export const Conversation = mongoose.model<IConversation>(
   ConversationSchema
 );
 export const Message = mongoose.model<IMessage>("Message", MessageSchema);
+
+// Export OTP model (for email verification)
+export { OTP } from './otp';
+export type { IOTP } from './otp';

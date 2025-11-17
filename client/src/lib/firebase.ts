@@ -12,6 +12,15 @@ const firebaseConfig = {
     appId: "1:508443525051:web:4ed142e765da7c12bfce9e",
     measurementId: "G-9WKRZBRP6T"
   };
+
+// Configure Firebase Auth action code settings for email verification redirects
+// This tells Firebase where to redirect after email verification
+if (typeof window !== 'undefined') {
+  // Get the current origin for redirect URL
+  const redirectUrl = `${window.location.origin}/verify-email`;
+  // Note: In Firebase Console, set the action URL to use this redirect
+  // Authentication > Templates > Email address verification > Customize action URL
+}
   
 
 // Initialize Firebase

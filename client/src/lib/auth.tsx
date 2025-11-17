@@ -6,6 +6,8 @@ import {
   onAuthStateChanged,
   User,
   updateProfile,
+  sendEmailVerification as firebaseSendEmailVerification,
+  applyActionCode,
 } from 'firebase/auth'
 import { auth } from './firebase'
 import { getAvatarUrl } from './utils'
@@ -17,6 +19,8 @@ export interface AppUser {
   displayName: string | null
   photoURL: string | null
   username?: string | null
+  emailVerified?: boolean
+  isEmailVerified?: boolean // MongoDB field
 }
 
 // Auth context interface
@@ -25,6 +29,8 @@ interface AuthContextType {
   loading: boolean
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string, name: string, username: string) => Promise<void>
+  sendEmailVerification: () => Promise<void>
+  resendEmailVerification: () => Promise<void>
   logout: () => Promise<void>
   checkUsername: (username: string) => Promise<{ available: boolean; message: string }>
   getUsernameSuggestions: (baseUsername: string) => Promise<string[]>
@@ -39,8 +45,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Set up token refresh listener
+    const tokenRefreshInterval = setInterval(async () => {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        try {
+          // Force token refresh before it expires (refresh every 50 minutes)
+          await currentUser.getIdToken(true);
+        } catch (error) {
+          console.error("Token refresh failed:", error);
+        }
+      }
+    }, 50 * 60 * 1000); // 50 minutes
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
+        // Reload user to get latest emailVerified status
+        await firebaseUser.reload()
+        
         const derivedUsername =
           firebaseUser.email?.split('@')[0] || firebaseUser.displayName?.replace(/\s+/g, '').toLowerCase() || null
         const derivedDisplayName =
@@ -55,28 +77,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName: derivedDisplayName,
           photoURL: avatar,
           username: derivedUsername,
+          emailVerified: firebaseUser.emailVerified,
         }
         setUser(appUser)
 
         // Update online status in Firebase Realtime Database
         await updateOnlineStatus(firebaseUser.uid, true)
 
-        // Ensure user exists in MongoDB
+        // Ensure user exists in MongoDB and sync emailVerified status
+        // Only sync if we don't have user data yet or if emailVerified status changed
         try {
           const token = await firebaseUser.getIdToken()
+          
+          // Always sync on initial load, but skip if we already have the user and nothing changed
+          // We'll let the server handle idempotent updates
           const response = await fetch('/api/users', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
             body: JSON.stringify({
-              firebaseToken: token,
               email: firebaseUser.email,
               name: derivedDisplayName,
               username: derivedUsername || 'user',
+              isEmailVerified: firebaseUser.emailVerified,
             }),
           })
 
           if (response.ok) {
             const dbUser = await response.json()
+            
             // Prefer server-provided profile information
             setUser((prev) => {
               if (!prev) return prev
@@ -91,13 +122,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 displayName: nextDisplayName,
                 username: nextUsername,
                 photoURL: nextPhoto,
+                // Use Firebase emailVerified as source of truth, sync with MongoDB
+                isEmailVerified: firebaseUser.emailVerified || dbUser?.isEmailVerified || false,
+                emailVerified: firebaseUser.emailVerified,
+              }
+            })
+          } else if (response.status === 429) {
+            // Rate limited - don't log as error, just skip this sync
+            console.log('Rate limited on user sync, will retry later')
+            // Update state without API call to avoid blocking UI
+            setUser((prev) => {
+              if (!prev) return prev
+              return {
+                ...prev,
+                isEmailVerified: firebaseUser.emailVerified || prev.isEmailVerified || false,
+                emailVerified: firebaseUser.emailVerified,
               }
             })
           } else if (response.status !== 400) {
             console.error('Failed to sync user to MongoDB')
           }
-        } catch (error) {
-          console.error('Error syncing user to MongoDB:', error)
+        } catch (error: any) {
+          // Don't log rate limit errors as errors
+          if (error.message?.includes('429') || error.message?.includes('Too many')) {
+            console.log('Rate limited on user sync, will retry later')
+          } else {
+            console.error('Error syncing user to MongoDB:', error)
+          }
         }
       } else {
         setUser(null)
@@ -105,7 +156,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
     })
 
-    return () => unsubscribe()
+    return () => {
+      unsubscribe();
+      clearInterval(tokenRefreshInterval);
+    };
   }, [])
 
   const signIn = async (email: string, password: string) => {
@@ -131,7 +185,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const signUp = async (email: string, password: string, name: string, username: string) => {
+  const signUp = async (
+    email: string, 
+    password: string, 
+    name: string, 
+    username: string
+  ) => {
     try {
       // Validate inputs
       if (!email || !password || !name || !username) {
@@ -146,19 +205,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { user } = await createUserWithEmailAndPassword(auth, email, password)
       await updateProfile(user, { displayName: name })
 
-      // Create user in MongoDB
+      // Create user in MongoDB with password
       try {
         const token = await user.getIdToken()
-        console.log('Sending user data to MongoDB:', { email, name, username })
+        console.log('Sending user data to MongoDB:', { email, name, username, hasPassword: !!password })
 
         const response = await fetch('/api/users', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify({
-            firebaseToken: token,
             email: user.email,
             name: name.trim(),
             username: username.trim(),
+            password: password, // Send password to be hashed and stored in MongoDB
           }),
         })
 
@@ -170,6 +232,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const createdUser = await response.json()
         console.log('User successfully created in MongoDB:', createdUser)
+        
+        // Send Firebase email verification
+        try {
+          await firebaseSendEmailVerification(user)
+          console.log('📧 Verification email sent! Check your inbox and click the verification link.')
+        } catch (verificationError: any) {
+          console.error('Failed to send verification email:', verificationError)
+          // Don't throw - user is created, they can resend email later
+        }
       } catch (error: any) {
         console.error('Error creating user in MongoDB:', error)
         // Don't throw - user is already created in Firebase
@@ -177,6 +248,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (error.message.includes('already exists') || error.message.includes('duplicate')) {
           // User exists, this is okay
           console.log('User already exists in MongoDB')
+        } else {
+          throw error // Re-throw if it's not a duplicate error
         }
       }
     } catch (error: any) {
@@ -199,7 +272,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkUsername = async (username: string): Promise<{ available: boolean; message: string }> => {
     try {
-      const response = await fetch(`/api/users/check-username/${encodeURIComponent(username)}`)
+      const user = auth.currentUser
+      if (!user) {
+        throw new Error('User not authenticated')
+      }
+      
+      const token = await user.getIdToken()
+      const response = await fetch(`/api/users/check-username/${encodeURIComponent(username)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      })
       if (!response.ok) {
         throw new Error('Failed to check username')
       }
@@ -210,9 +294,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const sendEmailVerification = async (): Promise<void> => {
+    try {
+      const user = auth.currentUser
+      if (!user) {
+        throw new Error('User not authenticated')
+      }
+      
+      if (user.emailVerified) {
+        throw new Error('Email is already verified')
+      }
+      
+      await firebaseSendEmailVerification(user)
+      console.log('📧 Verification email sent! Check your inbox and click the verification link.')
+    } catch (error: any) {
+      console.error('Error sending verification email:', error)
+      if (error.code === 'auth/too-many-requests') {
+        throw new Error('Too many requests. Please wait a few minutes before requesting another verification email.')
+      }
+      throw new Error(error.message || 'Failed to send verification email')
+    }
+  }
+
+  const resendEmailVerification = async (): Promise<void> => {
+    return sendEmailVerification()
+  }
+
   const getUsernameSuggestions = async (baseUsername: string): Promise<string[]> => {
     try {
-      const response = await fetch(`/api/users/suggestions/${encodeURIComponent(baseUsername)}`)
+      const user = auth.currentUser
+      if (!user) {
+        throw new Error('User not authenticated')
+      }
+      
+      const token = await user.getIdToken()
+      const response = await fetch(`/api/users/suggestions/${encodeURIComponent(baseUsername)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      })
       if (!response.ok) {
         throw new Error('Failed to get suggestions')
       }
@@ -241,6 +362,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     signIn,
     signUp,
+    sendEmailVerification,
+    resendEmailVerification,
     logout,
     checkUsername,
     getUsernameSuggestions,

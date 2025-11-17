@@ -1,5 +1,6 @@
 import { User, Meeting, ChatMessage, IUser, IMeeting, IChatMessage, Conversation, Message, IConversation, IMessage } from '../models';
 import mongoose from 'mongoose';
+import { hashPassword, validatePasswordStrength } from '../utils/passwordHash';
 
 export class MongoDBService {
   private buildDefaultAvatarUrl(seed: string): string {
@@ -12,14 +13,41 @@ export class MongoDBService {
     email: string;
     name: string;
     username: string;
+    password?: string;
     avatar?: string;
+    phone?: string;
+    bio?: string;
+    dateOfBirth?: Date;
+    location?: string;
+    website?: string;
+    isEmailVerified?: boolean;
   }): Promise<IUser> {
     try {
-      console.log("Creating new user in MongoDB:", userData);
+      console.log("Creating new user in MongoDB:", { ...userData, password: userData.password ? '***' : undefined });
+      
+      // Hash password if provided
+      let hashedPassword: string | undefined;
+      if (userData.password) {
+        // Validate password strength
+        const validation = validatePasswordStrength(userData.password);
+        if (!validation.isValid) {
+          throw new Error(validation.errors[0] || "Password does not meet requirements");
+        }
+        hashedPassword = await hashPassword(userData.password);
+      }
+      
       const avatarUrl = userData.avatar && userData.avatar.trim().length > 0
         ? userData.avatar
         : this.buildDefaultAvatarUrl(userData.username || userData.firebaseUid);
-      const user = new User({ ...userData, avatar: avatarUrl });
+      
+      const userDataToSave = {
+        ...userData,
+        password: hashedPassword,
+        avatar: avatarUrl,
+        isEmailVerified: userData.isEmailVerified || false,
+      };
+      
+      const user = new User(userDataToSave);
       await user.save();
       console.log("User saved successfully:", { _id: user._id, username: user.username });
       return user;
@@ -34,10 +62,17 @@ export class MongoDBService {
     email: string;
     name: string;
     username: string;
+    password?: string;
     avatar?: string;
+    phone?: string;
+    bio?: string;
+    dateOfBirth?: Date;
+    location?: string;
+    website?: string;
+    isEmailVerified?: boolean;
   }): Promise<IUser> {
     try {
-      console.log("createOrUpdateUser called with:", userData);
+      console.log("createOrUpdateUser called with:", { ...userData, password: userData.password ? '***' : undefined });
       
       // Try to find existing user first
       let user = await this.getUserByFirebaseUid(userData.firebaseUid);
@@ -48,11 +83,33 @@ export class MongoDBService {
         user.email = userData.email;
         user.name = userData.name;
         user.username = userData.username;
+        
+        // Update password if provided
+        if (userData.password) {
+          const validation = validatePasswordStrength(userData.password);
+          if (!validation.isValid) {
+            throw new Error(validation.errors[0] || "Password does not meet requirements");
+          }
+          user.password = await hashPassword(userData.password);
+        }
+        
+        // Update optional fields if provided
+        if (userData.phone !== undefined) user.phone = userData.phone;
+        if (userData.bio !== undefined) user.bio = userData.bio;
+        if (userData.dateOfBirth !== undefined) user.dateOfBirth = userData.dateOfBirth;
+        if (userData.location !== undefined) user.location = userData.location;
+        if (userData.website !== undefined) user.website = userData.website;
+        if (userData.isEmailVerified !== undefined) user.isEmailVerified = userData.isEmailVerified;
+        
         if (userData.avatar) {
           user.avatar = userData.avatar;
         } else if (!user.avatar || user.avatar.trim().length === 0) {
           user.avatar = this.buildDefaultAvatarUrl(userData.username || userData.firebaseUid);
         }
+        
+        // Update last login
+        user.lastLogin = new Date();
+        
         await user.save();
         console.log("User updated successfully:", user._id);
         return user;

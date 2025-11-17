@@ -103,11 +103,19 @@ export default function Chats() {
   const { data: conversations = [], refetch: refetchConversations } = useQuery<Conversation[]>({
     queryKey: ["/api/conversations"],
     queryFn: async () => {
-      const res = await fetch(`/api/conversations?userId=${user?.uid}`);
+      if (!firebaseUser) throw new Error("User not authenticated");
+      
+      const token = await firebaseUser.getIdToken();
+      const res = await fetch("/api/conversations", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      });
       if (!res.ok) throw new Error("Failed to fetch conversations");
       return res.json();
     },
-    enabled: !!user?.uid
+    enabled: !!user?.uid && !!firebaseUser
   });
 
   useEffect(() => {
@@ -159,7 +167,7 @@ export default function Chats() {
             return prev.map(m => m.id === normalizedMessage.id ? normalizedMessage : m);
           }
 
-          // Check if this message is currently being replaced (prevent double appearance)
+          // Ch(prevent double appearanceck if this message is currently being replaced e)
           if (replacingMessagesRef.current.has(normalizedMessage.id)) {
             return prev; // Already processing this replacement
           }
@@ -430,8 +438,15 @@ export default function Chats() {
       
       let isActive = true;
 
-      fetch(`/api/conversations/${currentChatId}/messages?userId=${user.uid}&limit=30`)
-        .then(res => {
+      // Get auth token and fetch messages
+      firebaseUser?.getIdToken().then(token => {
+        return fetch(`/api/conversations/${currentChatId}/messages?limit=30`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: "include",
+        });
+      }).then(res => {
           if (!res.ok) throw new Error("Failed to fetch messages");
           return res.json();
         })
@@ -731,15 +746,18 @@ export default function Chats() {
   };
 
   const handleStartConversation = async (userId: string) => {
-    if (!user?.uid) return;
+    if (!user?.uid || !firebaseUser) return;
     
     try {
+      const token = await firebaseUser.getIdToken();
       const res = await fetch('/api/conversations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           participantIds: [user.uid, userId],
-          createdBy: user.uid
         })
       });
 

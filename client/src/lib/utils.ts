@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { auth } from "./firebase"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -32,7 +33,23 @@ export function getAvatarUrl(photoURL?: string | null, uid?: string, email?: str
 // Search users by username via API
 export async function searchUsers(query: string, limit: number = 10) {
   const params = new URLSearchParams({ q: query, limit: String(limit) })
-  const res = await fetch(`/api/users/search?${params.toString()}`)
+  
+  // Get auth token
+  const user = auth.currentUser;
+  const headers: Record<string, string> = {};
+  if (user) {
+    try {
+      const token = await user.getIdToken();
+      headers.Authorization = `Bearer ${token}`;
+    } catch (error) {
+      console.error("Failed to get auth token:", error);
+    }
+  }
+  
+  const res = await fetch(`/api/users/search?${params.toString()}`, {
+    headers,
+    credentials: "include",
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error || "Failed to search users")

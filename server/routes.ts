@@ -6,13 +6,17 @@ import { mongoService } from "./services/mongodb";
 import { verifyFirebaseToken, setUserOnlineStatus } from "./firebase/admin";
 import { mongoHealthCheck } from "./database/mongodb";
 import { Message, Conversation } from "./models";
+import { authenticate, optionalAuthenticate } from "./middleware/auth";
+import { authRateLimiter, apiRateLimiter, usernameCheckRateLimiter } from "./middleware/rateLimiter";
+import { createOTP, verifyOTP } from "./services/otpService";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
   const io = new SocketIOServer(httpServer, {
     cors: {
-      origin: "*",
-      methods: ["GET", "POST"]
+      origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === "production" ? false : "*"),
+      methods: ["GET", "POST"],
+      credentials: true,
     }
   });
 
@@ -554,7 +558,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Health check endpoint
+  // Database check endpoint (for debugging)
+  app.get("/api/db/check", async (req, res) => {
+    try {
+      const db = mongoose.connection.db;
+      if (!db) {
+        return res.status(503).json({ 
+          error: "Database not connected",
+          status: mongoose.connection.readyState 
+        });
+      }
+
+      const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+      const connectionState = mongoose.connection.readyState;
+      
+      const collections = await db.listCollections().toArray();
+      
+      const stats = {
+        status: states[connectionState],
+        readyState: connectionState,
+        database: db.databaseName,
+        collections: collections.map(c => c.name),
+        models: {
+          users: await User.countDocuments().catch(() => null),
+          meetings: await Meeting.countDocuments().catch(() => null),
+          conversations: await Conversation.countDocuments().catch(() => null),
+          messages: await Message.countDocuments().catch(() => null),
+          chatMessages: await ChatMessage.countDocuments().catch(() => null),
+        }
+      };
+
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ 
+        error: "Failed to check database", 
+        message: error.message 
+      });
+    }
+  });
+
   app.get("/api/health", async (req, res) => {
     try {
       const health = await mongoHealthCheck();
@@ -568,41 +610,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Auth routes (OTP verification)
+  // Send OTP for email verification
+  app.post("/api/auth/send-otp", authRateLimiter, authenticate, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { email } = req.body;
+      const userEmail = email || req.user.email;
+
+      if (!userEmail) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Verify the email matches the authenticated user
+      if (userEmail.toLowerCase() !== req.user.email?.toLowerCase()) {
+        return res.status(403).json({ error: "Email does not match authenticated user" });
+      }
+
+      // Create and send OTP
+      await createOTP(userEmail, "email_verification");
+
+      res.json({ 
+        success: true, 
+        message: "Verification code sent to your email",
+        // In development, return the OTP in the response (remove in production)
+        ...(process.env.NODE_ENV === "development" && { 
+          otp: "Check console for OTP (development only)" 
+        })
+      });
+    } catch (error: any) {
+      console.error("Error sending OTP:", error);
+      res.status(500).json({ error: error.message || "Failed to send verification code" });
+    }
+  });
+
+  // Verify OTP
+  app.post("/api/auth/verify-otp", authRateLimiter, authenticate, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { email, otp } = req.body;
+
+      if (!email || !otp) {
+        return res.status(400).json({ error: "Email and OTP are required" });
+      }
+
+      // Verify the email matches the authenticated user
+      if (email.toLowerCase() !== req.user.email?.toLowerCase()) {
+        return res.status(403).json({ error: "Email does not match authenticated user" });
+      }
+
+      // Verify OTP
+      const verified = await verifyOTP(email, otp, "email_verification");
+
+      if (verified) {
+        res.json({ 
+          verified: true, 
+          message: "Email verified successfully" 
+        });
+      } else {
+        res.status(400).json({ error: "Invalid verification code" });
+      }
+    } catch (error: any) {
+      console.error("Error verifying OTP:", error);
+      res.status(400).json({ error: error.message || "Verification failed" });
+    }
+  });
+
+  // Resend OTP
+  app.post("/api/auth/resend-otp", authRateLimiter, authenticate, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { email } = req.body;
+      const userEmail = email || req.user.email;
+
+      if (!userEmail) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Verify the email matches the authenticated user
+      if (userEmail.toLowerCase() !== req.user.email?.toLowerCase()) {
+        return res.status(403).json({ error: "Email does not match authenticated user" });
+      }
+
+      // Create and send new OTP
+      await createOTP(userEmail, "email_verification");
+
+      res.json({ 
+        success: true, 
+        message: "New verification code sent to your email",
+        // In development, return the OTP in the response (remove in production)
+        ...(process.env.NODE_ENV === "development" && { 
+          otp: "Check console for OTP (development only)" 
+        })
+      });
+    } catch (error: any) {
+      console.error("Error resending OTP:", error);
+      res.status(500).json({ error: error.message || "Failed to resend verification code" });
+    }
+  });
+
   // User routes
-  app.post("/api/users", async (req, res) => {
+  // Rate limit user creation/update (use apiRateLimiter for sync, authRateLimiter is too strict)
+  app.post("/api/users", apiRateLimiter, authenticate, async (req, res) => {
     try {
       console.log("=== USER CREATION START ===");
-      const { firebaseToken, ...userData } = req.body;
-      console.log("User data received:", { ...userData, firebaseToken: firebaseToken ? 'present' : 'missing' });
+      const { firebaseToken, password, ...userData } = req.body;
+      console.log("User data received:", { ...userData, firebaseToken: firebaseToken ? 'present' : 'missing', password: password ? '***' : undefined });
       
-      const decodedToken = await verifyFirebaseToken(firebaseToken);
-      console.log("Decoded token:", { uid: decodedToken.uid, email: decodedToken.email, name: decodedToken.name });
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      console.log("Decoded token:", { uid: req.user.uid, email: req.user.email, name: req.user.name });
       
       // Ensure we have all required fields with fallbacks
-      const name = userData.name && userData.name.trim() ? userData.name : 'User';
-      const email = userData.email || decodedToken.email || '';
+      const name = userData.name && userData.name.trim() ? userData.name : req.user.name || 'User';
+      const email = userData.email || req.user.email || '';
       const username = userData.username && userData.username.trim() ? userData.username : (email.split('@')[0] || 'user');
       
-      console.log("Final user data:", { name, email, username });
+      console.log("Final user data:", { name, email, username, hasPassword: !!password });
       
       const user = await mongoService.createOrUpdateUser({
-        firebaseUid: decodedToken.uid,
+        firebaseUid: req.user.uid,
         email: email,
         name: name,
         username: username,
-        avatar: userData.avatar
+        password: password, // Will be hashed in service
+        avatar: userData.avatar,
+        isEmailVerified: false, // Start as unverified, require OTP verification
       });
 
+      // Remove password from response
+      const userResponse = user.toObject();
+      delete userResponse.password;
+
       console.log("User created/updated in MongoDB:", { _id: user._id, username: user.username, email: user.email, name: user.name });
-      res.json(user);
-    } catch (error) {
+      res.json(userResponse);
+    } catch (error: any) {
       console.error("Error creating user:", error);
-      res.status(500).json({ error: "Failed to create user" });
+      res.status(500).json({ error: error.message || "Failed to create user" });
     }
   });
 
   // Search users by username (must be before /:id route)
-  app.get("/api/users/search", async (req, res) => {
+  app.get("/api/users/search", apiRateLimiter, authenticate, async (req, res) => {
     try {
       const { q, limit } = req.query as { q?: string; limit?: string };
       if (!q || q.trim().length < 2) {
@@ -628,7 +788,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/users/:id", async (req, res) => {
+  app.get("/api/users/:id", authenticate, async (req, res) => {
     try {
       const user = await mongoService.getUserById(req.params.id);
       if (!user) {
@@ -641,8 +801,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check if username is available
-  app.get("/api/users/check-username/:username", async (req, res) => {
+  // Check if username is available (rate limited to prevent abuse)
+  app.get("/api/users/check-username/:username", usernameCheckRateLimiter, authenticate, async (req, res) => {
     try {
       const { username } = req.params;
       
@@ -663,7 +823,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get username suggestions
-  app.get("/api/users/suggestions/:baseUsername", async (req, res) => {
+  app.get("/api/users/suggestions/:baseUsername", authenticate, async (req, res) => {
     try {
       const { baseUsername } = req.params;
       
@@ -680,14 +840,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Meeting routes
-  app.post("/api/meetings", async (req, res) => {
+  app.post("/api/meetings", apiRateLimiter, authenticate, async (req, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
       const { firebaseToken, ...meetingData } = req.body;
-      const decodedToken = await verifyFirebaseToken(firebaseToken);
 
       const meeting = await mongoService.createMeeting({
         ...meetingData,
-        hostId: decodedToken.uid
+        hostId: req.user.uid
       });
 
       res.json(meeting);
@@ -697,7 +860,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/meetings/:id", async (req, res) => {
+  // Get current user's meetings
+  app.get("/api/meetings", authenticate, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const dbUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(req.user.uid);
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Get limit and skip from query params
+      const limit = parseInt(req.query.limit as string) || 10;
+      const skip = parseInt(req.query.skip as string) || 0;
+      const status = req.query.status as string | undefined; // Optional filter by status
+
+      let meetings = await mongoService.getUserMeetings(dbUser._id.toString());
+
+      // Filter by status if provided
+      if (status) {
+        meetings = meetings.filter(m => m.status === status);
+      }
+
+      // Only return ended meetings for recent calls, sort by endTime or startTime desc
+      meetings = meetings
+        .filter(m => m.status === 'ended')
+        .sort((a, b) => {
+          const aTime = a.endTime?.getTime() || a.startTime.getTime();
+          const bTime = b.endTime?.getTime() || b.startTime.getTime();
+          return bTime - aTime;
+        })
+        .slice(skip, skip + limit);
+
+      res.json(meetings);
+    } catch (error) {
+      console.error("Error fetching user meetings:", error);
+      res.status(500).json({ error: "Failed to fetch meetings" });
+    }
+  });
+
+  app.get("/api/meetings/:id", authenticate, async (req, res) => {
     try {
       const meeting = await mongoService.getMeetingById(req.params.id);
       if (!meeting) {
@@ -710,9 +914,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/users/:userId/meetings", async (req, res) => {
+  app.get("/api/users/:userId/meetings", authenticate, async (req, res) => {
     try {
-      const meetings = await mongoService.getUserMeetings(req.params.userId);
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      // Users can only view their own meetings
+      const dbUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(req.user.uid);
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const requestedUserId = req.params.userId;
+      
+      // Check if requested user ID matches authenticated user
+      // Allow if it's the Firebase UID or MongoDB ID
+      if (requestedUserId !== req.user.uid && requestedUserId !== dbUser._id.toString()) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const meetings = await mongoService.getUserMeetings(dbUser._id.toString());
       res.json(meetings);
     } catch (error) {
       console.error("Error fetching user meetings:", error);
@@ -721,7 +943,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Chat routes
-  app.get("/api/meetings/:meetingId/messages", async (req, res) => {
+  app.get("/api/meetings/:meetingId/messages", authenticate, async (req, res) => {
     try {
       const messages = await mongoService.getMeetingMessages(req.params.meetingId);
       res.json(messages);
@@ -732,15 +954,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Conversation routes
-  app.get("/api/conversations", async (req, res) => {
+  app.get("/api/conversations", authenticate, async (req, res) => {
     try {
-      const { userId } = req.query;
-      if (!userId) {
-        return res.status(400).json({ error: "User ID is required" });
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
       }
 
+      // Use authenticated user's ID instead of query parameter for security
+      const userId = req.user.uid;
+      
       // userId is Firebase UID, we need to get the MongoDB user
-      const dbUser = await mongoService.getUserByFirebaseUid(userId as string);
+      const dbUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(userId);
       
       console.log("API Call: Fetching conversations for userId:", userId);
       
@@ -884,12 +1108,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Keep old mock data as fallback
-  app.get("/api/conversations/mock", async (req, res) => {
+  app.get("/api/conversations/mock", authenticate, async (req, res) => {
     try {
-      const { userId } = req.query;
-      if (!userId) {
-        return res.status(400).json({ error: "User ID is required" });
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
       }
+
+      const userId = req.user.uid;
 
       // For now, return mock data until we implement conversation logic
       const mockConversations = [
@@ -1010,20 +1235,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/conversations/:conversationId/messages", async (req, res) => {
+  app.get("/api/conversations/:conversationId/messages", authenticate, async (req, res) => {
     try {
-      const { conversationId } = req.params;
-      const { userId, beforeDate, limit } = req.query;
-
-      if (!userId) {
-        return res.status(400).json({ error: "User ID is required" });
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
       }
+
+      const { conversationId } = req.params;
+      const { beforeDate, limit } = req.query;
+
+      // Use authenticated user's ID instead of query parameter
+      const userId = req.user.uid;
 
       console.log("Fetching messages for conversation:", conversationId, "userId:", userId, "beforeDate:", beforeDate);
 
-      const dbUser = await mongoService.getUserByFirebaseUid(userId as string);
+      // Verify user is a participant in this conversation
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+
+      const dbUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(userId);
       if (!dbUser) {
         return res.status(404).json({ error: "User not found" });
+      }
+
+      // Check if user is a participant
+      const isParticipant = conversation.participants.some(
+        (p) => p.toString() === dbUser._id.toString()
+      );
+      
+      if (!isParticipant) {
+        return res.status(403).json({ error: "Access denied" });
       }
 
       const limitNum = limit ? parseInt(limit as string, 10) : 50;
@@ -1047,17 +1290,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Create conversation endpoint
-  app.post("/api/conversations", async (req, res) => {
+  app.post("/api/conversations", apiRateLimiter, authenticate, async (req, res) => {
     try {
-      const { participantIds, createdBy, name } = req.body;
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const { participantIds, name } = req.body;
       
       if (!participantIds || !Array.isArray(participantIds) || participantIds.length === 0) {
         return res.status(400).json({ error: "At least one participant is required" });
       }
-      
-      if (!createdBy) {
-        return res.status(400).json({ error: "CreatedBy is required" });
-      }
+
+      // Use authenticated user as creator
+      const createdBy = req.user.uid;
 
       // Convert participant IDs to MongoDB IDs
       // participantIds may contain Firebase UIDs or MongoDB IDs
@@ -1086,11 +1332,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get the creator's MongoDB ID
-      const creatorUser = await mongoService.getUserByFirebaseUid(createdBy);
+      const creatorUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(createdBy);
       if (!creatorUser) {
         return res.status(404).json({ error: "Creator not found" });
       }
       const mongoCreatedBy = creatorUser._id.toString();
+      
+      // Ensure creator is in participant list
+      if (!mongoParticipantIds.includes(mongoCreatedBy)) {
+        mongoParticipantIds.push(mongoCreatedBy);
+      }
 
       // Check if conversation already exists (for 1-on-1 chats)
       if (mongoParticipantIds.length === 2) {
