@@ -8,6 +8,7 @@ import { AuthProvider } from "@/lib/auth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
+import EmailVerification from "@/pages/EmailVerification";
 import Dashboard from "@/pages/Dashboard";
 import Chats from "@/pages/Chats";
 import { lazy, Suspense } from "react";
@@ -23,6 +24,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Landing} />
       <Route path="/login" component={Login} />
+      <Route path="/verify-email" component={EmailVerification} />
       <Route path="/dashboard">
         <ProtectedRoute>
           <Dashboard />

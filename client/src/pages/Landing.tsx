@@ -3,8 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Video, Sparkles, Users, Shield, BarChart3, Zap } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useAuth } from "@/lib/auth";
 
 export default function Landing() {
+  const { user, loading } = useAuth();
   const features = [
     {
       icon: Sparkles,
@@ -51,12 +53,21 @@ export default function Landing() {
             <a href="#how-it-works" className="text-sm font-medium hover-elevate px-3 py-2 rounded-lg" data-testid="link-how-it-works">How It Works</a>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/login">
-              <Button variant="ghost" data-testid="button-login">Login</Button>
-            </Link>
-            <Link href="/login">
-              <Button data-testid="button-signup">Sign Up</Button>
-            </Link>
+            {!loading && !user && (
+              <>
+                <Link href="/login">
+                  <Button variant="ghost" data-testid="button-login">Login</Button>
+                </Link>
+                <Link href="/login">
+                  <Button data-testid="button-signup">Sign Up</Button>
+                </Link>
+              </>
+            )}
+            {!loading && user && (
+              <Link href="/dashboard">
+                <Button variant="ghost" data-testid="button-dashboard">Dashboard</Button>
+              </Link>
+            )}
             <ThemeToggle />
           </div>
         </div>

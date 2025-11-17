@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,32 +10,75 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { LogoMark } from "@/components/LogoMark";
+import { validatePassword, getPasswordStrengthColor } from "@/lib/passwordValidation";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { signIn, signUp, checkUsername, getUsernameSuggestions } = useAuth();
+  const { user, loading, signIn, signUp, checkUsername, getUsernameSuggestions } = useAuth();
+  const [showVerificationPrompt, setShowVerificationPrompt] = useState(false);
+  const [signupEmail, setSignupEmail] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [isFaceScanning, setIsFaceScanning] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [passwordValidation, setPasswordValidation] = useState<{ errors: string[]; strength: "weak" | "medium" | "strong" } | null>(null);
+
+  // Redirect to dashboard if user is already logged in
+  useEffect(() => {
+    if (!loading && user) {
+      setLocation("/dashboard");
+    }
+  }, [user, loading, setLocation]);
+
+  // Show loading while checking authentication
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-chart-2/5 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Don't show login form if user is already logged in (redirecting)
+  if (user) {
+    return null;
+  }
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    setIsSubmitting(true);
     setError("");
     
     try {
       await signIn(email, password);
+      // After successful login, ProtectedRoute will check email verification
+      // and redirect accordingly
       setLocation("/dashboard");
     } catch (error: any) {
       setError(error.message || "Login failed");
-      setLoading(false);
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePasswordChange = (value: string) => {
+    setPassword(value);
+    if (value.length > 0) {
+      const validation = validatePassword(value);
+      setPasswordValidation({
+        errors: validation.errors,
+        strength: validation.strength,
+      });
+    } else {
+      setPasswordValidation(null);
     }
   };
 
@@ -53,17 +96,30 @@ export default function Login() {
       return;
     }
     
-    setLoading(true);
+    // Validate password strength
+    const passwordValidationResult = validatePassword(password);
+    if (!passwordValidationResult.isValid) {
+      setError(passwordValidationResult.errors[0] || "Password does not meet requirements");
+      return;
+    }
+    
+    setIsSubmitting(true);
     setError("");
     setUsernameError("");
     
     try {
       await signUp(email, password, name, username);
-      setLocation("/dashboard");
+      // Show verification prompt and redirect to verification page
+      setSignupEmail(email);
+      setShowVerificationPrompt(true);
+      
+      // Redirect to email verification page
+      setTimeout(() => {
+        setLocation(`/verify-email?email=${encodeURIComponent(email)}`);
+      }, 1000);
     } catch (error: any) {
       setError(error.message || "Signup failed");
-    } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -193,8 +249,8 @@ export default function Login() {
                         />
                       </div>
                     </div>
-                    <Button type="submit" className="w-full" data-testid="button-submit-login" disabled={loading}>
-                      {loading ? "Signing In..." : "Sign In"}
+                    <Button type="submit" className="w-full" data-testid="button-submit-login" disabled={isSubmitting}>
+                      {isSubmitting ? "Signing In..." : "Sign In"}
                     </Button>
                   </form>
                 </div>
@@ -274,20 +330,38 @@ export default function Login() {
                     <Label htmlFor="signup-password">Password</Label>
                     <div className="relative">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="signup-password"
-                        type="password"
-                        placeholder="••••••••"
-                        className="pl-10"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        data-testid="input-signup-password"
-                        required
-                      />
+                        <Input
+                          id="signup-password"
+                          type="password"
+                          placeholder="••••••••"
+                          className="pl-10"
+                          value={password}
+                          onChange={(e) => handlePasswordChange(e.target.value)}
+                          data-testid="input-signup-password"
+                          required
+                        />
+                      </div>
+                      {passwordValidation && password.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">Password strength:</span>
+                            <span className={`text-xs font-medium ${getPasswordStrengthColor(passwordValidation.strength)}`}>
+                              {passwordValidation.strength.toUpperCase()}
+                            </span>
+                          </div>
+                          {passwordValidation.errors.length > 0 && (
+                            <ul className="text-xs text-muted-foreground list-disc list-inside space-y-0.5">
+                              {passwordValidation.errors.slice(0, 3).map((error, index) => (
+                                <li key={index}>{error}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <Button type="submit" className="w-full" data-testid="button-submit-signup" disabled={loading}>
-                    {loading ? "Creating Account..." : "Create Account"}
+                  
+                  <Button type="submit" className="w-full" data-testid="button-submit-signup" disabled={isSubmitting}>
+                    {isSubmitting ? "Creating Account..." : "Create Account"}
                   </Button>
                   <p className="text-xs text-center text-muted-foreground">
                     By signing up, you'll be able to set up facial recognition for quick login

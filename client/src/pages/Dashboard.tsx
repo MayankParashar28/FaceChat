@@ -1,27 +1,95 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Video, Plus, Users, Clock, Settings, LogOut, LayoutDashboard, MessageSquare, Search } from "lucide-react";
+import { Video, Plus, Users, Clock, Settings, LogOut, LayoutDashboard, MessageSquare, Search, Loader2 } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
+import { getQueryFn } from "@/lib/queryClient";
+
+interface Meeting {
+  _id: string;
+  title: string;
+  participants: string[] | { _id: string; name: string }[];
+  startTime: string | Date;
+  endTime?: string | Date;
+  analytics?: {
+    emotionData?: {
+      emotion: string;
+      percentage: number;
+    }[];
+  };
+}
+
+// Format time ago (e.g., "2 hours ago", "Yesterday", "3 days ago")
+function formatTimeAgo(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return `${weeks} week${weeks > 1 ? 's' : ''} ago`;
+  }
+  if (diffDays < 365) {
+    const months = Math.floor(diffDays / 30);
+    return `${months} month${months > 1 ? 's' : ''} ago`;
+  }
+  const years = Math.floor(diffDays / 365);
+  return `${years} year${years > 1 ? 's' : ''} ago`;
+}
+
+// Calculate duration in minutes
+function calculateDuration(startTime: Date, endTime?: Date): string {
+  if (!endTime) {
+    const duration = Math.floor((new Date().getTime() - startTime.getTime()) / (1000 * 60));
+    return `${duration}m`;
+  }
+  const duration = Math.floor((endTime.getTime() - startTime.getTime()) / (1000 * 60));
+  if (duration < 60) return `${duration}m`;
+  const hours = Math.floor(duration / 60);
+  const mins = duration % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+// Get emotion from analytics or return default
+function getEmotion(meeting: Meeting): string {
+  if (meeting.analytics?.emotionData && meeting.analytics.emotionData.length > 0) {
+    // Get the emotion with highest percentage
+    const topEmotion = meeting.analytics.emotionData.reduce((prev, current) =>
+      (prev.percentage > current.percentage) ? prev : current
+    );
+    return topEmotion.emotion;
+  }
+  return "Completed";
+}
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { user, logout } = useAuth();
   const [roomId, setRoomId] = useState("");
 
-  const recentCalls = [
-    { id: "1", title: "Team Standup", participants: 5, duration: "24m", time: "2 hours ago", emotion: "Positive" },
-    { id: "2", title: "Client Meeting", participants: 3, duration: "45m", time: "Yesterday", emotion: "Engaged" },
-    { id: "3", title: "1-on-1 with Sarah", participants: 2, duration: "18m", time: "2 days ago", emotion: "Focused" }
-  ];
+  // Fetch user's recent meetings
+  const { data: meetings, isLoading: meetingsLoading } = useQuery<Meeting[]>({
+    queryKey: ["/api/meetings?limit=10"],
+    queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !!user, // Only fetch when user is logged in
+    refetchOnWindowFocus: false,
+  });
 
   const createCall = () => {
     // Generate a random room ID
@@ -177,29 +245,53 @@ export default function Dashboard() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {recentCalls.map((call) => (
-                      <div 
-                        key={call.id} 
-                        className="flex items-center justify-between p-4 rounded-lg border hover-elevate cursor-pointer"
-                        onClick={() => setLocation(`/summary/${call.id}`)}
-                        data-testid={`call-item-${call.id}`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <Video className="w-5 h-5 text-primary" />
+                  {meetingsLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                      <span className="ml-2 text-muted-foreground">Loading meetings...</span>
+                    </div>
+                  ) : !meetings || meetings.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Video className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p className="text-sm">No recent calls yet</p>
+                      <p className="text-xs mt-1">Start or join a call to see it here</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {meetings.map((meeting) => {
+                        const participantCount = Array.isArray(meeting.participants) 
+                          ? meeting.participants.length 
+                          : 0;
+                        const startTime = new Date(meeting.startTime);
+                        const endTime = meeting.endTime ? new Date(meeting.endTime) : undefined;
+                        const duration = calculateDuration(startTime, endTime);
+                        const timeAgo = endTime ? formatTimeAgo(endTime) : formatTimeAgo(startTime);
+                        const emotion = getEmotion(meeting);
+
+                        return (
+                          <div 
+                            key={meeting._id} 
+                            className="flex items-center justify-between p-4 rounded-lg border hover-elevate cursor-pointer"
+                            onClick={() => setLocation(`/summary/${meeting._id}`)}
+                            data-testid={`call-item-${meeting._id}`}
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                                <Video className="w-5 h-5 text-primary" />
+                              </div>
+                              <div>
+                                <p className="font-medium">{meeting.title || "Untitled Call"}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {participantCount} participant{participantCount !== 1 ? 's' : ''} • {duration} • {timeAgo}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge variant="secondary">{emotion}</Badge>
                           </div>
-                          <div>
-                            <p className="font-medium">{call.title}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {call.participants} participants • {call.duration} • {call.time}
-                            </p>
-                          </div>
-                        </div>
-                        <Badge variant="secondary">{call.emotion}</Badge>
-                      </div>
-                    ))}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

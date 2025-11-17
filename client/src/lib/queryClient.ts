@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { auth } from "./firebase";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -7,16 +8,83 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+/**
+ * Get authentication headers with Firebase token
+ * Automatically refreshes expired tokens
+ */
+async function getAuthHeaders(forceRefresh = false): Promise<Record<string, string>> {
+  const user = auth.currentUser;
+  if (!user) {
+    return {};
+  }
+
+  try {
+    // Force refresh if requested, otherwise get token (will auto-refresh if expired)
+    const token = forceRefresh 
+      ? await user.getIdToken(true) 
+      : await user.getIdToken();
+    return {
+      Authorization: `Bearer ${token}`,
+    };
+  } catch (error) {
+    console.error("Failed to get auth token:", error);
+    // If token refresh fails, user might need to re-authenticate
+    return {};
+  }
+}
+
+/**
+ * Retry request with fresh token if 401 occurs
+ */
+async function fetchWithAuthRetry(
+  url: string,
+  options: RequestInit = {},
+  retries = 1
+): Promise<Response> {
+  let authHeaders = await getAuthHeaders();
+  
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      ...authHeaders,
+    },
+    credentials: "include",
+  });
+
+  // If 401 and we have retries left, try refreshing token and retry once
+  if (res.status === 401 && retries > 0 && auth.currentUser) {
+    console.log("Token expired, refreshing and retrying...");
+    authHeaders = await getAuthHeaders(true); // Force refresh
+    
+    const retryRes = await fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        ...authHeaders,
+      },
+      credentials: "include",
+    });
+    
+    return retryRes;
+  }
+
+  return res;
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(url, {
+  const headers: Record<string, string> = {
+    ...(data ? { "Content-Type": "application/json" } : {}),
+  };
+
+  const res = await fetchWithAuthRetry(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
   });
 
   await throwIfResNotOk(res);
@@ -29,9 +97,9 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
-      credentials: "include",
-    });
+    const url = queryKey.join("/") as string;
+    
+    const res = await fetchWithAuthRetry(url);
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;
