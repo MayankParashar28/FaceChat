@@ -1,5 +1,5 @@
 import { User, Meeting, ChatMessage, IUser, IMeeting, IChatMessage, Conversation, Message, IConversation, IMessage } from '../models';
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { hashPassword, validatePasswordStrength } from '../utils/passwordHash';
 
 export class MongoDBService {
@@ -218,13 +218,117 @@ export class MongoDBService {
     roomId: string;
     meetingType?: 'video' | 'audio' | 'screen-share';
     settings?: any;
+    status?: 'scheduled' | 'active' | 'ended';
   }): Promise<IMeeting> {
     try {
-      const meeting = new Meeting(meetingData);
+      // Check MongoDB connection
+      if (mongoose.connection.readyState !== 1) {
+        throw new Error('MongoDB is not connected. ReadyState: ' + mongoose.connection.readyState);
+      }
+      
+      console.log('Creating meeting with data:', {
+        ...meetingData,
+        hostId: meetingData.hostId,
+        participants: meetingData.participants,
+        startTime: meetingData.startTime,
+        mongooseReadyState: mongoose.connection.readyState
+      });
+      
+      // Convert hostId and participants to ObjectIds if they're strings
+      const hostIdObj = typeof meetingData.hostId === 'string' 
+        ? new Types.ObjectId(meetingData.hostId)
+        : meetingData.hostId;
+      
+      const participantsObj = meetingData.participants.map(p => 
+        typeof p === 'string' ? new Types.ObjectId(p) : p
+      );
+      
+      // Validate ObjectIds
+      if (!Types.ObjectId.isValid(hostIdObj.toString())) {
+        throw new Error(`Invalid hostId: ${meetingData.hostId}`);
+      }
+      participantsObj.forEach((p, idx) => {
+        if (!Types.ObjectId.isValid(p.toString())) {
+          throw new Error(`Invalid participant ID at index ${idx}: ${meetingData.participants[idx]}`);
+        }
+      });
+      
+      // Create meeting object - explicitly set all required fields and defaults
+      // Similar to how Message is created (which works)
+      const meetingDataToSave: any = {
+        title: meetingData.title,
+        hostId: hostIdObj,
+        participants: participantsObj,
+        startTime: meetingData.startTime,
+        roomId: meetingData.roomId,
+        meetingType: meetingData.meetingType || 'video',
+        status: meetingData.status || 'active',
+        // Explicitly set settings (schema has defaults, but let's be explicit)
+        settings: meetingData.settings || {
+          allowScreenShare: true,
+          allowChat: true,
+          allowRecording: false,
+          maxParticipants: 6
+        },
+        // Explicitly set analytics with defaults (schema has defaults, but let's be explicit)
+        analytics: {
+          totalDuration: 0,
+          participantCount: participantsObj.length,
+          engagementScore: 0,
+          emotionData: []
+        },
+        isDeleted: false
+      };
+      
+      // Add optional fields only if provided
+      if (meetingData.description) {
+        meetingDataToSave.description = meetingData.description;
+      }
+      
+      console.log('Creating Meeting instance with data:', {
+        title: meetingDataToSave.title,
+        hostId: meetingDataToSave.hostId.toString(),
+        participants: meetingDataToSave.participants.map((p: any) => p.toString()),
+        roomId: meetingDataToSave.roomId,
+        status: meetingDataToSave.status,
+        meetingType: meetingDataToSave.meetingType,
+        hasSettings: !!meetingDataToSave.settings,
+        hasAnalytics: !!meetingDataToSave.analytics
+      });
+      
+      const meeting = new Meeting(meetingDataToSave);
+      
+      // Validate before saving
+      const validationError = meeting.validateSync();
+      if (validationError) {
+        console.error('❌ Meeting validation error:', validationError);
+        throw validationError;
+      }
+      
+      console.log('Attempting to save meeting to MongoDB...');
       await meeting.save();
+      console.log('✅ Meeting saved successfully:', meeting._id);
+      console.log('   Meeting details:', {
+        _id: meeting._id,
+        roomId: meeting.roomId,
+        hostId: meeting.hostId,
+        participants: meeting.participants,
+        status: meeting.status
+      });
+      
       return meeting;
-    } catch (error) {
-      console.error('Error creating meeting:', error);
+    } catch (error: any) {
+      console.error('❌ Error creating meeting:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        name: error.name,
+        meetingData: {
+          ...meetingData,
+          hostId: meetingData.hostId,
+          participants: meetingData.participants
+        }
+      });
       throw error;
     }
   }
@@ -277,6 +381,15 @@ export class MongoDBService {
       return await Meeting.findByIdAndUpdate(meetingId, updateData, { new: true });
     } catch (error) {
       console.error('Error updating meeting status:', error);
+      throw error;
+    }
+  }
+
+  async updateMeeting(meetingId: string, updateData: Partial<IMeeting>): Promise<IMeeting | null> {
+    try {
+      return await Meeting.findByIdAndUpdate(meetingId, updateData, { new: true });
+    } catch (error) {
+      console.error('Error updating meeting:', error);
       throw error;
     }
   }

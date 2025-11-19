@@ -51,13 +51,13 @@ export async function authenticate(
       uid: decodedToken.uid,
       email: decodedToken.email || null,
       name: decodedToken.name || null,
-      emailVerified: decodedToken.emailVerified,
+      emailVerified: decodedToken.emailVerified ?? false,
     };
 
     // Optionally load MongoDB user document
     try {
       const dbUser = await mongoService.getUserByFirebaseUid(decodedToken.uid);
-      if (dbUser) {
+      if (dbUser && req.user) {
         req.user.dbUser = dbUser;
       }
     } catch (error) {
@@ -100,12 +100,12 @@ export async function optionalAuthenticate(
           uid: decodedToken.uid,
           email: decodedToken.email || null,
           name: decodedToken.name || null,
-          emailVerified: decodedToken.emailVerified,
+          emailVerified: decodedToken.emailVerified ?? false,
         };
 
         try {
           const dbUser = await mongoService.getUserByFirebaseUid(decodedToken.uid);
-          if (dbUser) {
+          if (dbUser && req.user) {
             req.user.dbUser = dbUser;
           }
         } catch (error) {

@@ -3,8 +3,38 @@ import { auth } from "./firebase";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    let errorData: any;
+    const contentType = res.headers.get("content-type");
+    
+    try {
+      if (contentType && contentType.includes("application/json")) {
+        errorData = await res.json();
+      } else {
+        const text = await res.text();
+        errorData = text || res.statusText;
+      }
+    } catch (e) {
+      errorData = res.statusText || "Unknown error";
+    }
+    
+    // Create a more detailed error with all available information
+    let errorMessage = `${res.status}: `;
+    if (errorData?.error) {
+      errorMessage += errorData.error;
+    } else if (errorData?.message) {
+      errorMessage += errorData.message;
+    } else if (typeof errorData === 'string') {
+      errorMessage += errorData;
+    } else {
+      errorMessage += JSON.stringify(errorData);
+    }
+    
+    const error = new Error(errorMessage);
+    (error as any).status = res.status;
+    (error as any).statusText = res.statusText;
+    (error as any).data = errorData;
+    (error as any).response = errorData; // Also store as response for compatibility
+    throw error;
   }
 }
 
