@@ -60,9 +60,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
-        // Reload user to get latest emailVerified status
-        await firebaseUser.reload()
-        
+        // Reload user to get latest emailVerified status - REMOVED to prevent infinite loop
+        // await firebaseUser.reload()
+
         const derivedUsername =
           firebaseUser.email?.split('@')[0] || firebaseUser.displayName?.replace(/\s+/g, '').toLowerCase() || null
         const derivedDisplayName =
@@ -88,12 +88,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Only sync if we don't have user data yet or if emailVerified status changed
         try {
           const token = await firebaseUser.getIdToken()
-          
+
           // Always sync on initial load, but skip if we already have the user and nothing changed
           // We'll let the server handle idempotent updates
           const response = await fetch('/api/users', {
             method: 'POST',
-            headers: { 
+            headers: {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${token}`,
             },
@@ -107,7 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (response.ok) {
             const dbUser = await response.json()
-            
+
             // Prefer server-provided profile information
             setUser((prev) => {
               if (!prev) return prev
@@ -186,9 +186,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const signUp = async (
-    email: string, 
-    password: string, 
-    name: string, 
+    email: string,
+    password: string,
+    name: string,
     username: string
   ) => {
     try {
@@ -212,7 +212,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const response = await fetch('/api/users', {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
@@ -232,7 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const createdUser = await response.json()
         console.log('User successfully created in MongoDB:', createdUser)
-        
+
         // Send Firebase email verification
         try {
           await firebaseSendEmailVerification(user)
@@ -276,7 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!user) {
         throw new Error('User not authenticated')
       }
-      
+
       const token = await user.getIdToken()
       const response = await fetch(`/api/users/check-username/${encodeURIComponent(username)}`, {
         headers: {
@@ -300,11 +300,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!user) {
         throw new Error('User not authenticated')
       }
-      
+
       if (user.emailVerified) {
         throw new Error('Email is already verified')
       }
-      
+
       await firebaseSendEmailVerification(user)
       console.log('📧 Verification email sent! Check your inbox and click the verification link.')
     } catch (error: any) {
@@ -326,7 +326,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!user) {
         throw new Error('User not authenticated')
       }
-      
+
       const token = await user.getIdToken()
       const response = await fetch(`/api/users/suggestions/${encodeURIComponent(baseUsername)}`, {
         headers: {
@@ -387,7 +387,7 @@ async function updateOnlineStatus(userId: string, isOnline: boolean) {
     const { getDatabase, ref, set, serverTimestamp } = await import('firebase/database');
     const database = getDatabase();
     const userStatusRef = ref(database, `users/${userId}/status`);
-    
+
     await set(userStatusRef, {
       online: isOnline,
       lastSeen: serverTimestamp(),

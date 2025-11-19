@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import { mongoService } from "./services/mongodb";
 import { verifyFirebaseToken, setUserOnlineStatus } from "./firebase/admin";
 import { mongoHealthCheck } from "./database/mongodb";
-import { Message, Conversation } from "./models";
+import { Message, Conversation, User, Meeting, ChatMessage } from "./models";
 import { authenticate, optionalAuthenticate } from "./middleware/auth";
 import { authRateLimiter, apiRateLimiter, usernameCheckRateLimiter } from "./middleware/rateLimiter";
 import { createOTP, verifyOTP } from "./services/otpService";
@@ -338,10 +338,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Video call signaling handlers
     socket.on("call:join", async ({ roomId, userId }: { roomId: string; userId: string }) => {
-      console.log(`User ${userId} joining call room: ${roomId}`);
-      socket.join(`call:${roomId}`);
+      console.log(`=== CALL:JOIN EVENT RECEIVED ===`);
+      console.log(`   Socket ID: ${socket.id}`);
+      console.log(`   User ID: ${userId}`);
+      console.log(`   Room ID: ${roomId}`);
+      console.log(`   Timestamp: ${new Date().toISOString()}`);
       
-      // Track participants
+      if (!roomId || !userId) {
+        console.error(`❌ Missing required fields: roomId=${roomId}, userId=${userId}`);
+        return;
+      }
+      
+      socket.join(`call:${roomId}`);
+      console.log(`   Socket joined room: call:${roomId}`);
+      
+      // Track participants - check BEFORE adding to determine if first user
+      const isFirstUser = !roomParticipants.has(roomId) || roomParticipants.get(roomId)!.size === 0;
       if (!roomParticipants.has(roomId)) {
         roomParticipants.set(roomId, new Set());
       }
@@ -350,14 +362,152 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get user data for the joining user
       let userName: string | undefined;
       let userAvatar: string | undefined;
+      let dbUser;
       try {
-        const dbUser = await mongoService.getUserByFirebaseUid(userId);
+        dbUser = await mongoService.getUserByFirebaseUid(userId);
         if (dbUser) {
           userName = dbUser.name;
           userAvatar = dbUser.avatar;
+          console.log(`Found user in DB: ${dbUser.name}, ID: ${dbUser._id}`);
+        } else {
+          console.warn(`User ${userId} not found in MongoDB database`);
         }
       } catch (error) {
         console.error("Error fetching user data:", error);
+      }
+
+      // Auto-create meeting if this is the first user joining
+      console.log(`Meeting creation check - isFirstUser: ${isFirstUser}, dbUser exists: ${!!dbUser}, roomId: ${roomId}`);
+      
+      if (isFirstUser) {
+        if (!dbUser) {
+          console.error(`❌ Cannot create meeting: User ${userId} not found in MongoDB. User must be registered first.`);
+          console.error(`   This usually means the user hasn't completed signup or MongoDB sync failed.`);
+        } else {
+          try {
+            console.log(`🔍 Checking for existing meeting with roomId: ${roomId}`);
+            // Check if meeting already exists for this room
+            const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
+            console.log(`   Existing meeting check result: ${existingMeeting ? `Found (${existingMeeting._id})` : 'Not found'}`);
+            
+            if (!existingMeeting) {
+              // Create a new meeting
+              console.log(`📝 Creating new meeting for room: ${roomId}`);
+              console.log(`   Host ID: ${dbUser._id} (${typeof dbUser._id})`);
+              console.log(`   Host ID string: ${dbUser._id.toString()}`);
+              console.log(`   Participants: [${dbUser._id.toString()}]`);
+              console.log(`   Room ID: ${roomId}`);
+              
+              const meetingData = {
+                title: `Call with ${userName || 'Participants'}`,
+                hostId: dbUser._id.toString(),
+                participants: [dbUser._id.toString()],
+                startTime: new Date(),
+                roomId: roomId,
+                meetingType: 'video' as const,
+                status: 'active' as const
+              };
+              
+              console.log(`   Meeting data prepared:`, meetingData);
+              
+              const newMeeting = await mongoService.createMeeting(meetingData);
+              console.log(`✅ Successfully created meeting: ${newMeeting._id} for room: ${roomId}`);
+              console.log(`   Meeting saved with ID: ${newMeeting._id}`);
+              
+              // Verify it was actually saved
+              const verifyMeeting = await mongoService.getMeetingByRoomId(roomId);
+              if (verifyMeeting) {
+                console.log(`✅ Verification: Meeting found in DB: ${verifyMeeting._id}`);
+              } else {
+                console.error(`❌ Verification FAILED: Meeting not found in DB after creation!`);
+              }
+            } else {
+              console.log(`ℹ️ Meeting already exists for room: ${roomId}, ID: ${existingMeeting._id}`);
+              // Update existing meeting to active if it was ended
+              if (existingMeeting.status === 'ended') {
+                await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                  status: 'active',
+                  startTime: new Date(),
+                  endTime: undefined
+                });
+                console.log(`✅ Updated existing meeting ${existingMeeting._id} to active`);
+              }
+            }
+          } catch (error: any) {
+            console.error("❌ Error auto-creating meeting:", error);
+            console.error("Error details:", {
+              message: error.message,
+              code: error.code,
+              name: error.name,
+              stack: error.stack,
+              roomId,
+              userId,
+              dbUserId: dbUser?._id,
+              dbUserType: typeof dbUser?._id
+            });
+            
+            // Check for specific MongoDB errors
+            if (error.code === 11000) {
+              console.error("❌ Duplicate key error - meeting with this roomId might already exist");
+            }
+            if (error.name === 'ValidationError') {
+              console.error("❌ Validation error:", error.errors);
+            }
+            // Don't block the call if meeting creation fails, but log the error
+          }
+        }
+      }
+      
+      // Add user to existing meeting participants if not already there (for non-first users)
+      if (!isFirstUser && dbUser) {
+        try {
+          const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
+          if (existingMeeting) {
+            const participantIds = existingMeeting.participants.map((p: any) => 
+              typeof p === 'object' ? p._id.toString() : p.toString()
+            );
+            if (!participantIds.includes(dbUser._id.toString())) {
+              const currentParticipantCount = roomParticipants.get(roomId)?.size || participantIds.length + 1;
+              await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                participants: [...participantIds, dbUser._id.toString()],
+                analytics: {
+                  totalDuration: existingMeeting.analytics?.totalDuration || 0,
+                  participantCount: currentParticipantCount,
+                  engagementScore: existingMeeting.analytics?.engagementScore || 0,
+                  emotionData: existingMeeting.analytics?.emotionData || []
+                }
+              });
+            }
+            // Update status to active if it was ended
+            if (existingMeeting.status === 'ended') {
+              const currentParticipantCount = roomParticipants.get(roomId)?.size || participantIds.length + 1;
+              await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                status: 'active',
+                startTime: new Date(),
+                endTime: undefined,
+                analytics: {
+                  totalDuration: 0, // Reset duration for new call
+                  participantCount: currentParticipantCount,
+                  engagementScore: 0,
+                  emotionData: []
+                }
+              });
+            } else {
+              // Update participant count in analytics
+              const currentParticipantCount = roomParticipants.get(roomId)?.size || participantIds.length + 1;
+              await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                analytics: {
+                  totalDuration: existingMeeting.analytics?.totalDuration || 0,
+                  participantCount: currentParticipantCount,
+                  engagementScore: existingMeeting.analytics?.engagementScore || 0,
+                  emotionData: existingMeeting.analytics?.emotionData || []
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Error updating meeting participants:", error);
+        }
       }
       
       // Notify others in the room
@@ -405,14 +555,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
       socket.emit("call:existing-users", { participants: participantsWithData });
     });
 
-    socket.on("call:leave", ({ roomId }: { roomId: string }) => {
+    socket.on("call:leave", async ({ roomId }: { roomId: string }) => {
       console.log(`User leaving call room: ${roomId}`);
       socket.leave(`call:${roomId}`);
+      
+      const wasLastUser = roomParticipants.has(roomId) && roomParticipants.get(roomId)!.size === 1;
       
       if (roomParticipants.has(roomId)) {
         roomParticipants.get(roomId)!.delete(socket.id);
         if (roomParticipants.get(roomId)!.size === 0) {
           roomParticipants.delete(roomId);
+        }
+      }
+      
+      // Update meeting status to 'ended' if this was the last user
+      if (wasLastUser) {
+        try {
+          const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
+          if (existingMeeting && existingMeeting.status === 'active') {
+            const endTime = new Date();
+            const startTime = existingMeeting.startTime;
+            const durationMs = endTime.getTime() - startTime.getTime();
+            const durationMinutes = Math.floor(durationMs / (1000 * 60));
+            
+            // Get final participant count (before this user left)
+            const finalParticipantCount = existingMeeting.participants.length;
+            
+            // Update meeting with end time, status, and analytics
+            await mongoService.updateMeeting(existingMeeting._id.toString(), {
+              status: 'ended',
+              endTime: endTime,
+              analytics: {
+                totalDuration: durationMinutes, // Duration in minutes
+                participantCount: finalParticipantCount,
+                engagementScore: 0, // Can be calculated later based on activity
+                emotionData: existingMeeting.analytics?.emotionData || []
+              }
+            });
+            console.log(`Marked meeting as ended for room: ${roomId}, duration: ${durationMinutes} minutes, participants: ${finalParticipantCount}`);
+          }
+        } catch (error) {
+          console.error("Error updating meeting status on leave:", error);
+        }
+      } else {
+        // Update participant count in analytics even if not the last user
+        try {
+          const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
+          if (existingMeeting && existingMeeting.status === 'active') {
+            const currentParticipantCount = roomParticipants.get(roomId)?.size || 0;
+            await mongoService.updateMeeting(existingMeeting._id.toString(), {
+              analytics: {
+                totalDuration: existingMeeting.analytics?.totalDuration || 0,
+                participantCount: currentParticipantCount,
+                engagementScore: existingMeeting.analytics?.engagementScore || 0,
+                emotionData: existingMeeting.analytics?.emotionData || []
+              }
+            });
+          }
+        } catch (error) {
+          console.error("Error updating participant count:", error);
         }
       }
       
@@ -539,7 +740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Client disconnected:", socket.id);
       
       // Remove from all call rooms
-      for (const [roomId, participants] of roomParticipants.entries()) {
+      for (const [roomId, participants] of Array.from(roomParticipants.entries())) {
         if (participants.has(socket.id)) {
           participants.delete(socket.id);
           io.to(`call:${roomId}`).emit("call:user-left", { socketId: socket.id });
@@ -558,6 +759,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Test endpoint to manually create a meeting (for debugging)
+  app.post("/api/test/create-meeting", authenticate, async (req, res) => {
+    try {
+      if (!req.user?.dbUser) {
+        return res.status(400).json({ error: "User not found in MongoDB" });
+      }
+      
+      const dbUser = req.user.dbUser;
+      const testRoomId = `test-${Date.now()}`;
+      
+      console.log("🧪 TEST: Creating meeting manually");
+      console.log("   User ID:", dbUser._id);
+      console.log("   Room ID:", testRoomId);
+      
+      const meeting = await mongoService.createMeeting({
+        title: "Test Meeting",
+        hostId: dbUser._id.toString(),
+        participants: [dbUser._id.toString()],
+        startTime: new Date(),
+        roomId: testRoomId,
+        meetingType: 'video',
+        status: 'active'
+      });
+      
+      console.log("✅ TEST: Meeting created successfully:", meeting._id);
+      
+      // Verify it was saved
+      const verifyMeeting = await mongoService.getMeetingByRoomId(testRoomId);
+      if (verifyMeeting) {
+        res.json({ 
+          success: true, 
+          meeting: {
+            _id: meeting._id,
+            roomId: meeting.roomId,
+            title: meeting.title,
+            status: meeting.status,
+            verified: true
+          }
+        });
+      } else {
+        res.status(500).json({ 
+          success: false, 
+          error: "Meeting created but not found in database",
+          meetingId: meeting._id
+        });
+      }
+    } catch (error: any) {
+      console.error("❌ TEST: Error creating meeting:", error);
+      res.status(500).json({ 
+        success: false, 
+        error: error.message,
+        details: error
+      });
+    }
+  });
+
   // Database check endpoint (for debugging)
   app.get("/api/db/check", async (req, res) => {
     try {
@@ -574,6 +831,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const collections = await db.listCollections().toArray();
       
+      // Get recent meetings for debugging
+      const recentMeetings = await Meeting.find()
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('_id roomId title status startTime hostId participants createdAt')
+        .lean()
+        .catch(() => []);
+      
       const stats = {
         status: states[connectionState],
         readyState: connectionState,
@@ -585,7 +850,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           conversations: await Conversation.countDocuments().catch(() => null),
           messages: await Message.countDocuments().catch(() => null),
           chatMessages: await ChatMessage.countDocuments().catch(() => null),
-        }
+        },
+        recentMeetings: recentMeetings
       };
 
       res.json(stats);
@@ -788,16 +1054,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get current user's profile - MUST be before /api/users/:id to avoid route conflict
+  app.get("/api/users/me", authenticate, async (req, res) => {
+    try {
+      console.log("[GET /api/users/me] Request received");
+      
+      if (!req.user) {
+        console.error("[GET /api/users/me] No user in request");
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      console.log("[GET /api/users/me] User UID:", req.user.uid);
+
+      // Check MongoDB connection
+      if (mongoose.connection.readyState !== 1) {
+        console.error("[GET /api/users/me] MongoDB not connected. ReadyState:", mongoose.connection.readyState);
+        return res.status(503).json({ 
+          error: "Database connection unavailable. Please try again later.",
+          details: "MongoDB is not connected"
+        });
+      }
+
+      // Try to get user from req.user.dbUser first (already loaded by auth middleware)
+      let dbUser = req.user.dbUser;
+      
+      // If not in req.user.dbUser, fetch from MongoDB
+      if (!dbUser) {
+        console.log("[GET /api/users/me] User not in req.user.dbUser, fetching from MongoDB...");
+        try {
+          dbUser = await mongoService.getUserByFirebaseUid(req.user.uid);
+          console.log("[GET /api/users/me] User fetch result:", dbUser ? `Found: ${dbUser._id}` : "Not found");
+        } catch (fetchError: any) {
+          console.error("[GET /api/users/me] Error fetching user:", fetchError);
+          throw new Error(`Failed to fetch user from database: ${fetchError.message}`);
+        }
+      }
+      
+      // If user doesn't exist, create them
+      if (!dbUser) {
+        console.log("[GET /api/users/me] User does not exist, creating new user...");
+        
+        // Generate username from email
+        let baseUsername = (req.user.email?.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '');
+        if (baseUsername.length < 3) {
+          baseUsername = baseUsername + '123';
+        }
+        
+        // Ensure username is unique
+        let username = baseUsername;
+        let attempts = 0;
+        while (attempts < 10) {
+          try {
+            const isTaken = await mongoService.isUsernameTaken(username);
+            if (!isTaken) break;
+            username = `${baseUsername}${Math.floor(Math.random() * 1000)}`;
+            attempts++;
+          } catch (e) {
+            break; // If check fails, use the username anyway
+          }
+        }
+        
+        try {
+          dbUser = await mongoService.createOrUpdateUser({
+            firebaseUid: req.user.uid,
+            email: req.user.email || '',
+            name: req.user.name || req.user.email?.split('@')[0] || 'User',
+            username: username,
+            isEmailVerified: req.user.emailVerified || false,
+          });
+          console.log("[GET /api/users/me] User created successfully:", dbUser._id);
+        } catch (createError: any) {
+          console.error("[GET /api/users/me] Error creating user:", createError);
+          
+          // If duplicate key, try to fetch existing user
+          if (createError.code === 11000) {
+            console.log("[GET /api/users/me] Duplicate key, fetching existing user...");
+            dbUser = await mongoService.getUserByFirebaseUid(req.user.uid);
+            if (!dbUser && req.user.email) {
+              const User = (await import("./models")).User;
+              dbUser = await User.findOne({ email: req.user.email.toLowerCase() });
+            }
+          }
+          
+          if (!dbUser) {
+            throw createError;
+          }
+        }
+      }
+
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Convert to plain object and remove password
+      const userResponse: any = {
+        _id: dbUser._id.toString(),
+        firebaseUid: dbUser.firebaseUid,
+        email: dbUser.email,
+        name: dbUser.name,
+        username: dbUser.username,
+        avatar: dbUser.avatar,
+        phone: dbUser.phone,
+        bio: dbUser.bio,
+        dateOfBirth: dbUser.dateOfBirth,
+        location: dbUser.location,
+        website: dbUser.website,
+        isEmailVerified: dbUser.isEmailVerified,
+        createdAt: dbUser.createdAt,
+        updatedAt: dbUser.updatedAt,
+      };
+
+      console.log("[GET /api/users/me] Successfully returning user:", userResponse._id);
+      res.json(userResponse);
+    } catch (error: any) {
+      console.error("[GET /api/users/me] ERROR:", error);
+      console.error("[GET /api/users/me] Error message:", error?.message);
+      console.error("[GET /api/users/me] Error stack:", error?.stack?.split('\n').slice(0, 5));
+      
+      res.status(500).json({ 
+        error: error?.message || "Failed to fetch user profile",
+        details: process.env.NODE_ENV === "development" ? {
+          message: error?.message,
+          code: error?.code,
+          name: error?.name
+        } : undefined
+      });
+    }
+  });
+
+  // Get user by ID - MUST be after /api/users/me to avoid route conflict
   app.get("/api/users/:id", authenticate, async (req, res) => {
     try {
+      // Prevent /api/users/me from matching this route
+      if (req.params.id === "me") {
+        console.error("[GET /api/users/:id] Route conflict detected! /api/users/me should be handled by /api/users/me route");
+        return res.status(500).json({ error: "Route configuration error. Please contact support." });
+      }
+      
       const user = await mongoService.getUserById(req.params.id);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(user);
-    } catch (error) {
-      console.error("Error fetching user:", error);
-      res.status(500).json({ error: "Failed to fetch user" });
+      
+      // Remove password from response
+      const userResponse: any = user.toObject();
+      delete userResponse.password;
+      
+      res.json(userResponse);
+    } catch (error: any) {
+      console.error("[GET /api/users/:id] Error fetching user:", error);
+      res.status(500).json({ 
+        error: "Failed to fetch user",
+        details: process.env.NODE_ENV === "development" ? error.message : undefined
+      });
     }
   });
 
@@ -839,6 +1248,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update current user's profile
+  app.put("/api/users/me", authenticate, async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const dbUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(req.user.uid);
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const { password, firebaseUid, email, ...updateData } = req.body;
+
+      // Don't allow updating email, firebaseUid, or password through this endpoint
+      // Email and firebaseUid should be managed through Firebase Auth
+      // Password updates should use a separate password reset endpoint
+
+      // Validate username if being updated
+      if (updateData.username && updateData.username !== dbUser.username) {
+        const isTaken = await mongoService.isUsernameTaken(updateData.username);
+        if (isTaken) {
+          return res.status(400).json({ error: "Username is already taken" });
+        }
+      }
+
+      const updatedUser = await mongoService.updateUser(dbUser._id.toString(), updateData);
+      if (!updatedUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Remove password from response
+      const userResponse = updatedUser.toObject();
+      delete userResponse.password;
+
+      res.json(userResponse);
+    } catch (error: any) {
+      console.error("Error updating user profile:", error);
+      if (error.code === 11000) {
+        // Duplicate key error (e.g., username already exists)
+        return res.status(400).json({ error: "Username is already taken" });
+      }
+      res.status(500).json({ error: error.message || "Failed to update profile" });
+    }
+  });
+
   // Meeting routes
   app.post("/api/meetings", apiRateLimiter, authenticate, async (req, res) => {
     try {
@@ -846,11 +1301,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Authentication required" });
       }
 
+      const dbUser = req.user.dbUser || await mongoService.getUserByFirebaseUid(req.user.uid);
+      if (!dbUser) {
+        return res.status(404).json({ error: "User not found in database" });
+      }
+
       const { firebaseToken, ...meetingData } = req.body;
 
       const meeting = await mongoService.createMeeting({
         ...meetingData,
-        hostId: req.user.uid
+        hostId: dbUser._id.toString() // Use MongoDB ObjectId, not Firebase UID
       });
 
       res.json(meeting);
@@ -882,11 +1342,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Filter by status if provided
       if (status) {
         meetings = meetings.filter(m => m.status === status);
+      } else {
+        // If no status filter, show all meetings (active, ended, and scheduled)
+        // This allows Recent Calls to show all meetings, not just ended ones
       }
 
-      // Only return ended meetings for recent calls, sort by endTime or startTime desc
+      // Sort by endTime (if exists) or startTime, most recent first
       meetings = meetings
-        .filter(m => m.status === 'ended')
         .sort((a, b) => {
           const aTime = a.endTime?.getTime() || a.startTime.getTime();
           const bTime = b.endTime?.getTime() || b.startTime.getTime();
