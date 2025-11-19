@@ -17,6 +17,7 @@ import VideoCall from "@/pages/VideoCall";
 // const VideoCall = lazy(() => import("@/pages/VideoCall"));
 import CallSummary from "@/pages/CallSummary";
 import Settings from "@/pages/Settings";
+import Profile from "@/pages/Profile";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -48,6 +49,11 @@ function Router() {
       <Route path="/settings">
         <ProtectedRoute>
           <Settings />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/profile">
+        <ProtectedRoute>
+          <Profile />
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />
