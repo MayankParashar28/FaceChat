@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon } from "lucide-react";
+import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -104,7 +104,7 @@ export default function Chats() {
     queryKey: ["/api/conversations"],
     queryFn: async () => {
       if (!firebaseUser) throw new Error("User not authenticated");
-      
+
       const token = await firebaseUser.getIdToken();
       const res = await fetch("/api/conversations", {
         headers: {
@@ -138,7 +138,7 @@ export default function Chats() {
     newSocket.on("message:new", (newMessage: Message) => {
       const activeChatId = selectedChatRef.current;
       const currentUser = userRef.current;
-      
+
       // Determine initial status based on sender
       let initialStatus: "sent" | "delivered" | "seen" | undefined = newMessage.status;
       if (!initialStatus) {
@@ -150,7 +150,7 @@ export default function Chats() {
           initialStatus = undefined;
         }
       }
-      
+
       const normalizedMessage: Message = {
         ...newMessage,
         createdAt: new Date(newMessage.createdAt),
@@ -174,33 +174,33 @@ export default function Chats() {
 
           // Check if this is a confirmation of an optimistic message
           // For messages from current user, match by content and recent timestamp
-          const isFromCurrentUser = normalizedMessage.senderId === currentUser?.uid || 
-                                    (normalizedMessage.sender as any)?.firebaseUid === currentUser?.uid ||
-                                    normalizedMessage.sender?.id === currentUser?.uid;
+          const isFromCurrentUser = normalizedMessage.senderId === currentUser?.uid ||
+            (normalizedMessage.sender as any)?.firebaseUid === currentUser?.uid ||
+            normalizedMessage.sender?.id === currentUser?.uid;
 
           if (isFromCurrentUser) {
             // This is our message - find and replace optimistic message
             // Match by content (exact match) and recent timestamp
             const contentToMatch = normalizedMessage.content.trim();
             const optimisticIndex = prev.findIndex(
-              m => m.isOptimistic && 
-              m.senderId === currentUser?.uid &&
-              m.content.trim() === contentToMatch &&
-              Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) < 30000 // Within 30 seconds
+              m => m.isOptimistic &&
+                m.senderId === currentUser?.uid &&
+                m.content.trim() === contentToMatch &&
+                Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) < 30000 // Within 30 seconds
             );
 
             if (optimisticIndex !== -1) {
               // Mark as being replaced to prevent duplicates
               replacingMessagesRef.current.add(normalizedMessage.id);
-              
+
               // Replace optimistic message with real one (WhatsApp-like behavior)
               const optimisticMsg = prev[optimisticIndex];
-              
+
               // Always start with "sent" status for smooth progression
               // Status updates will handle progression to "delivered" and "seen"
               // This prevents jumping directly to "seen" which causes visual glitches
               const finalStatus: "sent" | "delivered" | "seen" = "sent";
-              
+
               // Create new array and replace in place - this ensures atomic update
               const newMessages = prev.map((m, idx) => {
                 if (idx === optimisticIndex) {
@@ -212,15 +212,15 @@ export default function Chats() {
                   };
                 }
                 // Also remove any other optimistic messages with same content (safety)
-                if (m.isOptimistic && 
-                    m.senderId === currentUser?.uid &&
-                    m.content.trim() === contentToMatch &&
-                    idx !== optimisticIndex) {
+                if (m.isOptimistic &&
+                  m.senderId === currentUser?.uid &&
+                  m.content.trim() === contentToMatch &&
+                  idx !== optimisticIndex) {
                   return null; // Mark for removal
                 }
                 return m;
               }).filter(Boolean) as Message[];
-              
+
               // Remove from pending messages
               if (optimisticMsg.tempId) {
                 setPendingMessages(prevPending => {
@@ -229,45 +229,45 @@ export default function Chats() {
                   return newPending;
                 });
               }
-              
+
               // Don't manually trigger status updates here - let the server status updates handle it
               // This prevents race conditions and duplicate messages
-              
+
               // Clear the replacement flag after a short delay
               setTimeout(() => {
                 replacingMessagesRef.current.delete(normalizedMessage.id);
               }, 1000);
-              
+
               // Return immediately - don't add as new message
               return newMessages;
             }
           }
-          
+
           // Check for duplicates
-          const duplicateExists = prev.find(m => 
+          const duplicateExists = prev.find(m =>
             m.id === normalizedMessage.id ||
             (!m.isOptimistic &&
-            m.content.trim() === normalizedMessage.content.trim() &&
-            m.senderId === normalizedMessage.senderId &&
-            Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) < 3000)
+              m.content.trim() === normalizedMessage.content.trim() &&
+              m.senderId === normalizedMessage.senderId &&
+              Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) < 3000)
           );
-          
+
           if (duplicateExists) return prev;
-          
+
           // New message from another user - add it
           return [...prev, normalizedMessage];
         });
 
         // Only scroll if it's a new message from another user (WhatsApp behavior)
         // Don't scroll for our own messages - they're already visible
-        if (newMessage.senderId !== currentUser?.uid && 
-            (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid) {
+        if (newMessage.senderId !== currentUser?.uid &&
+          (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid) {
           setTimeout(() => scrollToBottom(), 100);
         }
 
         // If message is from another user and we're viewing the chat, mark as seen
-        if (newMessage.senderId !== currentUser?.uid && 
-            (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid) {
+        if (newMessage.senderId !== currentUser?.uid &&
+          (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid) {
           setTimeout(() => {
             newSocket.emit("message:seen", { messageId: newMessage.id, userId: currentUser?.uid });
           }, 500);
@@ -280,23 +280,23 @@ export default function Chats() {
     newSocket.on("message:status", ({ messageId, status }) => {
       setMessages(prev => {
         // Find and update the message by ID
-        const messageIndex = prev.findIndex(m => 
-          (!m.isOptimistic && m.id === messageId) || 
+        const messageIndex = prev.findIndex(m =>
+          (!m.isOptimistic && m.id === messageId) ||
           (m.isOptimistic && m.tempId === messageId)
         );
-        
+
         if (messageIndex === -1) return prev;
-        
+
         // Update the message status
         const updated = [...prev];
         updated[messageIndex] = { ...updated[messageIndex], status };
-        
+
         // Remove duplicates (optimistic + real with same content)
         const seenIds = new Set<string>();
         return updated.filter(msg => {
           // Remove optimistic if real message with same content exists
           if (msg.isOptimistic) {
-            const hasReal = updated.some(m => 
+            const hasReal = updated.some(m =>
               !m.isOptimistic &&
               m.content.trim() === msg.content.trim() &&
               m.senderId === msg.senderId &&
@@ -304,20 +304,20 @@ export default function Chats() {
             );
             if (hasReal) return false;
           }
-          
+
           // Remove duplicate IDs
           if (seenIds.has(msg.id)) return false;
           seenIds.add(msg.id);
           return true;
         });
       });
-      
+
       refetchConversations();
     });
 
     newSocket.on("message:error", ({ error, tempId }: { error: string; tempId?: string }) => {
       console.error("Message send error:", error);
-      
+
       // If we have a tempId, remove the optimistic message
       if (tempId) {
         setMessages(prev => prev.filter(msg => msg.tempId !== tempId));
@@ -344,14 +344,14 @@ export default function Chats() {
           return prev;
         });
       }
-      
+
       // Optionally show a toast/notification to the user
       // You can add a toast library here if needed
     });
 
     newSocket.on("message:pinned", ({ messageId, isPinned }) => {
       const activeChatId = selectedChatRef.current;
-      setMessages(prev => prev.map(msg => 
+      setMessages(prev => prev.map(msg =>
         msg.id === messageId ? { ...msg, isPinned } : msg
       ));
     });
@@ -424,7 +424,7 @@ export default function Chats() {
     setHasMoreMessages(true);
     setPendingMessages(new Map()); // Clear pending messages when switching conversations
     replacingMessagesRef.current.clear(); // Clear replacement tracking
-    
+
     if (selectedChat && socket && user?.uid) {
       const currentChatId = selectedChat;
       setMessages([]);
@@ -432,10 +432,10 @@ export default function Chats() {
 
       // Join the conversation room
       socket.emit("join:conversation", currentChatId);
-      
+
       // Mark all messages as read
       socket.emit("mark:read", { conversationId: currentChatId, userId: user.uid });
-      
+
       let isActive = true;
 
       // Get auth token and fetch messages
@@ -447,9 +447,9 @@ export default function Chats() {
           credentials: "include",
         });
       }).then(res => {
-          if (!res.ok) throw new Error("Failed to fetch messages");
-          return res.json();
-        })
+        if (!res.ok) throw new Error("Failed to fetch messages");
+        return res.json();
+      })
         .then((data: Message[]) => {
           if (!isActive) return;
           // Ensure data is an array before mapping
@@ -462,7 +462,7 @@ export default function Chats() {
               // Note: status is already set in backend based on isRead
               messageStatus = msg.status;
             }
-            
+
             return {
               ...msg,
               createdAt: new Date(msg.createdAt),
@@ -471,22 +471,22 @@ export default function Chats() {
           });
           setMessages(normalizedMessages);
           setHasMoreMessages(messagesArray.length === 30); // If we got 30 messages, there might be more
-          
+
           // Mark all messages from others as seen
           normalizedMessages.forEach(msg => {
             if (msg.senderId !== user?.uid) {
               socket.emit("message:seen", { messageId: msg.id, userId: user.uid });
             }
           });
-          
+
           // Gently scroll to show recent messages, but not force to absolute bottom
           // This allows users to see the conversation naturally and scroll up for older messages
           setTimeout(() => {
             const findViewport = () => {
               if (!scrollAreaRef.current) return null;
               return scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement ||
-                     scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
-                     (scrollAreaRef.current.firstElementChild as HTMLElement);
+                scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
+                (scrollAreaRef.current.firstElementChild as HTMLElement);
             };
             const viewport = findViewport();
             if (viewport) {
@@ -527,12 +527,12 @@ export default function Chats() {
       const res = await fetch(
         `/api/conversations/${selectedChat}/messages?userId=${user.uid}&beforeDate=${encodeURIComponent(beforeDate)}&limit=30`
       );
-      
+
       if (!res.ok) throw new Error("Failed to fetch older messages");
-      
+
       const data: Message[] = await res.json();
       const messagesArray = Array.isArray(data) ? data : [];
-      
+
       if (messagesArray.length === 0) {
         setHasMoreMessages(false);
         setIsLoadingOlder(false);
@@ -551,11 +551,11 @@ export default function Chats() {
         if (!scrollAreaRef.current) return null;
         // Try multiple selectors to find the viewport
         return scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement ||
-               scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
-               (scrollAreaRef.current.firstElementChild as HTMLElement);
+          scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
+          (scrollAreaRef.current.firstElementChild as HTMLElement);
       };
       const viewport = findViewport();
-      
+
       const previousScrollHeight = container?.scrollHeight || 0;
       const previousScrollTop = viewport?.scrollTop || 0;
 
@@ -590,10 +590,10 @@ export default function Chats() {
           // Remove duplicate IDs
           if (seenIds.has(msg.id) && !msg.isOptimistic) return false;
           seenIds.add(msg.id);
-          
+
           // Remove optimistic if real message with same content exists
           if (msg.isOptimistic) {
-            const hasReal = prev.some(m => 
+            const hasReal = prev.some(m =>
               !m.isOptimistic &&
               m.content.trim() === msg.content.trim() &&
               m.senderId === msg.senderId &&
@@ -601,7 +601,7 @@ export default function Chats() {
             );
             if (hasReal) return false;
           }
-          
+
           return true;
         });
       });
@@ -614,14 +614,14 @@ export default function Chats() {
   // Handle scroll to detect when user scrolls to top
   useEffect(() => {
     if (!selectedChat) return;
-    
+
     // Find the viewport element inside ScrollArea (Radix UI structure)
     const findViewport = () => {
       if (!scrollAreaRef.current) return null;
       // Radix ScrollArea has a viewport element - try multiple selectors
       return scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement ||
-             scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
-             (scrollAreaRef.current.firstElementChild as HTMLElement);
+        scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
+        (scrollAreaRef.current.firstElementChild as HTMLElement);
     };
 
     const setupScrollListener = (element: HTMLElement) => {
@@ -654,6 +654,7 @@ export default function Chats() {
   const sidebarItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
     { title: "Chats", icon: MessageSquare, url: "/chats" },
+    { title: "Profile", icon: User, url: "/profile" },
     { title: "Settings", icon: Settings, url: "/settings" }
   ];
 
@@ -672,7 +673,7 @@ export default function Chats() {
     if (message.trim() && socket && selectedChat && user?.uid) {
       const messageContent = message.trim();
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
+
       // Create optimistic message
       const optimisticMessage: Message = {
         id: tempId,
@@ -694,19 +695,19 @@ export default function Chats() {
       // Add optimistic message immediately
       setMessages(prev => [...prev, optimisticMessage]);
       setPendingMessages(prev => new Map(prev).set(tempId, optimisticMessage));
-      
+
       // Scroll to bottom to show the new message
       setTimeout(() => scrollToBottom(true), 50);
-      
+
       // Clear input
       setMessage("");
-      
+
       // Stop typing indicator
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
       socket.emit("typing:stop", { conversationId: selectedChat, userId: user.uid });
-      
+
       // Send message to server
       socket.emit("message:send", {
         conversationId: selectedChat,
@@ -747,12 +748,12 @@ export default function Chats() {
 
   const handleStartConversation = async (userId: string) => {
     if (!user?.uid || !firebaseUser) return;
-    
+
     try {
       const token = await firebaseUser.getIdToken();
       const res = await fetch('/api/conversations', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
@@ -768,7 +769,7 @@ export default function Chats() {
       }
 
       const conversation = await res.json();
-      
+
       // Store the newly created conversation
       setNewConversation({
         id: conversation.id,
@@ -777,14 +778,14 @@ export default function Chats() {
         participants: conversation.participants,
         unreadCount: 0
       });
-      
+
       // Clear search
       setSearchQuery("");
       setSearchedUsers([]);
-      
+
       // Set the selected chat immediately
       handleSelectChat(conversation.id);
-      
+
       // Refetch conversations in the background
       refetchConversations();
     } catch (error) {
@@ -794,10 +795,10 @@ export default function Chats() {
 
   const handleTyping = (value: string) => {
     setMessage(value);
-    
+
     if (socket && selectedChat && value && user?.uid) {
-      socket.emit("typing:start", { 
-        conversationId: selectedChat, 
+      socket.emit("typing:start", {
+        conversationId: selectedChat,
         userId: user.uid,
         userName: user.displayName || "You"
       });
@@ -805,7 +806,7 @@ export default function Chats() {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
-      
+
       typingTimeoutRef.current = setTimeout(() => {
         socket.emit("typing:stop", { conversationId: selectedChat, userId: user.uid });
       }, 2000);
@@ -836,14 +837,14 @@ export default function Chats() {
   }, [searchQuery, user?.uid]);
 
   const filteredConversations = conversations.filter(conv => {
-    const displayName = conv.isGroup 
+    const displayName = conv.isGroup
       ? (conv.name || "Group Chat")
       : (conv.participants.find(p => p.firebaseUid !== user?.uid)?.name || "Unknown");
     return displayName.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   // Use newConversation as fallback if not in conversations list yet
-  const selectedConversation = conversations.find(c => c.id === selectedChat) || 
+  const selectedConversation = conversations.find(c => c.id === selectedChat) ||
     (newConversation?.id === selectedChat ? newConversation : null);
   const pinnedMessages = messages.filter(m => m.isPinned);
 
@@ -944,24 +945,35 @@ export default function Chats() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <Sidebar>
-          <SidebarContent className="p-4">
-            <div className="flex items-center gap-2 px-2 mb-6">
-              <LogoMark className="h-8 w-8" />
-              <span className="text-lg font-semibold">AI Meet</span>
+      <div className="flex h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden">
+        {/* Background Gradients */}
+        <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
+          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px] animate-pulse-glow" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[100px] animate-pulse-glow animation-delay-500" />
+        </div>
+
+        <Sidebar className="border-r border-white/10 bg-white/5 backdrop-blur-xl">
+          <SidebarContent className="p-6">
+            <div className="flex items-center gap-3 px-2 mb-10">
+              <div className="relative">
+                <div className="absolute inset-0 bg-primary/20 blur-md rounded-full" />
+                <LogoMark className="h-8 w-8 relative z-10" />
+              </div>
+              <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
+                FaceCall
+              </span>
             </div>
 
             <SidebarGroup>
-              <SidebarGroupLabel>Menu</SidebarGroupLabel>
+              <SidebarGroupLabel className="text-xs uppercase tracking-widest text-muted-foreground/70 mb-4">Menu</SidebarGroupLabel>
               <SidebarGroupContent>
-                <SidebarMenu>
+                <SidebarMenu className="space-y-2">
                   {sidebarItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild className="hover-elevate">
-                        <a href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
-                          <item.icon className="w-4 h-4" />
-                          <span>{item.title}</span>
+                      <SidebarMenuButton asChild className="hover:bg-white/10 transition-colors rounded-xl p-3">
+                        <a href={item.url} className="flex items-center gap-3">
+                          <item.icon className="w-5 h-5 opacity-70" />
+                          <span className="font-medium">{item.title}</span>
                         </a>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -970,32 +982,17 @@ export default function Chats() {
               </SidebarGroupContent>
             </SidebarGroup>
 
-            <div className="mt-auto pt-4 border-t">
-              <div className="flex items-center gap-3 p-2 rounded-lg hover-elevate cursor-pointer">
-                <Avatar className="h-9 w-9">
-                  <AvatarImage
-                    src={getAvatarUrl(user?.photoURL, user?.uid, user?.email)}
-                    alt={user?.displayName || user?.email || user?.username || "User avatar"}
-                  />
-                  <AvatarFallback className="bg-primary text-primary-foreground">
-                    {getInitials(user?.displayName, user?.email || user?.username)}
-                  </AvatarFallback>
+            <div className="mt-auto pt-6 border-t border-white/10">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors cursor-pointer group">
+                <Avatar className="h-10 w-10 border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
+                  <AvatarImage src={getAvatarUrl(user?.photoURL, user?.uid, user?.email)} />
+                  <AvatarFallback>{getInitials(user?.displayName, user?.email)}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">
-                    {user?.displayName || user?.username || "You"}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {user?.email || (user?.username ? `@${user.username}` : "")}
-                  </p>
+                  <p className="text-sm font-semibold truncate">{user?.displayName || "User"}</p>
+                  <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={logout}
-                  data-testid="button-logout"
-                >
+                <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity" onClick={logout}>
                   <LogOut className="h-4 w-4" />
                 </Button>
               </div>
@@ -1003,45 +1000,44 @@ export default function Chats() {
           </SidebarContent>
         </Sidebar>
 
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between gap-4 p-4 border-b">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
+        <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+          <header className="flex items-center justify-between gap-4 p-6 border-b border-white/5 bg-white/5 backdrop-blur-sm z-10">
+            <div className="flex items-center gap-4">
+              <SidebarTrigger />
               <h1 className="text-xl font-semibold">Messages</h1>
             </div>
             <ThemeToggle />
           </header>
 
           <div className="flex-1 flex overflow-hidden">
-            <div className="w-80 border-r flex flex-col">
-              <div className="p-4 border-b">
+            {/* Chat List */}
+            <div className="w-80 border-r border-white/10 flex flex-col bg-white/5 backdrop-blur-sm">
+              <div className="p-4 border-b border-white/10">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="Search conversations..." 
-                    className="pl-10" 
+                  <Input
+                    placeholder="Search conversations..."
+                    className="pl-10 bg-white/5 border-white/10 focus:bg-white/10 transition-all rounded-full"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    data-testid="input-search-conversations"
                   />
                 </div>
               </div>
 
               <ScrollArea className="flex-1">
-                <div className="p-2">
+                <div className="p-2 space-y-1">
                   {/* Show searched users first if search is active */}
                   {searchedUsers.length > 0 && (
                     <div className="mb-4">
-                      <p className="text-xs font-semibold text-muted-foreground px-3 py-2">Search Results</p>
+                      <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">Search Results</p>
                       {searchedUsers.map((searchedUser) => (
                         <div
                           key={searchedUser.id}
                           onClick={() => handleStartConversation(searchedUser.id)}
-                          className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1"
-                          data-testid={`search-user-${searchedUser.id}`}
+                          className="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-white/10 transition-colors"
                         >
                           <div className="relative">
-                            <Avatar className="h-12 w-12">
+                            <Avatar className="h-12 w-12 border border-white/10">
                               {searchedUser.avatar && (
                                 <AvatarImage src={searchedUser.avatar} alt={searchedUser.name} />
                               )}
@@ -1049,13 +1045,12 @@ export default function Chats() {
                                 {searchedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
                               </AvatarFallback>
                             </Avatar>
-                            {/* Note: Search results don't have online status yet */}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-sm truncate">{searchedUser.name}</p>
                             <p className="text-xs text-muted-foreground truncate">@{searchedUser.username}</p>
                           </div>
-                          <Badge variant="outline" className="text-xs">New Chat</Badge>
+                          <Badge variant="outline" className="text-xs border-white/10 bg-white/5">New Chat</Badge>
                         </div>
                       ))}
                     </div>
@@ -1080,13 +1075,11 @@ export default function Chats() {
                         <div
                           key={conv.id}
                           onClick={() => handleSelectChat(conv.id)}
-                          className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1 ${
-                            selectedChat === conv.id ? 'bg-accent' : ''
-                          }`}
-                          data-testid={`conversation-${conv.id}`}
+                          className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedChat === conv.id ? 'bg-white/10 border border-white/5 shadow-sm' : 'hover:bg-white/5 border border-transparent'
+                            }`}
                         >
                           <div className="relative">
-                            <Avatar className="h-12 w-12">
+                            <Avatar className="h-12 w-12 border border-white/10">
                               {!conv.isGroup && (conv.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
                                 <AvatarImage src={(conv.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(conv)} />
                               )}
@@ -1095,7 +1088,7 @@ export default function Chats() {
                               </AvatarFallback>
                             </Avatar>
                             {isUserOnline(conv) && (
-                              <div className="absolute bottom-0 right-0 w-3 h-3 bg-chart-3 border-2 border-background rounded-full" />
+                              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full ring-2 ring-background" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -1116,57 +1109,7 @@ export default function Chats() {
                             </p>
                           </div>
                           {conv.unreadCount > 0 && (
-                            <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5">
-                              {conv.unreadCount}
-                            </Badge>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Show conversations when search is active and filtered */}
-                  {filteredConversations.length > 0 && searchQuery && searchedUsers.length === 0 && (
-                    <div className="mt-4">
-                      <p className="text-xs font-semibold text-muted-foreground px-3 py-2">Existing Conversations</p>
-                      {filteredConversations.map((conv) => (
-                        <div
-                          key={conv.id}
-                          onClick={() => handleSelectChat(conv.id)}
-                          className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer hover-elevate mb-1 ${
-                            selectedChat === conv.id ? 'bg-accent' : ''
-                          }`}
-                          data-testid={`conversation-${conv.id}`}
-                        >
-                          <div className="relative">
-                            <Avatar className="h-12 w-12">
-                              <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
-                                {getConversationAvatar(conv)}
-                              </AvatarFallback>
-                            </Avatar>
-                            {isUserOnline(conv) && (
-                              <div className="absolute bottom-0 right-0 w-3 h-3 bg-chart-3 border-2 border-background rounded-full" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2 mb-1">
-                              <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
-                              {conv.lastMessage && (
-                                <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                  {formatTime(conv.lastMessage.createdAt)}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-sm text-muted-foreground truncate">
-                              {(() => {
-                                if (!conv.lastMessage) return "No messages yet";
-                                const isMine = conv.lastMessage ? isMessageFromMe(conv.lastMessage, conv) : false;
-                                return `${isMine ? 'You: ' : ''}${conv.lastMessage.content}`;
-                              })()}
-                            </p>
-                          </div>
-                          {conv.unreadCount > 0 && (
-                            <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5">
+                            <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5 bg-primary text-primary-foreground">
                               {conv.unreadCount}
                             </Badge>
                           )}
@@ -1178,12 +1121,14 @@ export default function Chats() {
               </ScrollArea>
             </div>
 
+            {/* Chat Area */}
             {selectedChat && selectedConversation ? (
-              <div className="flex-1 flex flex-col">
-                <div className="p-4 border-b flex items-center justify-between">
+              <div className="flex-1 flex flex-col bg-transparent relative">
+                {/* Chat Header */}
+                <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10">
                   <div className="flex items-center gap-3">
                     <div className="relative">
-                      <Avatar className="h-10 w-10">
+                      <Avatar className="h-10 w-10 border border-white/10">
                         {!selectedConversation.isGroup && (selectedConversation.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
                           <AvatarImage src={(selectedConversation.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(selectedConversation)} />
                         )}
@@ -1203,9 +1148,9 @@ export default function Chats() {
                         )}
                       </div>
                       {isUserTyping() ? (
-                        <p className="text-xs text-chart-3 italic">{getTypingUser()} is typing...</p>
+                        <p className="text-xs text-primary italic animate-pulse">{getTypingUser()} is typing...</p>
                       ) : !selectedConversation.isGroup && isUserOnline(selectedConversation) ? (
-                        <p className="text-xs text-green-600">Online</p>
+                        <p className="text-xs text-green-500">Online</p>
                       ) : !selectedConversation.isGroup ? (
                         <p className="text-xs text-muted-foreground">Offline</p>
                       ) : selectedConversation.isGroup ? (
@@ -1214,10 +1159,10 @@ export default function Chats() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      data-testid="button-voice-call"
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="hover:bg-white/10"
                       onClick={() => {
                         const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
                         setLocation(`/call/${roomId}`);
@@ -1225,10 +1170,10 @@ export default function Chats() {
                     >
                       <Phone className="h-5 w-5" />
                     </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      data-testid="button-video-call"
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="hover:bg-white/10"
                       onClick={() => {
                         const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
                         setLocation(`/call/${roomId}`);
@@ -1236,14 +1181,14 @@ export default function Chats() {
                     >
                       <VideoIcon className="h-5 w-5" />
                     </Button>
-                    <Button variant="ghost" size="icon" data-testid="button-chat-options">
+                    <Button variant="ghost" size="icon" className="hover:bg-white/10">
                       <MoreVertical className="h-5 w-5" />
                     </Button>
                   </div>
                 </div>
 
                 {pinnedMessages.length > 0 && (
-                  <div className="px-4 py-2 bg-muted/50 border-b">
+                  <div className="px-4 py-2 bg-white/5 border-b border-white/10 backdrop-blur-sm">
                     <div className="flex items-center gap-2 text-sm">
                       <Pin className="h-4 w-4 text-muted-foreground" />
                       <span className="text-muted-foreground">Pinned:</span>
@@ -1265,10 +1210,9 @@ export default function Chats() {
                         <div
                           key={msg.id}
                           className="flex gap-3 group/message"
-                          data-testid={`message-${msg.id}`}
                         >
                           {!isMe && (
-                            <Avatar className="h-8 w-8">
+                            <Avatar className="h-8 w-8 border border-white/10">
                               {(selectedConversation.participants.find(p => p.id === msg.sender.id)?.avatar) && (
                                 <AvatarImage src={(selectedConversation.participants.find(p => p.id === msg.sender.id) as any).avatar} alt={msg.sender.name} />
                               )}
@@ -1286,28 +1230,25 @@ export default function Chats() {
                             <div className="relative">
                               <div
                                 className={getMessageBubbleClasses(isMe, msg.isPinned)}
-                                data-testid={`bubble-${msg.id}`}
                               >
                                 <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                                   {msg.content}
                                 </p>
                                 <div
-                                  className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${
-                                    isMe ? 'text-primary/70 dark:text-primary-foreground/80' : 'text-muted-foreground/80'
-                                  }`}
+                                  className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${isMe ? 'text-primary/70 dark:text-primary-foreground/80' : 'text-muted-foreground/80'
+                                    }`}
                                 >
                                   <span>{formatTime(msg.createdAt)}</span>
                                   {isMe && msg.status && (
                                     <span
-                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                                        msg.isOptimistic
+                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${msg.isOptimistic
                                           ? "bg-muted/50 text-muted-foreground/70 opacity-70"
                                           : msg.status === "seen"
-                                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                                          : msg.status === "delivered"
-                                          ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
-                                          : "bg-muted text-muted-foreground"
-                                      }`}
+                                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                                            : msg.status === "delivered"
+                                              ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
+                                              : "bg-muted text-muted-foreground"
+                                        }`}
                                     >
                                       {msg.status === "seen" && (
                                         <>
@@ -1335,9 +1276,8 @@ export default function Chats() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-6 w-6"
+                                  className="h-6 w-6 hover:bg-white/10"
                                   onClick={() => handlePinMessage(msg.id, msg.isPinned)}
-                                  data-testid={`button-pin-${msg.id}`}
                                 >
                                   <Pin className={`h-3 w-3 ${msg.isPinned ? 'fill-current' : ''}`} />
                                 </Button>
@@ -1352,7 +1292,7 @@ export default function Chats() {
                 </ScrollArea>
 
                 {isUserTyping() && getTypingUser() && (
-                  <div className="px-4 py-2 border-t bg-muted/30">
+                  <div className="px-4 py-2 border-t border-white/10 bg-white/5">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <div className="flex gap-1">
                         <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
@@ -1364,25 +1304,23 @@ export default function Chats() {
                   </div>
                 )}
 
-                <form onSubmit={handleSendMessage} className="p-4 border-t">
-                  <div className="flex items-end gap-2">
+                <div className="p-4 border-t border-white/10 bg-white/5 backdrop-blur-sm">
+                  <form onSubmit={handleSendMessage} className="relative flex items-end gap-2 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
                     <div className="flex-1 flex flex-col gap-2">
                       <div className="relative">
                         <Input
                           placeholder="Type a message..."
                           value={message}
                           onChange={(e) => handleTyping(e.target.value)}
-                          className="pr-24"
-                          data-testid="input-message"
+                          className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
                         />
-                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
+                            className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
                             onClick={handleFileAttach}
-                            data-testid="button-attach-file"
                           >
                             <Paperclip className="h-4 w-4" />
                           </Button>
@@ -1390,9 +1328,8 @@ export default function Chats() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
+                            className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
                             onClick={handleFileAttach}
-                            data-testid="button-attach-image"
                           >
                             <ImageIcon className="h-4 w-4" />
                           </Button>
@@ -1402,22 +1339,20 @@ export default function Chats() {
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
-                                data-testid="button-emoji-picker"
+                                className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
                               >
                                 <Smile className="h-4 w-4" />
                               </Button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-auto p-2" align="end">
+                            <PopoverContent className="w-auto p-2 bg-background/95 backdrop-blur-xl border-white/10" align="end">
                               <div className="grid grid-cols-4 gap-1">
                                 {emojis.map((emoji, i) => (
                                   <Button
                                     key={i}
                                     variant="ghost"
                                     size="icon"
-                                    className="h-10 w-10 text-xl"
+                                    className="h-10 w-10 text-xl hover:bg-white/10"
                                     onClick={() => handleEmojiSelect(emoji)}
-                                    data-testid={`emoji-${i}`}
                                   >
                                     {emoji}
                                   </Button>
@@ -1428,18 +1363,20 @@ export default function Chats() {
                         </div>
                       </div>
                     </div>
-                    <Button type="submit" size="icon" data-testid="button-send-message">
+                    <Button type="submit" size="icon" className="rounded-xl h-10 w-10 shadow-md">
                       <Send className="h-4 w-4" />
                     </Button>
-                  </div>
-                </form>
+                  </form>
+                </div>
               </div>
             ) : (
               <div className="flex-1 flex items-center justify-center text-muted-foreground">
                 <div className="text-center">
-                  <MessageSquare className="h-16 w-16 mx-auto mb-4 opacity-20" />
-                  <p className="text-lg font-medium">Select a conversation</p>
-                  <p className="text-sm">Choose a chat to start messaging</p>
+                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
+                    <MessageSquare className="h-10 w-10 opacity-50" />
+                  </div>
+                  <p className="text-xl font-semibold mb-2">Select a conversation</p>
+                  <p className="text-sm text-muted-foreground/70">Choose a chat to start messaging</p>
                 </div>
               </div>
             )}
