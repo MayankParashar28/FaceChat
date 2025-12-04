@@ -14,27 +14,27 @@ declare module 'http' {
 // Security headers middleware
 app.use((req, res, next) => {
   // CORS configuration
-  const allowedOrigins = process.env.CORS_ORIGIN 
+  const allowedOrigins = process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',')
     : (process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]);
-  
+
   const origin = req.headers.origin;
   if (origin && (allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production")) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
-  
+
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
-  
+
   // Handle preflight requests
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
-  
+
   next();
 });
 
@@ -76,15 +76,6 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Test MongoDB connection on startup (non-blocking)
-  try {
-    await connectToMongoDB();
-    await testMongoConnection();
-  } catch (error) {
-    console.log("⚠️  MongoDB connection failed, but continuing with frontend-only mode");
-    console.log("   The app will work for UI testing, but data features won't work");
-  }
-
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -109,8 +100,16 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '3000', 10);
-  server.listen(port, () => {
+  server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
-    log(`Open http://localhost:${port} to view the app`);
+    log(`Open http://0.0.0.0:${port} to view the app`);
   });
+
+  // Test MongoDB connection on startup (non-blocking)
+  connectToMongoDB()
+    .then(() => testMongoConnection())
+    .catch((error) => {
+      console.log("⚠️  MongoDB connection failed, but continuing with frontend-only mode");
+      console.log("   The app will work for UI testing, but data features won't work");
+    });
 })();
