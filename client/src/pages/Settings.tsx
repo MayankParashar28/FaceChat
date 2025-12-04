@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -13,17 +12,15 @@ import { LogoMark } from "@/components/LogoMark";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { useSettings } from "@/lib/settings";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Settings() {
   const [, setLocation] = useLocation();
   const { theme } = useTheme();
   const { user, logout } = useAuth();
-  const [autoJoinAudio, setAutoJoinAudio] = useState(true);
-  const [autoJoinVideo, setAutoJoinVideo] = useState(true);
-  const [backgroundBlur, setBackgroundBlur] = useState(false);
-  const [emotionDetection, setEmotionDetection] = useState(true);
-  const [videoQuality, setVideoQuality] = useState("hd");
-  const [audioQuality, setAudioQuality] = useState("high");
+  const { toast } = useToast();
+  const { settings, updateSettings } = useSettings();
 
   const sidebarItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
@@ -160,8 +157,14 @@ export default function Settings() {
                       </div>
                       <Switch
                         id="auto-video"
-                        checked={autoJoinVideo}
-                        onCheckedChange={setAutoJoinVideo}
+                        checked={settings.autoJoinVideo}
+                        onCheckedChange={(checked) => {
+                          updateSettings({ autoJoinVideo: checked });
+                          toast({
+                            title: "Settings saved",
+                            description: checked ? "Video will auto-join on calls" : "Video will be off by default",
+                          });
+                        }}
                         className="data-[state=checked]:bg-blue-500"
                       />
                     </div>
@@ -173,15 +176,27 @@ export default function Settings() {
                       </div>
                       <Switch
                         id="blur"
-                        checked={backgroundBlur}
-                        onCheckedChange={setBackgroundBlur}
+                        checked={settings.backgroundBlur}
+                        onCheckedChange={(checked) => {
+                          updateSettings({ backgroundBlur: checked });
+                          toast({
+                            title: "Settings saved",
+                            description: checked ? "Background blur enabled" : "Background blur disabled",
+                          });
+                        }}
                         className="data-[state=checked]:bg-blue-500"
                       />
                     </div>
 
                     <div className="space-y-3 pt-2">
                       <Label htmlFor="video-quality" className="text-base font-medium">Video Quality</Label>
-                      <Select value={videoQuality} onValueChange={setVideoQuality}>
+                      <Select value={settings.videoQuality} onValueChange={(value: "sd" | "hd" | "full-hd") => {
+                        updateSettings({ videoQuality: value });
+                        toast({
+                          title: "Settings saved",
+                          description: `Video quality set to ${value.toUpperCase()}`,
+                        });
+                      }}>
                         <SelectTrigger id="video-quality" className="h-12 bg-white/5 border-white/10 focus:ring-blue-500/20 rounded-xl">
                           <SelectValue />
                         </SelectTrigger>
@@ -216,15 +231,27 @@ export default function Settings() {
                       </div>
                       <Switch
                         id="auto-audio"
-                        checked={autoJoinAudio}
-                        onCheckedChange={setAutoJoinAudio}
+                        checked={settings.autoJoinAudio}
+                        onCheckedChange={(checked) => {
+                          updateSettings({ autoJoinAudio: checked });
+                          toast({
+                            title: "Settings saved",
+                            description: checked ? "Audio will auto-join on calls" : "Audio will be muted by default",
+                          });
+                        }}
                         className="data-[state=checked]:bg-emerald-500"
                       />
                     </div>
 
                     <div className="space-y-3 pt-2">
                       <Label htmlFor="audio-quality" className="text-base font-medium">Audio Quality</Label>
-                      <Select value={audioQuality} onValueChange={setAudioQuality}>
+                      <Select value={settings.audioQuality} onValueChange={(value: "standard" | "high" | "studio") => {
+                        updateSettings({ audioQuality: value });
+                        toast({
+                          title: "Settings saved",
+                          description: `Audio quality set to ${value}`,
+                        });
+                      }}>
                         <SelectTrigger id="audio-quality" className="h-12 bg-white/5 border-white/10 focus:ring-emerald-500/20 rounded-xl">
                           <SelectValue />
                         </SelectTrigger>
@@ -259,8 +286,14 @@ export default function Settings() {
                       </div>
                       <Switch
                         id="emotion"
-                        checked={emotionDetection}
-                        onCheckedChange={setEmotionDetection}
+                        checked={settings.emotionDetection}
+                        onCheckedChange={(checked) => {
+                          updateSettings({ emotionDetection: checked });
+                          toast({
+                            title: "Settings saved",
+                            description: checked ? "Emotion detection enabled" : "Emotion detection disabled",
+                          });
+                        }}
                         className="data-[state=checked]:bg-purple-500"
                       />
                     </div>

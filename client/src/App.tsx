@@ -18,6 +18,9 @@ import VideoCall from "@/pages/VideoCall";
 import CallSummary from "@/pages/CallSummary";
 import Settings from "@/pages/Settings";
 import Profile from "@/pages/Profile";
+import Analytics from "@/pages/Analytics";
+import Meetings from "@/pages/Meetings";
+import VerifyEmail from "@/pages/EmailVerification";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -26,36 +29,55 @@ function Router() {
       <Route path="/" component={Landing} />
       <Route path="/login" component={Login} />
       <Route path="/verify-email" component={EmailVerification} />
+
       <Route path="/dashboard">
         <ProtectedRoute>
           <Dashboard />
         </ProtectedRoute>
       </Route>
+
       <Route path="/chats">
         <ProtectedRoute>
           <Chats />
         </ProtectedRoute>
       </Route>
+
       <Route path="/call/:roomId">
         <ProtectedRoute>
           <VideoCall />
         </ProtectedRoute>
       </Route>
+
       <Route path="/summary/:callId">
         <ProtectedRoute>
           <CallSummary />
         </ProtectedRoute>
       </Route>
+
       <Route path="/settings">
         <ProtectedRoute>
           <Settings />
         </ProtectedRoute>
       </Route>
+
       <Route path="/profile">
         <ProtectedRoute>
           <Profile />
         </ProtectedRoute>
       </Route>
+
+      <Route path="/analytics">
+        <ProtectedRoute>
+          <Analytics />
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/meetings">
+        <ProtectedRoute>
+          <Meetings />
+        </ProtectedRoute>
+      </Route>
+
       <Route component={NotFound} />
     </Switch>
   );

@@ -12,6 +12,10 @@ import { useAuth } from "@/lib/auth";
 import { auth } from "@/lib/firebase";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { useSettings } from "@/lib/settings";
+import { SimpleBackgroundBlur } from "@/lib/simpleBlur";
+import { AIBackgroundBlur } from "@/lib/aiBackgroundBlur";
+import { useToast } from "@/hooks/use-toast";
 
 type Participant = {
   socketId: string;
@@ -39,9 +43,11 @@ export default function VideoCall() {
   const [, params] = useRoute("/call/:roomId");
   const [, setLocation] = useLocation();
   const { user } = useAuth();
+  const { settings, updateSettings } = useSettings();
+  const { toast } = useToast();
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [isMicOn, setIsMicOn] = useState(true);
-  const [isVideoOn, setIsVideoOn] = useState(true);
+  const [isMicOn, setIsMicOn] = useState(settings.autoJoinAudio);
+  const [isVideoOn, setIsVideoOn] = useState(settings.autoJoinVideo);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
@@ -54,12 +60,24 @@ export default function VideoCall() {
   const roomId = params?.roomId || "";
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const originalStreamRef = useRef<MediaStream | null>(null); // Original stream before blur
+  const originalVideoTrackRef = useRef<MediaStreamTrack | null>(null); // Original camera track (preserved)
+  const originalVideoConstraintsRef = useRef<MediaTrackConstraints | null>(null); // Original video constraints for recreation
   const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const socketRef = useRef<Socket | null>(null);
   const callStartTimeRef = useRef<number>(Date.now());
   const iceCandidateQueueRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const blurProcessorRef = useRef<SimpleBackgroundBlur | AIBackgroundBlur | null>(null);
+  const [useAISegmentation, setUseAISegmentation] = useState(true); // Try AI first
+
+  // Force background blur setting to true so all calls use blur by default
+  useEffect(() => {
+    if (!settings.backgroundBlur) {
+      updateSettings({ backgroundBlur: true });
+    }
+  }, [settings.backgroundBlur, updateSettings]);
 
   // Initialize socket and media
   useEffect(() => {
@@ -90,6 +108,11 @@ export default function VideoCall() {
         }
       } catch (error) {
         console.error("Failed to join call:", error);
+        toast({
+          title: "Connection Error",
+          description: "Failed to join the call. Please try again.",
+          variant: "destructive",
+        });
       }
     });
 
@@ -112,6 +135,11 @@ export default function VideoCall() {
         }
       } catch (error) {
         console.error("Failed to rejoin call after reconnection:", error);
+        toast({
+          title: "Reconnection Failed",
+          description: "Could not rejoin the call. Please refresh the page.",
+          variant: "destructive",
+        });
       }
     });
 
@@ -369,6 +397,20 @@ export default function VideoCall() {
 
     newSocket.on("error", (error) => {
       console.error("Socket error:", error);
+      toast({
+        title: "Connection Error",
+        description: "Lost connection to the server. Trying to reconnect...",
+        variant: "destructive",
+      });
+    });
+
+    newSocket.on("connect_error", (error) => {
+      console.error("Socket connection error:", error);
+      toast({
+        title: "Connection Failed",
+        description: "Could not connect to the server. Please check your internet connection.",
+        variant: "destructive",
+      });
     });
 
     setSocket(newSocket);
@@ -397,31 +439,123 @@ export default function VideoCall() {
   // Ensure local video stream is attached to video element
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
-      localVideoRef.current.play().catch(console.error);
+      // Always use processed (blurred) stream for local preview
+      if (localVideoRef.current.srcObject !== localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.play().catch((err) => {
+          // Ignore AbortError - it's normal when switching streams
+          if (err.name !== 'AbortError') {
+            console.error("Error playing local video:", err);
+          }
+        });
+      }
     }
   }, [participants]);
 
   const initializeLocalMedia = async () => {
     try {
+      // Map video quality settings to constraints
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: "user",
+        frameRate: { ideal: 30, max: 60 }
+      };
+
+      switch (settings.videoQuality) {
+        case "sd":
+          videoConstraints.width = { ideal: 640, max: 640 };
+          videoConstraints.height = { ideal: 480, max: 480 };
+          break;
+        case "hd":
+          videoConstraints.width = { ideal: 1280, max: 1280 };
+          videoConstraints.height = { ideal: 720, max: 720 };
+          break;
+        case "full-hd":
+          videoConstraints.width = { ideal: 1920, max: 1920 };
+          videoConstraints.height = { ideal: 1080, max: 1080 };
+          break;
+      }
+
+      // Map audio quality settings
+      const audioConstraints: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      };
+
+      if (settings.audioQuality === "studio") {
+        audioConstraints.sampleRate = { ideal: 48000 };
+        audioConstraints.channelCount = { ideal: 2 };
+      } else if (settings.audioQuality === "high") {
+        audioConstraints.sampleRate = { ideal: 44100 };
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280, max: 1920 },
-          height: { ideal: 720, max: 1080 },
-          frameRate: { ideal: 30, max: 60 },
-          facingMode: "user"
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+        video: settings.autoJoinVideo ? videoConstraints : false,
+        audio: settings.autoJoinAudio ? audioConstraints : false
       });
 
-      localStreamRef.current = stream;
+      // Store reference to original stream and track (for local preview and toggling blur)
+      originalStreamRef.current = stream;
+      originalVideoTrackRef.current = stream.getVideoTracks()[0] || null;
+      originalVideoConstraintsRef.current = settings.autoJoinVideo ? videoConstraints : null;
+
+      // Apply background blur whenever video is available
+      let finalStream = stream;
+      if (stream.getVideoTracks().length > 0) {
+        try {
+          // Try AI-based segmentation first for background-only blur
+          if (useAISegmentation) {
+            try {
+              const blurProcessor = new AIBackgroundBlur({ blurIntensity: 15 });
+              blurProcessorRef.current = blurProcessor;
+              finalStream = await blurProcessor.initialize(stream);
+              console.log("AI background blur enabled (background-only)");
+            } catch (aiError: any) {
+              console.warn("AI blur failed, falling back to simple blur:", aiError);
+              setUseAISegmentation(false);
+              // Fall through to simple blur
+              throw aiError;
+            }
+          }
+
+          // Fallback to simple blur if AI fails
+          if (!useAISegmentation || !blurProcessorRef.current) {
+            const blurProcessor = new SimpleBackgroundBlur({ blurIntensity: 15 });
+            blurProcessorRef.current = blurProcessor;
+            finalStream = await blurProcessor.initialize(stream);
+            console.log("Simple background blur enabled (full video)");
+          }
+        } catch (error: any) {
+          console.error("Failed to initialize background blur:", error);
+          // Clean up any partial initialization
+          if (blurProcessorRef.current) {
+            try {
+              await blurProcessorRef.current.stop();
+            } catch (cleanupError) {
+              console.error("Error cleaning up blur processor:", cleanupError);
+            }
+            blurProcessorRef.current = null;
+          }
+
+          // Fall back to original stream and disable blur setting for this device
+          finalStream = stream;
+          console.warn("Background blur unavailable, using original stream");
+        }
+      }
+
+      localStreamRef.current = finalStream;
+
+      // Apply initial mute states based on settings
+      if (!settings.autoJoinAudio && finalStream.getAudioTracks().length > 0) {
+        finalStream.getAudioTracks().forEach(track => track.enabled = false);
+      }
+      if (!settings.autoJoinVideo && finalStream.getVideoTracks().length > 0) {
+        finalStream.getVideoTracks().forEach(track => track.enabled = false);
+      }
 
       if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
+        // Show processed (blurred) stream in local preview
+        localVideoRef.current.srcObject = finalStream;
         localVideoRef.current.play().catch(console.error);
       }
 
@@ -433,14 +567,30 @@ export default function VideoCall() {
           name: user?.displayName || user?.username || "You",
           avatar: user?.photoURL || getAvatarUrl(user?.email || ""),
           isLocal: true,
-          isVideoOn: true,
-          isAudioOn: true,
-          stream
+          isVideoOn: settings.autoJoinVideo,
+          isAudioOn: settings.autoJoinAudio,
+          stream: finalStream
         });
         return newMap;
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error accessing media devices:", error);
+      let errorMessage = "Could not access camera or microphone.";
+
+      if (error.name === 'NotAllowedError') {
+        errorMessage = "Permission denied. Please allow access to camera and microphone in your browser settings.";
+      } else if (error.name === 'NotFoundError') {
+        errorMessage = "No camera or microphone found on this device.";
+      } else if (error.name === 'NotReadableError') {
+        errorMessage = "Camera or microphone is already in use by another application.";
+      }
+
+      toast({
+        title: "Media Access Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+
       setParticipants(prev => {
         const newMap = new Map(prev);
         newMap.set("local", {
@@ -672,11 +822,25 @@ export default function VideoCall() {
     iceCandidateQueueRef.current.delete(socketId);
   };
 
-  const cleanup = () => {
+  const cleanup = async () => {
+    // Stop blur processor first (this will stop its canvas stream tracks)
+    if (blurProcessorRef.current) {
+      await blurProcessorRef.current.stop();
+      blurProcessorRef.current = null;
+    }
+
+    // Stop all stream tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
     }
+
+    // Stop original stream tracks (these are the actual camera/mic tracks)
+    if (originalStreamRef.current) {
+      originalStreamRef.current.getTracks().forEach(track => track.stop());
+      originalStreamRef.current = null;
+    }
+
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach(track => track.stop());
       screenStreamRef.current = null;
@@ -746,8 +910,15 @@ export default function VideoCall() {
         };
 
         setIsScreenSharing(true);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error sharing screen:", error);
+        if (error.name !== 'NotAllowedError') {
+          toast({
+            title: "Screen Share Error",
+            description: "Failed to start screen sharing. Please try again.",
+            variant: "destructive",
+          });
+        }
       }
     }
   };
@@ -818,11 +989,10 @@ export default function VideoCall() {
   const getGridCols = useCallback((count: number) => {
     if (count === 1) return "grid-cols-1";
     if (count === 2) return "grid-cols-1 md:grid-cols-2";
-    if (count === 3) return "grid-cols-1 md:grid-cols-2 lg:grid-cols-3";
-    if (count === 4) return "grid-cols-1 md:grid-cols-2 lg:grid-cols-2";
-    if (count <= 6) return "grid-cols-1 md:grid-cols-2 lg:grid-cols-3";
-    if (count <= 9) return "grid-cols-1 md:grid-cols-2 lg:grid-cols-3";
-    return "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+    if (count <= 4) return "grid-cols-2 md:grid-cols-2 lg:grid-cols-2";
+    if (count <= 6) return "grid-cols-2 md:grid-cols-3 lg:grid-cols-3";
+    if (count <= 9) return "grid-cols-2 md:grid-cols-3 lg:grid-cols-3";
+    return "grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4";
   }, []);
 
   const gridCols = useMemo(() => getGridCols(participantsList.length), [participantsList.length, getGridCols]);
@@ -836,10 +1006,10 @@ export default function VideoCall() {
       </div>
 
       {/* Floating Header */}
-      <div className="absolute top-4 left-4 right-4 z-50 flex justify-between pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-3 bg-black/40 backdrop-blur-xl border border-white/10 p-2 rounded-full shadow-lg">
-          <div className="flex items-center gap-2 px-2">
-            <Badge variant="outline" className="bg-white/5 border-white/10 text-white/80 font-mono">
+      <div className="absolute top-2 md:top-4 left-2 md:left-4 right-2 md:right-4 z-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-2 pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-2 md:gap-3 bg-black/40 backdrop-blur-xl border border-white/10 p-1.5 md:p-2 rounded-full shadow-lg scale-90 md:scale-100 origin-top-left">
+          <div className="flex items-center gap-1 md:gap-2 px-1 md:px-2">
+            <Badge variant="outline" className="bg-white/5 border-white/10 text-white/80 font-mono text-xs md:text-sm">
               {roomId}
             </Badge>
             <Button
@@ -854,12 +1024,12 @@ export default function VideoCall() {
           <div className="h-4 w-px bg-white/10" />
           <div className="flex items-center gap-2 px-2">
             <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-sm font-medium font-mono text-white/90">{formatDuration(callDuration)}</span>
+            <span className="text-xs md:text-sm font-medium font-mono text-white/90">{formatDuration(callDuration)}</span>
           </div>
         </div>
 
-        <div className="pointer-events-auto">
-          <Badge variant="secondary" className="bg-black/40 backdrop-blur-xl border-white/10 text-white/80 gap-1.5 py-1.5 px-3 rounded-full shadow-lg">
+        <div className="pointer-events-auto self-end md:self-auto">
+          <Badge variant="secondary" className="bg-black/40 backdrop-blur-xl border-white/10 text-white/80 gap-1.5 py-1.5 px-3 rounded-full shadow-lg scale-90 md:scale-100 origin-top-right">
             <Sparkles className="w-3 h-3 text-purple-400" />
             AI Enhanced
           </Badge>
@@ -867,7 +1037,7 @@ export default function VideoCall() {
       </div>
 
       {/* Main Content Area */}
-      <div className="absolute inset-0 pt-20 pb-24 px-4 md:px-8 flex items-center justify-center">
+      <div className="absolute inset-0 pt-24 md:pt-20 pb-28 md:pb-24 px-2 md:px-4 lg:px-8 flex items-center justify-center">
         {participantsList.length === 0 ? (
           <div className="text-center space-y-4">
             <div className="relative inline-block">
@@ -981,7 +1151,7 @@ export default function VideoCall() {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="absolute top-20 right-4 bottom-24 w-80 bg-black/60 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden z-40"
+            className="absolute top-20 right-0 md:right-4 bottom-24 w-full md:w-80 bg-black/90 md:bg-black/60 backdrop-blur-2xl border-l md:border border-white/10 md:rounded-3xl shadow-2xl flex flex-col overflow-hidden z-40"
           >
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/5">
               <h3 className="font-semibold text-white">Chat</h3>
@@ -1010,8 +1180,8 @@ export default function VideoCall() {
                           <span className="text-[10px] text-white/30">{msg.time}</span>
                         </div>
                         <div className={`rounded-2xl px-4 py-2 text-sm ${msg.isLocal
-                            ? 'bg-primary text-primary-foreground rounded-tr-none'
-                            : 'bg-white/10 text-white rounded-tl-none'
+                          ? 'bg-primary text-primary-foreground rounded-tr-none'
+                          : 'bg-white/10 text-white rounded-tl-none'
                           }`}>
                           {msg.message}
                         </div>
@@ -1050,7 +1220,7 @@ export default function VideoCall() {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="absolute top-20 right-4 bottom-24 w-80 bg-black/60 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden z-40"
+            className="absolute top-20 right-0 md:right-4 bottom-24 w-full md:w-80 bg-black/90 md:bg-black/60 backdrop-blur-2xl border-l md:border border-white/10 md:rounded-3xl shadow-2xl flex flex-col overflow-hidden z-40"
           >
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/5">
               <h3 className="font-semibold text-white">Participants ({participantsList.length})</h3>
@@ -1085,56 +1255,56 @@ export default function VideoCall() {
       </AnimatePresence>
 
       {/* Floating Control Dock */}
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-50">
-        <div className="flex items-center gap-3 p-2 rounded-3xl bg-black/60 backdrop-blur-2xl border border-white/10 shadow-2xl">
-          <div className="flex items-center gap-2 px-2 border-r border-white/10 pr-4">
+      <div className="absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 z-50 w-full max-w-[95vw] md:max-w-fit">
+        <div className="flex items-center justify-between md:justify-center gap-2 md:gap-3 p-2 rounded-3xl bg-black/60 backdrop-blur-2xl border border-white/10 shadow-2xl overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2 px-2 border-r border-white/10 pr-2 md:pr-4 shrink-0">
             <Button
               variant={isMicOn ? "secondary" : "destructive"}
               size="icon"
               onClick={toggleMic}
-              className={`h-12 w-12 rounded-2xl transition-all duration-300 ${isMicOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20'}`}
+              className={`h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl transition-all duration-300 ${isMicOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20'}`}
             >
-              {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+              {isMicOn ? <Mic className="h-4 w-4 md:h-5 md:w-5" /> : <MicOff className="h-4 w-4 md:h-5 md:w-5" />}
             </Button>
             <Button
               variant={isVideoOn ? "secondary" : "destructive"}
               size="icon"
               onClick={toggleVideo}
-              className={`h-12 w-12 rounded-2xl transition-all duration-300 ${isVideoOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20'}`}
+              className={`h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl transition-all duration-300 ${isVideoOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20'}`}
             >
-              {isVideoOn ? <VideoIcon className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+              {isVideoOn ? <VideoIcon className="h-4 w-4 md:h-5 md:w-5" /> : <VideoOff className="h-4 w-4 md:h-5 md:w-5" />}
             </Button>
           </div>
 
-          <div className="flex items-center gap-2 px-2">
+          <div className="flex items-center gap-2 px-2 shrink-0">
             <Button
               variant={isScreenSharing ? "default" : "ghost"}
               size="icon"
               onClick={toggleScreenShare}
-              className={`h-12 w-12 rounded-2xl hover:bg-white/10 ${isScreenSharing ? 'bg-primary text-primary-foreground' : 'text-white/80'}`}
+              className={`h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl hover:bg-white/10 ${isScreenSharing ? 'bg-primary text-primary-foreground' : 'text-white/80'}`}
             >
-              <MonitorUp className="h-5 w-5" />
+              <MonitorUp className="h-4 w-4 md:h-5 md:w-5" />
             </Button>
             <Button
               variant={showChat ? "default" : "ghost"}
               size="icon"
               onClick={() => { setShowChat(!showChat); setShowParticipants(false); }}
-              className={`h-12 w-12 rounded-2xl hover:bg-white/10 ${showChat ? 'bg-primary text-primary-foreground' : 'text-white/80'}`}
+              className={`h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl hover:bg-white/10 ${showChat ? 'bg-primary text-primary-foreground' : 'text-white/80'}`}
             >
-              <MessageSquare className="h-5 w-5" />
+              <MessageSquare className="h-4 w-4 md:h-5 md:w-5" />
             </Button>
             <Button
               variant={showParticipants ? "default" : "ghost"}
               size="icon"
               onClick={() => { setShowParticipants(!showParticipants); setShowChat(false); }}
-              className={`h-12 w-12 rounded-2xl hover:bg-white/10 ${showParticipants ? 'bg-primary text-primary-foreground' : 'text-white/80'}`}
+              className={`h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl hover:bg-white/10 ${showParticipants ? 'bg-primary text-primary-foreground' : 'text-white/80'}`}
             >
-              <Users className="h-5 w-5" />
+              <Users className="h-4 w-4 md:h-5 md:w-5" />
             </Button>
 
             <div className="relative group">
-              <Button variant="ghost" size="icon" className="h-12 w-12 rounded-2xl hover:bg-white/10 text-white/80">
-                <Smile className="h-5 w-5" />
+              <Button variant="ghost" size="icon" className="h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl hover:bg-white/10 text-white/80">
+                <Smile className="h-4 w-4 md:h-5 md:w-5" />
               </Button>
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 hidden group-hover:flex items-center gap-1 p-2 bg-black/80 backdrop-blur-xl border border-white/10 rounded-full shadow-xl">
                 {reactions.map((reaction, i) => (
@@ -1150,13 +1320,13 @@ export default function VideoCall() {
             </div>
           </div>
 
-          <div className="pl-4 border-l border-white/10">
+          <div className="pl-2 md:pl-4 border-l border-white/10 shrink-0">
             <Button
               variant="destructive"
               onClick={endCall}
-              className="h-12 px-6 rounded-2xl bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20 font-medium"
+              className="h-10 md:h-12 px-4 md:px-6 rounded-xl md:rounded-2xl bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20 font-medium text-sm md:text-base"
             >
-              <PhoneOff className="h-5 w-5 mr-2" />
+              <PhoneOff className="h-4 w-4 md:h-5 md:w-5 mr-2" />
               End
             </Button>
           </div>

@@ -18,6 +18,7 @@ export interface IUser extends Document {
   location?: string;
   website?: string;
   isEmailVerified: boolean;
+  isPhoneVerified?: boolean;
   lastLogin?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -84,6 +85,10 @@ const UserSchema = new Schema<IUser>(
       match: /^https?:\/\/.+/,
     },
     isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    isPhoneVerified: {
       type: Boolean,
       default: false,
     },
