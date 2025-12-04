@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type CSSProperties } from "react";
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { auth } from "@/lib/firebase";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface UserProfile {
   _id: string;
@@ -29,6 +30,7 @@ interface UserProfile {
   phone?: string;
   dateOfBirth?: string;
   isEmailVerified: boolean;
+  isPhoneVerified?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,11 +47,22 @@ interface UserMeeting {
 
 export default function Profile() {
   const [, setLocation] = useLocation();
-  const { user: authUser, logout } = useAuth();
+  const { user: authUser, logout, linkGoogleAccount, linkGithubAccount } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [linkingProvider, setLinkingProvider] = useState<"google" | "github" | null>(null);
+  const [linkedProviders, setLinkedProviders] = useState({
+    google: false,
+    github: false,
+  });
+  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  const [isSendingPhoneCode, setIsSendingPhoneCode] = useState(false);
+  const [isVerifyingPhoneCode, setIsVerifyingPhoneCode] = useState(false);
+  const [phoneCode, setPhoneCode] = useState("");
+  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
 
   // Fetch user profile from MongoDB with real-time updates
   const { data: profile, isLoading, error, refetch, isFetching } = useQuery<UserProfile>({
@@ -92,8 +105,28 @@ export default function Profile() {
         dateOfBirth: profile.dateOfBirth ? new Date(profile.dateOfBirth).toISOString().split("T")[0] : "",
         avatar: profile.avatar || "",
       });
+      setPhoneError(null);
+      setIsPhoneVerified(!!profile.isPhoneVerified);
     }
   }, [profile]);
+
+  // Track linked auth providers from Firebase user
+  useEffect(() => {
+    const refreshLinkedProviders = () => {
+      const current = auth.currentUser;
+      if (!current) {
+        setLinkedProviders({ google: false, github: false });
+        return;
+      }
+      const ids = (current.providerData || []).map((p) => p?.providerId).filter(Boolean);
+      setLinkedProviders({
+        google: ids.includes("google.com"),
+        github: ids.includes("github.com"),
+      });
+    };
+
+    refreshLinkedProviders();
+  }, [authUser?.uid]);
 
   const {
     data: userMeetings,
@@ -249,6 +282,20 @@ export default function Profile() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      // Require phone number before saving to encourage stronger account security
+      if (!formData.phone.trim()) {
+        setPhoneError("Phone number is required for account security.");
+        toast({
+          title: "Phone number required",
+          description: "Please add your mobile number to continue.",
+          variant: "destructive",
+        });
+        setIsSaving(false);
+        return;
+      } else {
+        setPhoneError(null);
+      }
+
       await updateProfileMutation.mutateAsync({
         name: formData.name,
         username: formData.username,
@@ -276,6 +323,180 @@ export default function Profile() {
       });
     }
     setIsEditing(false);
+    setPhoneError(null);
+  };
+
+  const normalizePhone = (raw: string) => raw.replace(/[^\d+]/g, "");
+
+  const handleSendPhoneCode = async () => {
+    const rawPhone = formData.phone.trim();
+    if (!rawPhone) {
+      setPhoneError("Phone number is required before verification.");
+      toast({
+        title: "Phone number required",
+        description: "Please enter your mobile number first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Basic normalization: keep + and digits only
+    const normalized = normalizePhone(rawPhone);
+
+    // Validate simple E.164 format: + followed by 8-15 digits
+    if (!/^\+\d{8,15}$/.test(normalized)) {
+      setPhoneError("Invalid phone format. Use full international format like +14155552671 or +919876543210.");
+      toast({
+        title: "Invalid phone number",
+        description: "Please enter your full number with country code, e.g. +14155552671.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const current = auth.currentUser;
+    if (!current) {
+      toast({
+        title: "Not signed in",
+        description: "You must be signed in to verify your phone number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSendingPhoneCode(true);
+      setPhoneError(null);
+      const token = await current.getIdToken();
+      const response = await fetch("/api/auth/phone/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+        body: JSON.stringify({ phone: normalized }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to send verification code.");
+      }
+
+      // Use a dummy ID just to toggle the UI for entering the code
+      setPhoneVerificationId("twilio");
+      setPhoneCode("");
+
+      toast({
+        title: "Code sent",
+        description: "We sent a verification code via SMS to your mobile number.",
+      });
+    } catch (error: any) {
+      console.error("Error sending phone verification code:", error);
+      setPhoneError(error?.message || "Failed to send verification code. Please try again.");
+      toast({
+        title: "Failed to send code",
+        description: error?.message || "Could not send SMS. Please check your number and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingPhoneCode(false);
+    }
+  };
+
+  const handleVerifyPhoneCode = async () => {
+    if (!phoneVerificationId) {
+      setPhoneError("Please request a verification code first.");
+      return;
+    }
+    if (!phoneCode.trim()) {
+      setPhoneError("Enter the verification code you received.");
+      return;
+    }
+
+    const current = auth.currentUser;
+    if (!current) {
+      toast({
+        title: "Not signed in",
+        description: "You must be signed in to verify your phone number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsVerifyingPhoneCode(true);
+      setPhoneError(null);
+      const token = await current.getIdToken();
+      const normalized = normalizePhone(formData.phone.trim());
+
+      const response = await fetch("/api/auth/phone/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+        body: JSON.stringify({ phone: normalized, code: phoneCode.trim() }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to verify phone number.");
+      }
+
+      const data = await response.json();
+      setIsPhoneVerified(true);
+      setPhoneVerificationId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/users/me"] });
+      toast({
+        title: "Phone verified",
+        description: "Your mobile number has been verified successfully.",
+      });
+    } catch (error: any) {
+      console.error("Error verifying phone code:", error);
+      setPhoneError(error?.message || "Invalid or expired code. Please try again.");
+      toast({
+        title: "Verification failed",
+        description: error?.message || "Invalid or expired code. Please request a new one.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsVerifyingPhoneCode(false);
+    }
+  };
+
+  const handleLinkProvider = async (provider: "google" | "github") => {
+    setLinkingProvider(provider);
+    try {
+      if (provider === "google") {
+        await linkGoogleAccount();
+      } else {
+        await linkGithubAccount();
+      }
+      // Reload Firebase user to get updated providerData
+      await auth.currentUser?.reload();
+      const current = auth.currentUser;
+      if (current) {
+        const ids = (current.providerData || []).map((p) => p?.providerId).filter(Boolean);
+        setLinkedProviders({
+          google: ids.includes("google.com"),
+          github: ids.includes("github.com"),
+        });
+      }
+      toast({
+        title: "Account linked",
+        description: `Your ${provider === "google" ? "Google" : "GitHub"} account has been linked successfully.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Linking failed",
+        description: error?.message || "Failed to link account.",
+        variant: "destructive",
+      });
+    } finally {
+      setLinkingProvider(null);
+    }
   };
 
   const sidebarItems = [
@@ -411,8 +632,89 @@ export default function Profile() {
           <main className="flex-1 overflow-auto p-6 md:p-10">
             <div className="max-w-5xl mx-auto space-y-8">
               {isLoading ? (
-                <div className="flex items-center justify-center py-20">
-                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
+                <div className="space-y-8 animate-pulse">
+                  {/* Profile Header Skeleton */}
+                  <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-8">
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
+                      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 w-full">
+                        <Skeleton className="h-32 w-32 rounded-full border-4 border-white/10" />
+                        <div className="space-y-4 text-center sm:text-left w-full max-w-md">
+                          <Skeleton className="h-10 w-48 mx-auto sm:mx-0" />
+                          <Skeleton className="h-6 w-32 mx-auto sm:mx-0" />
+                          <div className="flex justify-center sm:justify-start gap-4 pt-2">
+                            <Skeleton className="h-5 w-40" />
+                            <Skeleton className="h-5 w-32" />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-3 w-full lg:w-auto justify-center lg:justify-end">
+                        <Skeleton className="h-10 w-32" />
+                        <Skeleton className="h-10 w-32" />
+                      </div>
+                    </div>
+
+                    {/* Stats Grid Skeleton */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="rounded-2xl border border-white/5 bg-white/5 p-4">
+                          <Skeleton className="h-4 w-20 mb-2" />
+                          <Skeleton className="h-8 w-12" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-8 lg:grid-cols-3">
+                    {/* Profile Details Form Skeleton */}
+                    <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 p-6 md:p-8">
+                      <div className="flex justify-between mb-8">
+                        <Skeleton className="h-8 w-40" />
+                        <Skeleton className="h-6 w-24" />
+                      </div>
+                      <div className="space-y-8">
+                        <div className="grid gap-6 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Skeleton className="h-5 w-20" />
+                            <Skeleton className="h-10 w-full" />
+                          </div>
+                          <div className="space-y-2">
+                            <Skeleton className="h-5 w-20" />
+                            <Skeleton className="h-10 w-full" />
+                          </div>
+                        </div>
+                        <div className="grid gap-6 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Skeleton className="h-5 w-24" />
+                            <Skeleton className="h-10 w-full" />
+                          </div>
+                          <div className="space-y-2">
+                            <Skeleton className="h-5 w-24" />
+                            <Skeleton className="h-10 w-full" />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Skeleton className="h-5 w-16" />
+                          <Skeleton className="h-32 w-full" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sidebar Skeleton */}
+                    <div className="space-y-6">
+                      <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                        <Skeleton className="h-6 w-32 mb-4" />
+                        <Skeleton className="h-20 w-full rounded-2xl" />
+                        <Skeleton className="h-20 w-full rounded-2xl" />
+                        <Skeleton className="h-40 w-full rounded-2xl" />
+                      </div>
+                      <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                        <Skeleton className="h-6 w-32 mb-4" />
+                        <Skeleton className="h-12 w-full rounded-xl" />
+                        <Skeleton className="h-12 w-full rounded-xl" />
+                        <Skeleton className="h-12 w-full rounded-xl" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : error ? (
                 <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-200">
@@ -584,18 +886,96 @@ export default function Profile() {
                             </div>
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>Phone Number</Label>
+                            <div className="flex items-center justify-between">
+                              <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>Phone Number</Label>
+                              {isPhoneVerified && (
+                                <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30">
+                                  <CheckCircle2 className="w-4 h-4 mr-1" />
+                                  Verified
+                                </Badge>
+                              )}
+                            </div>
                             {isEditing ? (
                               <Input
                                 id="phone"
                                 type="tel"
                                 value={formData.phone}
-                                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                onChange={(e) => {
+                                  setFormData({ ...formData, phone: e.target.value });
+                                  if (e.target.value.trim()) {
+                                    setPhoneError(null);
+                                  }
+                                }}
                                 className="bg-white/5 border-white/10 focus:border-primary/50"
                                 placeholder="+1 (555) 000-0000"
                               />
                             ) : (
-                              <p className="text-lg font-medium">{profile?.phone || "Not set"}</p>
+                              <p className="text-lg font-medium">
+                                {profile?.phone || "Not set"}
+                              </p>
+                            )}
+                            {(!profile?.phone && !isEditing) && (
+                              <p className="text-xs text-red-500 mt-1">
+                                Add your mobile number to keep your account more secure.
+                              </p>
+                            )}
+                            {isEditing && phoneError && (
+                              <p className="text-xs text-red-500 mt-1">
+                                {phoneError}
+                              </p>
+                            )}
+                            {!isPhoneVerified && formData.phone && (
+                              <div className="mt-3 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-white/20 hover:bg-white/10"
+                                    onClick={handleSendPhoneCode}
+                                    disabled={isSendingPhoneCode}
+                                  >
+                                    {isSendingPhoneCode ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                        Sending code...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Phone className="w-3 h-3 mr-1" />
+                                        Send verification code
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                                {phoneVerificationId && (
+                                  <div className="flex flex-col sm:flex-row gap-2">
+                                    <Input
+                                      type="text"
+                                      inputMode="numeric"
+                                      maxLength={6}
+                                      placeholder="Enter 6-digit code"
+                                      value={phoneCode}
+                                      onChange={(e) => setPhoneCode(e.target.value)}
+                                      className="bg-white/5 border-white/10 focus:border-primary/50"
+                                    />
+                                    <Button
+                                      size="sm"
+                                      onClick={handleVerifyPhoneCode}
+                                      disabled={isVerifyingPhoneCode}
+                                      className="min-w-[110px]"
+                                    >
+                                      {isVerifyingPhoneCode ? (
+                                        <>
+                                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                          Verifying...
+                                        </>
+                                      ) : (
+                                        "Verify"
+                                      )}
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -632,11 +1012,76 @@ export default function Profile() {
                             <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Membership</p>
                             <p className="font-medium">{memberSinceText}</p>
                           </div>
+                          {!profile?.phone && (
+                            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                              <p className="text-xs uppercase tracking-wide text-amber-400 mb-1">
+                                Action Recommended
+                              </p>
+                              <p className="text-sm text-amber-100">
+                                Add your mobile number to help secure your account and recover access if you get locked out.
+                              </p>
+                            </div>
+                          )}
                           <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
                             <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Last Active</p>
                             <p className="font-medium">
                               {profile?.updatedAt ? new Date(profile.updatedAt).toLocaleDateString() : "Just now"}
                             </p>
+                          </div>
+                          <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-3">
+                            <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Connected Accounts</p>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm text-muted-foreground">Google</span>
+                                {linkedProviders.google ? (
+                                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                    Connected
+                                  </Badge>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-white/20 hover:bg-white/10"
+                                    onClick={() => handleLinkProvider("google")}
+                                    disabled={linkingProvider === "google"}
+                                  >
+                                    {linkingProvider === "google" ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                        Linking...
+                                      </>
+                                    ) : (
+                                      "Connect"
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm text-muted-foreground">GitHub</span>
+                                {linkedProviders.github ? (
+                                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                    Connected
+                                  </Badge>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-white/20 hover:bg-white/10"
+                                    onClick={() => handleLinkProvider("github")}
+                                    disabled={linkingProvider === "github"}
+                                  >
+                                    {linkingProvider === "github" ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                        Linking...
+                                      </>
+                                    ) : (
+                                      "Connect"
+                                    )}
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -682,6 +1127,7 @@ export default function Profile() {
           </main>
         </div>
       </div>
+      <div id="phone-recaptcha-container" className="hidden" />
     </SidebarProvider>
   );
 }

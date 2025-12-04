@@ -4,10 +4,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Video,
   Plus,
@@ -118,19 +121,19 @@ const StatCard = ({ icon: Icon, label, value, trend, delay }: { icon: any, label
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ delay, duration: 0.4 }}
-    className="glass-card p-4 rounded-xl relative overflow-hidden group"
+    className="bg-card dark:bg-white/[0.03] p-5 rounded-2xl relative overflow-hidden group flex flex-col justify-between h-full border border-border/30 shadow-sm hover:shadow-md transition-all duration-300"
   >
-    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+    <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-5 transition-opacity">
       <Icon className="w-16 h-16" />
     </div>
-    <div className="relative z-10">
-      <div className="flex items-center gap-2 mb-1 text-muted-foreground">
-        <Icon className="w-3.5 h-3.5" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
+    <div className="relative z-10 space-y-1">
+      <div className="flex items-center gap-2 text-muted-foreground/80">
+        <Icon className="w-4 h-4" />
+        <span className="text-[11px] font-bold uppercase tracking-widest">{label}</span>
       </div>
-      <div className="flex items-end gap-2">
-        <span className="text-2xl font-bold text-foreground">{value}</span>
-        {trend && <span className="text-xs text-emerald-500 mb-1">{trend}</span>}
+      <div className="space-y-1">
+        <span className="text-3xl font-bold text-foreground tracking-tight block">{value}</span>
+        {trend && <p className="text-xs text-muted-foreground font-medium">{trend}</p>}
       </div>
     </div>
   </motion.div>
@@ -145,18 +148,18 @@ const ActionButton = ({ icon: Icon, label, onClick, variant = "primary", delay }
     whileTap={{ scale: 0.98 }}
     onClick={onClick}
     className={`
-      relative overflow-hidden rounded-xl p-3 flex flex-col items-center justify-center gap-2 w-full h-24 transition-all
+      relative overflow-hidden rounded-2xl p-3 flex flex-col items-center justify-center gap-1.5 w-full h-20 transition-all
       ${variant === "primary"
-        ? "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-lg shadow-primary/20"
-        : "bg-card hover:bg-accent/50 border border-border/50 text-card-foreground"}
+        ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+        : "bg-transparent hover:bg-accent/30 border border-border/40 text-muted-foreground hover:text-foreground"}
     `}
   >
-    <div className={`p-3 rounded-full ${variant === "primary" ? "bg-white/20" : "bg-primary/10"}`}>
-      <Icon className={`w-6 h-6 ${variant === "primary" ? "text-white" : "text-primary"}`} />
+    <div className={`p-2 rounded-full ${variant === "primary" ? "bg-white/20" : "bg-primary/5 text-primary"}`}>
+      <Icon className={`w-5 h-5 ${variant === "primary" ? "text-white" : "text-primary"}`} />
     </div>
-    <span className="font-medium text-sm">{label}</span>
+    <span className="font-medium text-xs">{label}</span>
     {variant === "primary" && (
-      <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/10 to-white/0 opacity-0 hover:opacity-100 transition-opacity duration-500" />
+      <div className="absolute inset-0 bg-white/10 opacity-0 hover:opacity-100 transition-opacity duration-500" />
     )}
   </motion.button>
 );
@@ -165,6 +168,7 @@ export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { user, logout } = useAuth();
   const [roomId, setRoomId] = useState("");
+  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: profileData } = useQuery<UserProfile>({
@@ -235,7 +239,10 @@ export default function Dashboard() {
   };
 
   const joinCall = () => {
-    if (roomId.trim()) setLocation(`/call/${roomId.trim()}`);
+    if (roomId.trim()) {
+      setLocation(`/call/${roomId.trim()}`);
+      setJoinDialogOpen(false);
+    }
   };
 
   const filteredMeetings = (meetings || []).filter((meeting) => {
@@ -289,6 +296,8 @@ export default function Dashboard() {
   const sidebarItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
     { title: "Chats", icon: MessageSquare, url: "/chats" },
+    { title: "Meetings", icon: Calendar, url: "/meetings" },
+    { title: "Analytics", icon: BarChart3, url: "/analytics" },
     { title: "Profile", icon: User, url: "/profile" },
     { title: "Settings", icon: Settings, url: "/settings" }
   ];
@@ -298,11 +307,11 @@ export default function Dashboard() {
       <div className="flex h-screen w-full bg-background/80 backdrop-blur-3xl overflow-hidden">
         {/* Background Gradients */}
         <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px] animate-pulse-glow" />
-          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[100px] animate-pulse-glow animation-delay-500" />
+          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/5 blur-[100px] animate-pulse-glow" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-primary/5 blur-[100px] animate-pulse-glow animation-delay-500" />
         </div>
 
-        <Sidebar className="border-r border-white/10 bg-black/20 backdrop-blur-xl">
+        <Sidebar className="border-r border-white/5 bg-white/[0.03] backdrop-blur-2xl">
           <SidebarContent className="p-6">
             <div className="flex items-center gap-3 px-2 mb-10">
               <div className="relative">
@@ -320,7 +329,7 @@ export default function Dashboard() {
                 <SidebarMenu className="space-y-2">
                   {sidebarItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild className="hover:bg-white/10 transition-colors rounded-xl p-3">
+                      <SidebarMenuButton asChild className="hover:bg-white/[0.08] hover:shadow-sm transition-all duration-200 rounded-xl p-3 group-data-[state=expanded]:w-full">
                         <a href={item.url} className="flex items-center gap-3">
                           <item.icon className="w-5 h-5 opacity-70" />
                           <span className="font-medium">{item.title}</span>
@@ -366,7 +375,7 @@ export default function Dashboard() {
           </header>
 
           <main className="flex-1 overflow-y-auto p-6 scrollbar-hide">
-            <div className="max-w-7xl mx-auto space-y-8 pb-10">
+            <div className="max-w-7xl mx-auto space-y-10 pb-10">
 
               {/* Hero Section */}
               <motion.div
@@ -374,23 +383,27 @@ export default function Dashboard() {
                 animate={{ opacity: 1, y: 0 }}
                 className="relative rounded-3xl overflow-hidden p-6"
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-purple-500/10 to-background z-0" />
+                <div className="absolute inset-0 bg-primary/5 z-0" />
                 <div className="absolute inset-0 backdrop-blur-3xl z-0" />
                 <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
                   <div className="space-y-2 max-w-2xl">
-                    <h1 className="text-3xl font-bold tracking-tight text-white drop-shadow-sm">
-                      Hello, <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-400">{user?.displayName?.split(' ')[0] || "Creator"}</span>
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground drop-shadow-sm">
+                      Welcome back, <span className="text-primary">{user?.displayName?.split(' ')[0] || "Creator"}</span>
                     </h1>
-                    <p className="text-base text-white/80 font-medium">
-                      Ready to collaborate? Your studio is prepped.
-                    </p>
+                    <div className="flex flex-col gap-1">
+                      <p className="text-base text-muted-foreground font-medium">
+                        Your meeting workspace is ready.
+                      </p>
+                      <p className="text-xs text-muted-foreground/70 font-medium flex items-center gap-2">
+                        <Clock className="w-3 h-3" />
+                        {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <span className="w-1 h-1 rounded-full bg-foreground/20" />
+                        {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="flex gap-4">
-                    <div className="text-right hidden md:block">
-                      <p className="text-3xl font-bold">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                      <p className="text-sm text-muted-foreground">{new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -398,9 +411,9 @@ export default function Dashboard() {
               {/* Quick Stats Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard icon={Video} label="Weekly Calls" value={weeklyMeetings} trend="+12% vs last week" delay={0.1} />
-                <StatCard icon={Users} label="Collaborators" value={collaboratorCount} trend="Active network" delay={0.2} />
-                <StatCard icon={Clock} label="Avg Duration" value={`${avgDuration}m`} trend="Optimal focus" delay={0.3} />
-                <StatCard icon={Activity} label="Engagement" value="High" trend="Top 10% of users" delay={0.4} />
+                <StatCard icon={Users} label="Collaborators" value={collaboratorCount} trend="Active collaborators" delay={0.2} />
+                <StatCard icon={Clock} label="Avg Duration" value={`${avgDuration}m`} trend="Average call duration" delay={0.3} />
+                <StatCard icon={Activity} label="Engagement" value="High" trend="Top 10% engagement among users" delay={0.4} />
               </div>
 
               {/* Main Content Grid */}
@@ -411,10 +424,43 @@ export default function Dashboard() {
 
                   {/* Quick Actions */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <ActionButton icon={Zap} label="Instant Meeting" onClick={createCall} variant="primary" delay={0.5} />
-                    <ActionButton icon={CalendarPlus} label="Schedule" onClick={() => startQuickAction("schedule")} variant="secondary" delay={0.6} />
-                    <ActionButton icon={Users} label="Join Room" onClick={() => document.getElementById('join-input')?.focus()} variant="secondary" delay={0.7} />
-                    <ActionButton icon={BarChart3} label="View Analytics" onClick={() => { }} variant="secondary" delay={0.8} />
+                    <ActionButton icon={Zap} label="Instant meeting" onClick={createCall} variant="primary" delay={0.5} />
+                    <ActionButton icon={CalendarPlus} label="Schedule meeting" onClick={() => startQuickAction("schedule")} variant="secondary" delay={0.6} />
+
+                    <Dialog open={joinDialogOpen} onOpenChange={setJoinDialogOpen}>
+                      <DialogTrigger asChild>
+                        <div className="w-full">
+                          <ActionButton icon={Users} label="Join room" onClick={() => setJoinDialogOpen(true)} variant="secondary" delay={0.7} />
+                        </div>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[400px] glass-panel border-white/10">
+                        <DialogHeader>
+                          <DialogTitle>Join a room</DialogTitle>
+                          <DialogDescription>
+                            Enter a room code to jump into a meeting.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 pt-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="dialog-join-input" className="text-xs font-medium text-muted-foreground ml-1">
+                              Enter room code
+                            </Label>
+                            <Input
+                              id="dialog-join-input"
+                              placeholder="e.g. room-123"
+                              value={roomId}
+                              onChange={(e) => setRoomId(e.target.value)}
+                              className="bg-muted/50 border-border/50 text-center text-lg tracking-wider font-mono h-10 rounded-xl"
+                            />
+                          </div>
+                          <Button onClick={joinCall} className="w-full h-10 text-sm font-medium shadow-md shadow-primary/20 rounded-xl">
+                            Join now
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+
+                    <ActionButton icon={BarChart3} label="View analytics" onClick={() => setLocation("/analytics")} variant="secondary" delay={0.8} />
                   </div>
 
                   {/* Recent Meetings List */}
@@ -430,12 +476,35 @@ export default function Dashboard() {
                     </div>
 
                     <div className="space-y-3">
-                      <AnimatePresence>
+                      <AnimatePresence mode="wait">
                         {meetingsLoading ? (
-                          <div className="flex justify-center py-10"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+                          <div className="space-y-3">
+                            {[1, 2, 3].map((i) => (
+                              <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border/20 bg-card/50">
+                                <div className="flex items-center gap-4">
+                                  <Skeleton className="h-10 w-10 rounded-full" />
+                                  <div className="space-y-2">
+                                    <Skeleton className="h-4 w-32" />
+                                    <Skeleton className="h-3 w-24" />
+                                  </div>
+                                </div>
+                                <Skeleton className="h-6 w-16 rounded-full" />
+                              </div>
+                            ))}
+                          </div>
                         ) : filteredMeetings.length === 0 ? (
-                          <div className="text-center py-10 text-muted-foreground bg-white/5 rounded-2xl border border-white/5">
-                            <p>No recent calls found.</p>
+                          <div className="flex flex-col items-center justify-center py-12 px-4 text-center bg-card/30 rounded-2xl border border-border/20 border-dashed">
+                            <div className="bg-primary/5 p-4 rounded-full mb-4">
+                              <Calendar className="w-8 h-8 text-primary/40" />
+                            </div>
+                            <h3 className="text-base font-semibold text-foreground mb-1">No meetings yet</h3>
+                            <p className="text-sm text-muted-foreground max-w-[250px] mb-6">
+                              Your recent meetings and calls will appear here once you start collaborating.
+                            </p>
+                            <Button onClick={() => startQuickAction("schedule")} variant="outline" className="gap-2 border-primary/20 hover:bg-primary/5 hover:text-primary">
+                              <CalendarPlus className="w-4 h-4" />
+                              Schedule meeting
+                            </Button>
                           </div>
                         ) : (
                           filteredMeetings.slice(0, 5).map((meeting, i) => (
@@ -444,30 +513,26 @@ export default function Dashboard() {
                               initial={{ opacity: 0, x: -20 }}
                               animate={{ opacity: 1, x: 0 }}
                               transition={{ delay: i * 0.1 }}
-                              className="group relative overflow-hidden rounded-xl border border-white/5 bg-white/[0.02] p-3 hover:bg-white/5 transition-all cursor-pointer"
+                              className="group relative overflow-hidden rounded-xl p-4 hover:bg-accent/30 transition-all cursor-pointer flex items-center justify-between border-b border-border/20 last:border-0"
                               onClick={() => setLocation(`/summary/${meeting._id}`)}
                             >
-                              <div className="flex items-center justify-between relative z-10">
-                                <div className="flex items-center gap-4">
-                                  <div className="h-12 w-12 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center text-primary font-bold text-lg">
-                                    {meeting.title.charAt(0).toUpperCase()}
-                                  </div>
-                                  <div>
-                                    <div>
-                                      <h3 className="font-bold text-lg text-white group-hover:text-primary transition-colors">{meeting.title || "Untitled Session"}</h3>
-                                      <div className="flex items-center gap-3 text-sm text-white/60 font-medium">
-                                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {formatTimeAgo(new Date(meeting.startTime))}</span>
-                                        <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {calculateDuration(new Date(meeting.startTime), meeting.endTime ? new Date(meeting.endTime) : undefined)}</span>
-                                      </div>
-                                    </div>
-                                  </div>
+                              <div className="flex items-center gap-4">
+                                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                                  {meeting.title.charAt(0).toUpperCase()}
                                 </div>
-                                <div className="flex items-center gap-3">
-                                  <Badge variant="outline" className="bg-white/5 border-white/10">{getEmotion(meeting)}</Badge>
-                                  <ArrowUpRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                                <div className="flex items-center gap-6">
+                                  <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors min-w-[120px]">{meeting.title || "Untitled Session"}</h3>
+                                  <div className="flex items-center gap-6 text-xs text-muted-foreground font-medium">
+                                    <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> {formatTimeAgo(new Date(meeting.startTime))}</span>
+                                    <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {calculateDuration(new Date(meeting.startTime), meeting.endTime ? new Date(meeting.endTime) : undefined)}</span>
+                                  </div>
                                 </div>
                               </div>
-                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 pointer-events-none" />
+                              <div className="flex items-center gap-3">
+                                <Badge variant="outline" className="bg-background/50 border-border/50 text-xs font-medium px-2 py-0.5 h-6">Completed</Badge>
+                                <ArrowUpRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                              </div>
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-foreground/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 pointer-events-none" />
                             </motion.div>
                           ))
                         )}
@@ -476,55 +541,44 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Right Column: Join & Insights */}
-                <div className="space-y-8">
-                  {/* Join Card */}
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: 0.6 }}
-                    className="glass-panel p-5 rounded-2xl space-y-4 relative overflow-hidden"
-                  >
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-primary/20 blur-[60px] rounded-full" />
-                    <div>
-                      <h3 className="text-lg font-bold text-white mb-1">Join a Room</h3>
-                      <p className="text-sm text-white/60 font-medium">Enter a code to jump into a meeting.</p>
-                    </div>
-                    <div className="space-y-3">
-                      <Input
-                        id="join-input"
-                        placeholder="e.g. room-123"
-                        value={roomId}
-                        onChange={(e) => setRoomId(e.target.value)}
-                        className="bg-black/20 border-white/10 text-center text-lg tracking-wider font-mono h-12"
-                      />
-                      <Button onClick={joinCall} className="w-full h-12 text-base font-medium shadow-lg shadow-primary/20">
-                        Join Now
-                      </Button>
-                    </div>
-                  </motion.div>
 
+
+                {/* Right Column: Insights */}
+                <div className="space-y-8">
                   {/* Top Collaborators */}
                   <div className="glass-panel p-5 rounded-2xl space-y-4">
                     <h3 className="text-lg font-semibold flex items-center gap-2">
                       <Users className="w-5 h-5 text-primary" />
-                      <span className="text-white">Top Collaborators</span>
+                      <span className="text-foreground">Top Collaborators</span>
                     </h3>
-                    <div className="space-y-4">
-                      {topCollaborators.length > 0 ? (
-                        topCollaborators.map((collab, i) => (
-                          <div key={collab.id} className="flex items-center justify-between group">
+                    <div className="space-y-3">
+                      {userMeetingsLoading ? (
+                        [1, 2, 3].map((i) => (
+                          <div key={i} className="flex items-center justify-between py-3 px-2">
                             <div className="flex items-center gap-3">
-                              <Avatar className="h-10 w-10 border border-white/10">
-                                <AvatarFallback className="bg-primary/10 text-primary">{getInitials(collab.name)}</AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <p className="font-medium text-sm group-hover:text-primary transition-colors">{collab.name}</p>
-                                <p className="text-xs text-muted-foreground">{collab.count} sessions</p>
+                              <Skeleton className="h-9 w-9 rounded-full" />
+                              <div className="space-y-1.5">
+                                <Skeleton className="h-3.5 w-24" />
+                                <Skeleton className="h-3 w-16" />
                               </div>
                             </div>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <Video className="w-4 h-4" />
+                            <Skeleton className="h-7 w-16 rounded-md" />
+                          </div>
+                        ))
+                      ) : topCollaborators.length > 0 ? (
+                        topCollaborators.map((collab, i) => (
+                          <div key={collab.id} className="flex items-center justify-between group py-3 px-2 rounded-lg hover:bg-accent/30 transition-colors border-b border-border/20 last:border-0">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-9 w-9 border border-white/10">
+                                <AvatarFallback className="bg-primary/10 text-primary text-xs">{getInitials(collab.name)}</AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">{collab.name}</p>
+                                <p className="text-xs text-muted-foreground font-medium">{collab.count} sessions</p>
+                              </div>
+                            </div>
+                            <Button variant="secondary" size="sm" className="h-7 text-xs px-3 bg-white/5 hover:bg-primary/20 hover:text-primary border-white/5" onClick={() => startQuickAction("invite")}>
+                              Invite
                             </Button>
                           </div>
                         ))
@@ -532,11 +586,6 @@ export default function Dashboard() {
                         <p className="text-sm text-muted-foreground text-center py-4">No collaborators yet.</p>
                       )}
                     </div>
-                    {topCollaborators.length > 0 && (
-                      <Button variant="outline" className="w-full border-white/10 hover:bg-white/5" onClick={() => startQuickAction("invite")}>
-                        Invite All
-                      </Button>
-                    )}
                   </div>
                 </div>
 

@@ -221,7 +221,7 @@ export default function EmailVerification() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="relative">
           <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse" />
-          <div className="relative bg-black/40 backdrop-blur-xl p-8 rounded-full border border-white/10">
+          <div className="relative bg-white/80 dark:bg-black/40 backdrop-blur-xl p-8 rounded-full border border-border">
             <LogoMark className="h-12 w-12 animate-spin-slow" />
           </div>
         </div>
@@ -237,8 +237,8 @@ export default function EmailVerification() {
     <div className="min-h-screen bg-background/95 backdrop-blur-3xl overflow-hidden relative flex flex-col">
       {/* Background Gradients */}
       <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-primary/10 blur-[120px] animate-pulse-glow" />
-        <div className="absolute bottom-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-purple-500/10 blur-[120px] animate-pulse-glow animation-delay-500" />
+        <div className="absolute top-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-primary/15 dark:bg-primary/10 blur-[120px] animate-pulse-glow" />
+        <div className="absolute bottom-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-purple-500/15 dark:bg-purple-500/10 blur-[120px] animate-pulse-glow animation-delay-500" />
       </div>
 
       <nav className="p-6 relative z-10">
@@ -248,7 +248,9 @@ export default function EmailVerification() {
               <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
               <LogoMark className="h-10 w-10 relative z-10" />
             </div>
-            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">AI Meet</span>
+            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
+              AI Meet
+            </span>
           </div>
           <ThemeToggle />
         </div>
@@ -261,21 +263,21 @@ export default function EmailVerification() {
           transition={{ duration: 0.5 }}
           className="w-full max-w-md"
         >
-          <Card className="border-white/10 bg-black/40 backdrop-blur-xl shadow-2xl overflow-hidden">
+          <Card className="border border-border bg-white/80 dark:bg-black/40 backdrop-blur-xl shadow-2xl overflow-hidden">
             <CardHeader className="space-y-4 text-center pb-8 pt-8">
-              <div className="flex items-center justify-center w-20 h-20 rounded-full bg-white/5 border border-white/10 mx-auto mb-2 relative group">
+              <div className="flex items-center justify-center w-20 h-20 rounded-full bg-primary/10 border border-primary/30 mx-auto mb-2 relative group">
                 <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                 <Mail className="w-8 h-8 text-primary relative z-10" />
-                <div className="absolute -top-1 -right-1 w-6 h-6 bg-primary rounded-full flex items-center justify-center border-2 border-black">
-                  <Sparkles className="w-3 h-3 text-white" />
+                <div className="absolute -top-1 -right-1 w-6 h-6 bg-primary rounded-full flex items-center justify-center border-2 border-background">
+                  <Sparkles className="w-3 h-3 text-background" />
                 </div>
               </div>
-              <CardTitle className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+              <CardTitle className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/70">
                 Verify Your Email
               </CardTitle>
-              <CardDescription className="text-white/60 text-base">
+              <CardDescription className="text-muted-foreground text-base">
                 We've sent a magic link to <br />
-                <span className="text-white font-medium">{email}</span>
+                <span className="text-foreground font-medium">{email}</span>
               </CardDescription>
             </CardHeader>
             <CardContent className="px-8 pb-8">
@@ -287,7 +289,7 @@ export default function EmailVerification() {
                     exit={{ opacity: 0, height: 0 }}
                     className="mb-6"
                   >
-                    <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-400">
+                    <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400">
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>{error}</AlertDescription>
                     </Alert>
@@ -300,7 +302,7 @@ export default function EmailVerification() {
                     exit={{ opacity: 0, height: 0 }}
                     className="mb-6"
                   >
-                    <Alert className="bg-green-500/10 border-green-500/20 text-green-400">
+                    <Alert className="bg-green-500/10 border-green-500/20 text-green-600 dark:text-green-400">
                       <CheckCircle2 className="h-4 w-4" />
                       <AlertDescription>{success}</AlertDescription>
                     </Alert>
@@ -309,8 +311,8 @@ export default function EmailVerification() {
               </AnimatePresence>
 
               <div className="space-y-6">
-                <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-center">
-                  <p className="text-sm text-white/60">
+                <div className="bg-muted/40 border border-border rounded-xl p-4 text-center">
+                  <p className="text-sm text-muted-foreground">
                     Click the link in your email, then click below:
                   </p>
                 </div>
@@ -335,7 +337,7 @@ export default function EmailVerification() {
 
                 <div className="space-y-4 pt-4 border-t border-white/10">
                   <div className="text-center space-y-2">
-                    <p className="text-sm text-white/40">
+                    <p className="text-sm text-muted-foreground">
                       Didn't receive the email?
                     </p>
                     <Button
@@ -343,7 +345,7 @@ export default function EmailVerification() {
                       size="sm"
                       onClick={handleResend}
                       disabled={isResending || countdown > 0 || resendAttempts >= maxResendAttempts}
-                      className="w-full h-10 rounded-lg hover:bg-white/5 text-white/80"
+                      className="w-full h-10 rounded-lg hover:bg-muted/40 text-foreground"
                     >
                       {isResending ? (
                         <div className="flex items-center gap-2">
@@ -359,11 +361,11 @@ export default function EmailVerification() {
                   </div>
 
                   <div className="text-center space-y-2">
-                    <p className="text-xs text-white/30">
+                    <p className="text-xs text-muted-foreground">
                       Check your spam folder if you don't see the email
                     </p>
                     {resendAttempts >= maxResendAttempts && (
-                      <p className="text-xs text-red-400">
+                      <p className="text-xs text-red-600 dark:text-red-400">
                         Max attempts reached ({maxResendAttempts}/{maxResendAttempts})
                       </p>
                     )}
