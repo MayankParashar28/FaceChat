@@ -22,6 +22,36 @@ export interface IUser extends Document {
   lastLogin?: Date;
   createdAt: Date;
   updatedAt: Date;
+  // Enhanced Fields
+  professional?: {
+    title?: string;
+    company?: string;
+    industry?: string;
+    skills?: string[];
+  };
+  socials?: {
+    linkedin?: string;
+    twitter?: string;
+    github?: string;
+    instagram?: string;
+    website?: string;
+  };
+  preferences?: {
+    theme?: "light" | "dark" | "system";
+    notifications?: {
+      email?: boolean;
+      push?: boolean;
+      meetingReminders?: boolean;
+    };
+    privacy?: {
+      showOnlineStatus?: boolean;
+      allowPublicProfile?: boolean;
+    };
+  };
+  onboarding?: {
+    hasCompleted?: boolean;
+    completedStep?: number;
+  };
 }
 
 const UserSchema = new Schema<IUser>(
@@ -95,9 +125,68 @@ const UserSchema = new Schema<IUser>(
     lastLogin: {
       type: Date,
     },
+    // Enhanced Fields
+    professional: {
+      title: { type: String, trim: true },
+      company: { type: String, trim: true },
+      industry: { type: String, trim: true },
+      skills: [{ type: String, trim: true }],
+    },
+    socials: {
+      linkedin: { type: String, trim: true },
+      twitter: { type: String, trim: true },
+      github: { type: String, trim: true },
+      instagram: { type: String, trim: true },
+      website: { type: String, trim: true },
+    },
+    preferences: {
+      theme: { type: String, enum: ["light", "dark", "system"], default: "system" },
+      notifications: {
+        email: { type: Boolean, default: true },
+        push: { type: Boolean, default: true },
+        meetingReminders: { type: Boolean, default: true },
+      },
+      privacy: {
+        showOnlineStatus: { type: Boolean, default: true },
+        allowPublicProfile: { type: Boolean, default: true },
+      },
+    },
+    onboarding: {
+      hasCompleted: { type: Boolean, default: false },
+      completedStep: { type: Number, default: 0 },
+    }
   },
   { timestamps: true }
 );
+
+/* =========================================================
+ *  ACTIVITY LOG MODEL
+ * ========================================================= */
+
+export interface IActivityLog extends Document {
+  _id: Types.ObjectId;
+  userId: Types.ObjectId;
+  action: string;
+  metadata?: any;
+  ipAddress?: string;
+  userAgent?: string;
+  timestamp: Date;
+}
+
+const ActivityLogSchema = new Schema<IActivityLog>(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    action: { type: String, required: true },
+    metadata: { type: Schema.Types.Mixed },
+    ipAddress: { type: String },
+    userAgent: { type: String },
+    timestamp: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+
+ActivityLogSchema.index({ userId: 1, timestamp: -1 });
+ActivityLogSchema.index({ action: 1 });
 
 /* =========================================================
  *  MEETING MODEL
@@ -129,10 +218,12 @@ export interface IMeeting extends Document {
     totalDuration: number;
     participantCount: number;
     engagementScore: number;
+    reactions?: Map<string, number>;
     emotionData: {
       emotion: string;
       percentage: number;
       timestamp: Date;
+      count?: number;
     }[];
   };
   isDeleted: boolean;
@@ -184,11 +275,17 @@ const MeetingSchema = new Schema<IMeeting>(
       totalDuration: { type: Number, default: 0 },
       participantCount: { type: Number, default: 0 },
       engagementScore: { type: Number, default: 0 },
+      reactions: {
+        type: Map,
+        of: Number,
+        default: {}
+      },
       emotionData: [
         {
           emotion: { type: String },
           percentage: { type: Number },
           timestamp: { type: Date, default: Date.now },
+          count: { type: Number, default: 1 }
         },
       ],
     },
@@ -354,6 +451,7 @@ export const Conversation = mongoose.model<IConversation>(
   ConversationSchema
 );
 export const Message = mongoose.model<IMessage>("Message", MessageSchema);
+export const ActivityLog = mongoose.model<IActivityLog>("ActivityLog", ActivityLogSchema);
 
 // Export OTP model (for email verification)
 export { OTP } from './otp';

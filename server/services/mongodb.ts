@@ -1,4 +1,4 @@
-import { User, Meeting, ChatMessage, IUser, IMeeting, IChatMessage, Conversation, Message, IConversation, IMessage } from '../models';
+import { User, Meeting, ChatMessage, IUser, IMeeting, IChatMessage, Conversation, Message, IConversation, IMessage, ActivityLog, IActivityLog } from '../models';
 import mongoose, { Types } from 'mongoose';
 import { hashPassword, validatePasswordStrength } from '../utils/passwordHash';
 
@@ -24,7 +24,7 @@ export class MongoDBService {
   }): Promise<IUser> {
     try {
       console.log("Creating new user in MongoDB:", { ...userData, password: userData.password ? '***' : undefined });
-      
+
       // Hash password if provided
       let hashedPassword: string | undefined;
       if (userData.password) {
@@ -35,24 +35,49 @@ export class MongoDBService {
         }
         hashedPassword = await hashPassword(userData.password);
       }
-      
+
       const avatarUrl = userData.avatar && userData.avatar.trim().length > 0
         ? userData.avatar
         : this.buildDefaultAvatarUrl(userData.username || userData.firebaseUid);
-      
+
       const userDataToSave = {
         ...userData,
         password: hashedPassword,
         avatar: avatarUrl,
         isEmailVerified: userData.isEmailVerified || false,
       };
-      
+
       const user = new User(userDataToSave);
       await user.save();
       console.log("User saved successfully:", { _id: user._id, username: user.username });
       return user;
     } catch (error) {
       console.error('Error creating user:', error);
+      throw error;
+    }
+  }
+
+
+  async logUserActivity(
+    userId: string,
+    action: string,
+    metadata?: any,
+    ipAddress?: string,
+    userAgent?: string
+  ): Promise<IActivityLog> {
+    try {
+      const log = new ActivityLog({
+        userId: new mongoose.Types.ObjectId(userId),
+        action,
+        metadata,
+        ipAddress,
+        userAgent
+      });
+      await log.save();
+      return log;
+    } catch (error) {
+      console.error('Error logging user activity:', error);
+      // Don't throw logic errors for logging failure to avoid breaking main flows
       throw error;
     }
   }
@@ -70,20 +95,36 @@ export class MongoDBService {
     location?: string;
     website?: string;
     isEmailVerified?: boolean;
+    // Enhanced Fields
+    professional?: {
+      title?: string;
+      company?: string;
+      industry?: string;
+      skills?: string[];
+    };
+    socials?: {
+      linkedin?: string;
+      twitter?: string;
+      github?: string;
+      instagram?: string;
+      website?: string;
+    };
+    preferences?: any;
+    onboarding?: any;
   }): Promise<IUser> {
     try {
       console.log("createOrUpdateUser called with:", { ...userData, password: userData.password ? '***' : undefined });
-      
+
       // Try to find existing user first
       let user = await this.getUserByFirebaseUid(userData.firebaseUid);
-      
+
       if (user) {
         console.log("User exists, updating:", user._id);
         // Update existing user
         user.email = userData.email;
         user.name = userData.name;
         user.username = userData.username;
-        
+
         // Update password if provided
         if (userData.password) {
           const validation = validatePasswordStrength(userData.password);
@@ -92,7 +133,7 @@ export class MongoDBService {
           }
           user.password = await hashPassword(userData.password);
         }
-        
+
         // Update optional fields if provided
         if (userData.phone !== undefined) user.phone = userData.phone;
         if (userData.bio !== undefined) user.bio = userData.bio;
@@ -100,24 +141,46 @@ export class MongoDBService {
         if (userData.location !== undefined) user.location = userData.location;
         if (userData.website !== undefined) user.website = userData.website;
         if (userData.isEmailVerified !== undefined) user.isEmailVerified = userData.isEmailVerified;
-        
+
+        // Enhanced Fields Update
+        if (userData.professional) {
+          user.professional = { ...user.professional, ...userData.professional };
+        }
+        if (userData.socials) {
+          user.socials = { ...user.socials, ...userData.socials };
+        }
+        if (userData.preferences) {
+          user.preferences = { ...user.preferences, ...userData.preferences };
+        }
+        if (userData.onboarding) {
+          user.onboarding = { ...user.onboarding, ...userData.onboarding };
+        }
+
         if (userData.avatar) {
           user.avatar = userData.avatar;
         } else if (!user.avatar || user.avatar.trim().length === 0) {
           user.avatar = this.buildDefaultAvatarUrl(userData.username || userData.firebaseUid);
         }
-        
+
         // Update last login
         user.lastLogin = new Date();
-        
+
         await user.save();
         console.log("User updated successfully:", user._id);
+
+        // Log activity
+        this.logUserActivity(user._id.toString(), 'user_login', { method: 'createOrUpdateUser' });
+
         return user;
       } else {
         console.log("User does not exist, creating new user");
         // Create new user
         const newUser = await this.createUser(userData);
         console.log("New user created successfully:", newUser._id);
+
+        // Log activity
+        this.logUserActivity(newUser._id.toString(), 'user_register', { method: 'createOrUpdateUser' });
+
         return newUser;
       }
     } catch (error) {
@@ -167,18 +230,18 @@ export class MongoDBService {
     try {
       const suggestions: string[] = [];
       const cleanUsername = baseUsername.toLowerCase().replace(/[^a-z0-9_]/g, '');
-      
+
       // Ensure minimum length
       let username = cleanUsername;
       if (username.length < 3) {
         username = username + 'user';
       }
-      
+
       // Ensure maximum length
       if (username.length > 30) {
         username = username.substring(0, 30);
       }
-      
+
       // Generate suggestions
       for (let i = 1; i <= 5; i++) {
         const suggestion = `${username}${i}`;
@@ -188,7 +251,7 @@ export class MongoDBService {
         }
         if (suggestions.length >= 3) break;
       }
-      
+
       // If we don't have enough suggestions, try with random numbers
       if (suggestions.length < 3) {
         for (let i = 0; i < 10 && suggestions.length < 3; i++) {
@@ -200,7 +263,7 @@ export class MongoDBService {
           }
         }
       }
-      
+
       return suggestions;
     } catch (error) {
       console.error('Error generating username suggestions:', error);
@@ -225,7 +288,7 @@ export class MongoDBService {
       if (mongoose.connection.readyState !== 1) {
         throw new Error('MongoDB is not connected. ReadyState: ' + mongoose.connection.readyState);
       }
-      
+
       console.log('Creating meeting with data:', {
         ...meetingData,
         hostId: meetingData.hostId,
@@ -233,16 +296,16 @@ export class MongoDBService {
         startTime: meetingData.startTime,
         mongooseReadyState: mongoose.connection.readyState
       });
-      
+
       // Convert hostId and participants to ObjectIds if they're strings
-      const hostIdObj = typeof meetingData.hostId === 'string' 
+      const hostIdObj = typeof meetingData.hostId === 'string'
         ? new Types.ObjectId(meetingData.hostId)
         : meetingData.hostId;
-      
-      const participantsObj = meetingData.participants.map(p => 
+
+      const participantsObj = meetingData.participants.map(p =>
         typeof p === 'string' ? new Types.ObjectId(p) : p
       );
-      
+
       // Validate ObjectIds
       if (!Types.ObjectId.isValid(hostIdObj.toString())) {
         throw new Error(`Invalid hostId: ${meetingData.hostId}`);
@@ -252,7 +315,7 @@ export class MongoDBService {
           throw new Error(`Invalid participant ID at index ${idx}: ${meetingData.participants[idx]}`);
         }
       });
-      
+
       // Create meeting object - explicitly set all required fields and defaults
       // Similar to how Message is created (which works)
       const meetingDataToSave: any = {
@@ -262,7 +325,7 @@ export class MongoDBService {
         startTime: meetingData.startTime,
         roomId: meetingData.roomId,
         meetingType: meetingData.meetingType || 'video',
-        status: meetingData.status || 'active',
+        status: meetingData.status || 'scheduled', // Default to scheduled, not active
         // Explicitly set settings (schema has defaults, but let's be explicit)
         settings: meetingData.settings || {
           allowScreenShare: true,
@@ -279,12 +342,12 @@ export class MongoDBService {
         },
         isDeleted: false
       };
-      
+
       // Add optional fields only if provided
       if (meetingData.description) {
         meetingDataToSave.description = meetingData.description;
       }
-      
+
       console.log('Creating Meeting instance with data:', {
         title: meetingDataToSave.title,
         hostId: meetingDataToSave.hostId.toString(),
@@ -295,16 +358,16 @@ export class MongoDBService {
         hasSettings: !!meetingDataToSave.settings,
         hasAnalytics: !!meetingDataToSave.analytics
       });
-      
+
       const meeting = new Meeting(meetingDataToSave);
-      
+
       // Validate before saving
       const validationError = meeting.validateSync();
       if (validationError) {
         console.error('❌ Meeting validation error:', validationError);
         throw validationError;
       }
-      
+
       console.log('Attempting to save meeting to MongoDB...');
       await meeting.save();
       console.log('✅ Meeting saved successfully:', meeting._id);
@@ -315,7 +378,7 @@ export class MongoDBService {
         participants: meeting.participants,
         status: meeting.status
       });
-      
+
       return meeting;
     } catch (error: any) {
       console.error('❌ Error creating meeting:', error);
@@ -502,6 +565,185 @@ export class MongoDBService {
     }
   }
 
+  async getUserMeetingAnalytics(userId: string): Promise<any> {
+    try {
+      const oid = new mongoose.Types.ObjectId(userId);
+      const now = new Date();
+      const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      const pipeline = [
+        {
+          $match: {
+            $or: [{ hostId: oid }, { participants: oid }],
+            status: 'ended'
+          }
+        },
+        {
+          $addFields: {
+            calculatedDuration: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $gt: ["$analytics.totalDuration", 0] },
+                    { $ne: ["$analytics.totalDuration", null] }
+                  ]
+                },
+                then: "$analytics.totalDuration",
+                else: {
+                  $divide: [
+                    { $subtract: [{ $ifNull: ["$endTime", new Date()] }, "$startTime"] },
+                    1000 * 60 // Convert ms to minutes
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          $facet: {
+            // Total stats
+            "totals": [
+              {
+                $group: {
+                  _id: null,
+                  totalCalls: { $sum: 1 },
+                  totalDuration: { $sum: "$calculatedDuration" },
+                  avgEngagement: { $avg: "$analytics.engagementScore" }
+                }
+              }
+            ],
+            // Unique participants
+            "participants": [
+              { $unwind: "$participants" },
+              { $match: { participants: { $ne: oid } } }, // Exclude self
+              { $group: { _id: "$participants" } },
+              { $count: "count" }
+            ],
+            // Weekly activity (Last 7 days)
+            "weeklyActivity": [
+              {
+                $match: {
+                  startTime: { $gte: oneWeekAgo }
+                }
+              },
+              {
+                $project: {
+                  dayOfWeek: { $dayOfWeek: "$startTime" }, // 1=Sun, 2=Mon...
+                  duration: "$calculatedDuration"
+                }
+              },
+              {
+                $group: {
+                  _id: "$dayOfWeek",
+                  calls: { $sum: 1 },
+                  duration: { $sum: "$duration" }
+                }
+              }
+            ],
+            // Stats from last month for comparison
+            "lastMonthTotals": [
+              {
+                $match: {
+                  startTime: { $gte: oneMonthAgo, $lt: now }
+                }
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalCalls: { $sum: 1 },
+                  totalDuration: { $sum: "$calculatedDuration" },
+                }
+              }
+            ],
+            // Emotion aggregation
+            "emotions": [
+              { $unwind: "$analytics.emotionData" },
+              {
+                $group: {
+                  _id: "$analytics.emotionData.emotion",
+                  count: { $sum: { $ifNull: ["$analytics.emotionData.count", 1] } }
+                }
+              }
+            ],
+            // Reactions aggregation
+            "reactions": [
+              {
+                $project: {
+                  reactionsArr: { $objectToArray: { $ifNull: ["$analytics.reactions", {}] } }
+                }
+              },
+              { $unwind: "$reactionsArr" },
+              {
+                $group: {
+                  _id: "$reactionsArr.k",
+                  count: { $sum: "$reactionsArr.v" }
+                }
+              },
+              { $sort: { count: -1 } },
+              { $limit: 10 }
+            ]
+          }
+        }
+      ];
+
+      const results = await Meeting.aggregate(pipeline as any);
+      const data = results[0];
+
+      // Format weekly activity to match chart format (Mon-Sun)
+      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const activityData = days.map((day, index) => {
+        // Mongo dayOfWeek: 1=Sun, 7=Sat. Index 0=Sun.
+        // So day index directly maps to Mongo dayOfWeek - 1? No.
+        // Mongo: Sun=1. Map Index: 0. So MongoID = Index + 1.
+        const dayStats = data.weeklyActivity.find((d: any) => d._id === (index + 1)) || { calls: 0, duration: 0 };
+        return {
+          name: day,
+          calls: dayStats.calls,
+          duration: dayStats.duration
+        };
+      });
+
+      // Rotate array so Monday is first if desired, or keep as Sun-Sat
+      // Chart mockup had Mon-Sun.
+      const activityDataMonFirst = [...activityData.slice(1), activityData[0]];
+
+      // Format emotion data
+      const totalEmotions = data.emotions.reduce((acc: number, curr: any) => acc + curr.count, 0);
+      const emotionData = data.emotions.map((e: any) => ({
+        name: e._id || "Unknown",
+        value: totalEmotions > 0 ? Math.round((e.count / totalEmotions) * 100) : 0
+      }));
+
+      // Calculate trends (naive)
+      const currentTotals = data.totals[0] || { totalCalls: 0, totalDuration: 0, avgEngagement: 0 };
+
+      // Format reactions
+      const topReactions = (data.reactions || []).map((r: any) => ({
+        emoji: r._id,
+        count: r.count
+      }));
+
+      return {
+        totalCalls: currentTotals.totalCalls,
+        totalDuration: currentTotals.totalDuration,
+        uniqueParticipants: data.participants[0]?.count || 0,
+        avgSentiment: "Positive", // Placeholder until sentiment analysis is better
+        activityData: activityDataMonFirst,
+        emotionData: emotionData.length > 0 ? emotionData : [
+          { name: "Happy", value: 30 },
+          { name: "Neutral", value: 50 },
+          { name: "Surprised", value: 20 }
+        ],
+        topReactions
+      };
+
+    } catch (error) {
+      console.error('Error calculating analytics:', error);
+      throw error;
+    }
+  }
+
   async addRecordingToMeeting(meetingId: string, recordingData: {
     url: string;
     duration: number;
@@ -529,27 +771,27 @@ export class MongoDBService {
   async getUserConversations(userId: string): Promise<any[]> {
     try {
       console.log("Getting conversations for MongoDB user ID:", userId);
-      
+
       const conversations = await Conversation.find({
         participants: userId,
         isDeleted: false
       })
-      .populate('participants', 'username name email avatar firebaseUid')
-      .populate('lastMessage')
-      .populate('createdBy', 'username name')
-      .sort({ updatedAt: -1 })
-      .limit(50);
+        .populate('participants', 'username name email avatar firebaseUid')
+        .populate('lastMessage')
+        .populate('createdBy', 'username name')
+        .sort({ updatedAt: -1 })
+        .limit(50);
 
       console.log("Found raw conversations:", conversations.length);
-      
+
       // Transform to include last message details
       const formattedConversations = await Promise.all(
         conversations.map(async (conv) => {
           const otherParticipants = conv.participants.filter(
             (p: any) => p._id.toString() !== userId
           );
-          
-          const lastMessage = conv.lastMessage 
+
+          const lastMessage = conv.lastMessage
             ? await Message.findById(conv.lastMessage).populate('senderId', 'username name')
             : null;
 
@@ -600,7 +842,7 @@ export class MongoDBService {
       // Convert string IDs to ObjectId instances
       const participantObjectIds = participants.map(p => new mongoose.Types.ObjectId(p));
       const createdByObjectId = new mongoose.Types.ObjectId(createdBy);
-      
+
       const conversation = new Conversation({
         participants: participantObjectIds,
         createdBy: createdByObjectId,
@@ -618,18 +860,18 @@ export class MongoDBService {
   async getConversationMessages(conversationId: string, viewerId?: string, limit: number = 50, beforeDate?: Date): Promise<any[]> {
     try {
       console.log("Getting messages for conversation:", conversationId, "beforeDate:", beforeDate);
-      
+
       const query: any = { conversationId };
-      
+
       // If beforeDate is provided, only get messages before that date (for pagination)
       if (beforeDate) {
         query.createdAt = { $lt: beforeDate };
       }
-      
+
       const messages = await Message.find(query)
-      .populate('senderId', 'username name avatar')
-      .sort({ createdAt: -1 })
-      .limit(limit);
+        .populate('senderId', 'username name avatar')
+        .sort({ createdAt: -1 })
+        .limit(limit);
 
       console.log("Found messages:", messages.length);
 
@@ -655,7 +897,7 @@ export class MongoDBService {
           status = msg.isRead ? "seen" : "delivered";
         }
         // If message is from someone else, no status (it's not our message to track)
-        
+
         return {
           id: msg._id.toString(),
           conversationId: msg.conversationId.toString(),
@@ -711,9 +953,9 @@ export class MongoDBService {
         username: { $regex: query.toLowerCase(), $options: 'i' },
         isDeleted: { $ne: true }
       })
-      .select('username name avatar email')
-      .limit(limit);
-      
+        .select('username name avatar email')
+        .limit(limit);
+
       return users;
     } catch (error) {
       console.error('Error searching users:', error);

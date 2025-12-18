@@ -7,9 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { Settings, LogOut, LayoutDashboard, MessageSquare, User, Mail, Calendar, Phone, Edit2, Save, X, Camera, CheckCircle2, Loader2, RefreshCw, Shield, Activity } from "lucide-react";
-import { ThemeToggle } from "@/components/ThemeToggle";
+import { Settings, LogOut, LayoutDashboard, MessageSquare, User, Mail, Calendar, Phone, Edit2, Save, X, Camera, CheckCircle2, Loader2, RefreshCw, Shield, Activity, Briefcase, Share2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { LogoMark } from "@/components/LogoMark";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
@@ -499,17 +497,7 @@ export default function Profile() {
     }
   };
 
-  const sidebarItems = [
-    { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
-    { title: "Chats", icon: MessageSquare, url: "/chats" },
-    { title: "Profile", icon: User, url: "/profile" },
-    { title: "Settings", icon: Settings, url: "/settings" },
-  ];
 
-  const style = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
-  };
 
   const displayName = profile?.name || authUser?.displayName || "User";
   const displayEmail = profile?.email || authUser?.email || "";
@@ -564,570 +552,462 @@ export default function Profile() {
   };
 
   return (
-    <SidebarProvider style={style as CSSProperties}>
-      <div className="flex h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden">
-        {/* Background Gradients */}
-        <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px] animate-pulse-glow" />
-          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-emerald-500/10 blur-[100px] animate-pulse-glow animation-delay-500" />
-        </div>
+    <div className="flex-1 overflow-auto p-6 md:p-10">
 
-        <Sidebar className="border-r border-white/10 bg-white/5 backdrop-blur-xl">
-          <SidebarContent className="p-6">
-            <div className="flex items-center gap-3 px-2 mb-10">
-              <div className="relative">
-                <div className="absolute inset-0 bg-primary/20 blur-md rounded-full" />
-                <LogoMark className="h-8 w-8 relative z-10" />
-              </div>
-              <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
-                FaceCall
-              </span>
-            </div>
+      <main className="flex-1 overflow-auto p-6 md:p-10">
+        <div className="max-w-5xl mx-auto space-y-8">
+          {isLoading ? (
+            <div className="space-y-8 animate-pulse">
+              {/* Profile Header Skeleton */}
+              <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-8">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 w-full">
+                    <Skeleton className="h-32 w-32 rounded-full border-4 border-white/10" />
+                    <div className="space-y-4 text-center sm:text-left w-full max-w-md">
+                      <Skeleton className="h-10 w-48 mx-auto sm:mx-0" />
+                      <Skeleton className="h-6 w-32 mx-auto sm:mx-0" />
+                      <div className="flex justify-center sm:justify-start gap-4 pt-2">
+                        <Skeleton className="h-5 w-40" />
+                        <Skeleton className="h-5 w-32" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 w-full lg:w-auto justify-center lg:justify-end">
+                    <Skeleton className="h-10 w-32" />
+                    <Skeleton className="h-10 w-32" />
+                  </div>
+                </div>
 
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-xs uppercase tracking-widest text-muted-foreground/70 mb-4">Menu</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu className="space-y-2">
-                  {sidebarItems.map((item) => (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild className="hover:bg-white/10 transition-colors rounded-xl p-3">
-                        <a href={item.url} className="flex items-center gap-3">
-                          <item.icon className="w-5 h-5 opacity-70" />
-                          <span className="font-medium">{item.title}</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
+                {/* Stats Grid Skeleton */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="rounded-2xl border border-white/5 bg-white/5 p-4">
+                      <Skeleton className="h-4 w-20 mb-2" />
+                      <Skeleton className="h-8 w-12" />
+                    </div>
                   ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <div className="mt-auto pt-6 border-t border-white/10">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors cursor-pointer group">
-                <Avatar className="h-10 w-10 border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
-                  <AvatarImage src={getAvatarUrl(authUser?.photoURL, authUser?.uid, authUser?.email)} />
-                  <AvatarFallback>{getInitials(authUser?.displayName, authUser?.email)}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{authUser?.displayName || "User"}</p>
-                  <p className="text-xs text-muted-foreground truncate">{authUser?.email}</p>
                 </div>
-                <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity" onClick={logout}>
-                  <LogOut className="h-4 w-4" />
-                </Button>
+              </div>
+
+              <div className="grid gap-8 lg:grid-cols-3">
+                {/* Profile Details Form Skeleton */}
+                <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 p-6 md:p-8">
+                  <div className="flex justify-between mb-8">
+                    <Skeleton className="h-8 w-40" />
+                    <Skeleton className="h-6 w-24" />
+                  </div>
+                  <div className="space-y-8">
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Skeleton className="h-5 w-20" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                      <div className="space-y-2">
+                        <Skeleton className="h-5 w-20" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                    </div>
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Skeleton className="h-5 w-24" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                      <div className="space-y-2">
+                        <Skeleton className="h-5 w-24" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Skeleton className="h-5 w-16" />
+                      <Skeleton className="h-32 w-full" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sidebar Skeleton */}
+                <div className="space-y-6">
+                  <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                    <Skeleton className="h-6 w-32 mb-4" />
+                    <Skeleton className="h-20 w-full rounded-2xl" />
+                    <Skeleton className="h-20 w-full rounded-2xl" />
+                    <Skeleton className="h-40 w-full rounded-2xl" />
+                  </div>
+                  <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                    <Skeleton className="h-6 w-32 mb-4" />
+                    <Skeleton className="h-12 w-full rounded-xl" />
+                    <Skeleton className="h-12 w-full rounded-xl" />
+                    <Skeleton className="h-12 w-full rounded-xl" />
+                  </div>
+                </div>
               </div>
             </div>
-          </SidebarContent>
-        </Sidebar>
-
-        <div className="flex flex-col flex-1 h-full overflow-hidden relative">
-          <header className="flex items-center justify-between gap-4 p-6 border-b border-white/5 bg-white/5 backdrop-blur-sm z-10">
-            <div className="flex items-center gap-4">
-              <SidebarTrigger />
-              <h1 className="text-xl font-semibold">Profile</h1>
-            </div>
-            <ThemeToggle />
-          </header>
-
-          <main className="flex-1 overflow-auto p-6 md:p-10">
-            <div className="max-w-5xl mx-auto space-y-8">
-              {isLoading ? (
-                <div className="space-y-8 animate-pulse">
-                  {/* Profile Header Skeleton */}
-                  <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-8">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
-                      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 w-full">
-                        <Skeleton className="h-32 w-32 rounded-full border-4 border-white/10" />
-                        <div className="space-y-4 text-center sm:text-left w-full max-w-md">
-                          <Skeleton className="h-10 w-48 mx-auto sm:mx-0" />
-                          <Skeleton className="h-6 w-32 mx-auto sm:mx-0" />
-                          <div className="flex justify-center sm:justify-start gap-4 pt-2">
-                            <Skeleton className="h-5 w-40" />
-                            <Skeleton className="h-5 w-32" />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-3 w-full lg:w-auto justify-center lg:justify-end">
-                        <Skeleton className="h-10 w-32" />
-                        <Skeleton className="h-10 w-32" />
-                      </div>
-                    </div>
-
-                    {/* Stats Grid Skeleton */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="rounded-2xl border border-white/5 bg-white/5 p-4">
-                          <Skeleton className="h-4 w-20 mb-2" />
-                          <Skeleton className="h-8 w-12" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-8 lg:grid-cols-3">
-                    {/* Profile Details Form Skeleton */}
-                    <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 p-6 md:p-8">
-                      <div className="flex justify-between mb-8">
-                        <Skeleton className="h-8 w-40" />
-                        <Skeleton className="h-6 w-24" />
-                      </div>
-                      <div className="space-y-8">
-                        <div className="grid gap-6 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Skeleton className="h-5 w-20" />
-                            <Skeleton className="h-10 w-full" />
-                          </div>
-                          <div className="space-y-2">
-                            <Skeleton className="h-5 w-20" />
-                            <Skeleton className="h-10 w-full" />
-                          </div>
-                        </div>
-                        <div className="grid gap-6 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Skeleton className="h-5 w-24" />
-                            <Skeleton className="h-10 w-full" />
-                          </div>
-                          <div className="space-y-2">
-                            <Skeleton className="h-5 w-24" />
-                            <Skeleton className="h-10 w-full" />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Skeleton className="h-5 w-16" />
-                          <Skeleton className="h-32 w-full" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Sidebar Skeleton */}
-                    <div className="space-y-6">
-                      <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
-                        <Skeleton className="h-6 w-32 mb-4" />
-                        <Skeleton className="h-20 w-full rounded-2xl" />
-                        <Skeleton className="h-20 w-full rounded-2xl" />
-                        <Skeleton className="h-40 w-full rounded-2xl" />
-                      </div>
-                      <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
-                        <Skeleton className="h-6 w-32 mb-4" />
-                        <Skeleton className="h-12 w-full rounded-xl" />
-                        <Skeleton className="h-12 w-full rounded-xl" />
-                        <Skeleton className="h-12 w-full rounded-xl" />
-                      </div>
-                    </div>
-                  </div>
+          ) : error ? (
+            <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-200">
+              <AlertDescription>
+                <div className="space-y-2">
+                  <p className="font-semibold">
+                    {error instanceof Error ? error.message : "Failed to load profile. Please try again."}
+                  </p>
+                  <Button onClick={() => refetch()} variant="outline" className="mt-2 border-red-500/30 hover:bg-red-500/20">Retry</Button>
                 </div>
-              ) : error ? (
-                <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-200">
-                  <AlertDescription>
-                    <div className="space-y-2">
-                      <p className="font-semibold">
-                        {error instanceof Error ? error.message : "Failed to load profile. Please try again."}
-                      </p>
-                      <Button onClick={() => refetch()} variant="outline" className="mt-2 border-red-500/30 hover:bg-red-500/20">Retry</Button>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <motion.div
-                  variants={containerVariants}
-                  initial="hidden"
-                  animate="visible"
-                  className="space-y-8"
-                >
-                  {/* Profile Header Card */}
-                  <motion.div variants={itemVariants} className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-8 shadow-2xl">
-                    <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent opacity-50 pointer-events-none" />
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <motion.div
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+              className="space-y-8"
+            >
+              {/* Profile Header Card */}
+              <motion.div variants={itemVariants} className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-8 shadow-2xl">
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent opacity-50 pointer-events-none" />
+                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
 
-                    <div className="relative flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
-                      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
-                        <div className="relative group">
-                          <div className="absolute inset-0 bg-primary/30 blur-xl rounded-full opacity-70 group-hover:opacity-100 transition-opacity" />
-                          <Avatar className="relative h-32 w-32 border-4 border-white/10 shadow-2xl">
-                            <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
-                            <AvatarFallback className="text-3xl bg-background/50 backdrop-blur">
-                              {getInitials(displayName, displayEmail)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="absolute -bottom-2 -right-2 h-6 w-6 rounded-full border-2 border-background bg-emerald-500 shadow-lg ring-2 ring-background/50 animate-pulse" />
-                        </div>
-
-                        <div className="text-center sm:text-left space-y-2">
-                          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3">
-                            <h1 className="text-4xl font-bold tracking-tight">{displayName}</h1>
-                            {profile?.isEmailVerified && (
-                              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                                <CheckCircle2 className="w-3 h-3 mr-1" />
-                                Verified
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-lg text-muted-foreground">@{profile?.username || "username"}</p>
-                          <div className="flex items-center justify-center sm:justify-start gap-4 text-sm text-muted-foreground/80 pt-2">
-                            <span className="flex items-center gap-1.5">
-                              <Mail className="w-4 h-4" />
-                              {displayEmail}
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <Calendar className="w-4 h-4" />
-                              {memberSinceText}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-                        <Button
-                          variant="outline"
-                          className="gap-2 border-white/10 hover:bg-white/10 bg-transparent backdrop-blur-sm"
-                          onClick={handleAvatarRefresh}
-                          disabled={!profile}
-                        >
-                          <Camera className="w-4 h-4" />
-                          Shuffle Avatar
-                        </Button>
-                        {!isEditing ? (
-                          <Button onClick={() => setIsEditing(true)} className="gap-2 shadow-lg shadow-primary/20">
-                            <Edit2 className="w-4 h-4" />
-                            Edit Profile
-                          </Button>
-                        ) : (
-                          <div className="flex gap-2">
-                            <Button variant="ghost" onClick={handleCancel} disabled={isSaving} className="hover:bg-white/10">
-                              Cancel
-                            </Button>
-                            <Button onClick={handleSave} disabled={isSaving} className="gap-2 min-w-[100px]">
-                              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                              Save
-                            </Button>
-                          </div>
-                        )}
-                      </div>
+                <div className="relative flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+                    <div className="relative group">
+                      <div className="absolute inset-0 bg-primary/30 blur-xl rounded-full opacity-70 group-hover:opacity-100 transition-opacity" />
+                      <Avatar className="relative h-32 w-32 border-4 border-white/10 shadow-2xl">
+                        <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
+                        <AvatarFallback className="text-3xl bg-background/50 backdrop-blur">
+                          {getInitials(displayName, displayEmail)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="absolute -bottom-2 -right-2 h-6 w-6 rounded-full border-2 border-background bg-emerald-500 shadow-lg ring-2 ring-background/50 animate-pulse" />
                     </div>
 
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
-                      {statsCards.map((stat) => (
-                        <div
-                          key={stat.label}
-                          className="group relative overflow-hidden rounded-2xl border border-white/5 bg-white/5 p-4 hover:bg-white/10 transition-all duration-300"
-                        >
-                          <div className="relative z-10">
-                            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{stat.label}</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <p className="text-2xl font-bold text-foreground">
-                                {statsLoading ? "—" : stat.value}
-                              </p>
-                              {statsLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-                            </div>
-                          </div>
-                          <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-colors" />
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-
-                  <div className="grid gap-8 lg:grid-cols-3">
-                    {/* Profile Details Form */}
-                    <motion.div variants={itemVariants} className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6 md:p-8">
-                      <div className="flex items-center justify-between mb-8">
-                        <div>
-                          <h2 className="text-xl font-semibold flex items-center gap-2">
-                            <User className="w-5 h-5 text-primary" />
-                            Profile Details
-                          </h2>
-                          <p className="text-sm text-muted-foreground mt-1">Manage your personal information</p>
-                        </div>
-                        {isEditing && (
-                          <Badge variant="outline" className="border-primary/50 text-primary animate-pulse">
-                            Editing Mode
+                    <div className="text-center sm:text-left space-y-2">
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3">
+                        <h1 className="text-4xl font-bold tracking-tight">{displayName}</h1>
+                        {profile?.isEmailVerified && (
+                          <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3 mr-1" />
+                            Verified
                           </Badge>
                         )}
                       </div>
-
-                      <div className="space-y-8">
-                        <div className="grid gap-6 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label htmlFor="name" className={isEditing ? "text-primary" : ""}>Full Name</Label>
-                            {isEditing ? (
-                              <Input
-                                id="name"
-                                value={formData.name}
-                                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                className="bg-white/5 border-white/10 focus:border-primary/50"
-                              />
-                            ) : (
-                              <p className="text-lg font-medium">{profile?.name || "Not set"}</p>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="username" className={isEditing ? "text-primary" : ""}>Username</Label>
-                            {isEditing ? (
-                              <Input
-                                id="username"
-                                value={formData.username}
-                                onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase() })}
-                                className="bg-white/5 border-white/10 focus:border-primary/50"
-                              />
-                            ) : (
-                              <p className="text-lg font-medium">@{profile?.username || "username"}</p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="grid gap-6 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label>Email Address</Label>
-                            <div className="flex items-center gap-2">
-                              <p className="text-lg font-medium text-muted-foreground">{displayEmail}</p>
-                              {profile?.isEmailVerified && (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                              )}
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>Phone Number</Label>
-                              {isPhoneVerified && (
-                                <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30">
-                                  <CheckCircle2 className="w-4 h-4 mr-1" />
-                                  Verified
-                                </Badge>
-                              )}
-                            </div>
-                            {isEditing ? (
-                              <Input
-                                id="phone"
-                                type="tel"
-                                value={formData.phone}
-                                onChange={(e) => {
-                                  setFormData({ ...formData, phone: e.target.value });
-                                  if (e.target.value.trim()) {
-                                    setPhoneError(null);
-                                  }
-                                }}
-                                className="bg-white/5 border-white/10 focus:border-primary/50"
-                                placeholder="+1 (555) 000-0000"
-                              />
-                            ) : (
-                              <p className="text-lg font-medium">
-                                {profile?.phone || "Not set"}
-                              </p>
-                            )}
-                            {(!profile?.phone && !isEditing) && (
-                              <p className="text-xs text-red-500 mt-1">
-                                Add your mobile number to keep your account more secure.
-                              </p>
-                            )}
-                            {isEditing && phoneError && (
-                              <p className="text-xs text-red-500 mt-1">
-                                {phoneError}
-                              </p>
-                            )}
-                            {!isPhoneVerified && formData.phone && (
-                              <div className="mt-3 space-y-2">
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="border-white/20 hover:bg-white/10"
-                                    onClick={handleSendPhoneCode}
-                                    disabled={isSendingPhoneCode}
-                                  >
-                                    {isSendingPhoneCode ? (
-                                      <>
-                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                        Sending code...
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Phone className="w-3 h-3 mr-1" />
-                                        Send verification code
-                                      </>
-                                    )}
-                                  </Button>
-                                </div>
-                                {phoneVerificationId && (
-                                  <div className="flex flex-col sm:flex-row gap-2">
-                                    <Input
-                                      type="text"
-                                      inputMode="numeric"
-                                      maxLength={6}
-                                      placeholder="Enter 6-digit code"
-                                      value={phoneCode}
-                                      onChange={(e) => setPhoneCode(e.target.value)}
-                                      className="bg-white/5 border-white/10 focus:border-primary/50"
-                                    />
-                                    <Button
-                                      size="sm"
-                                      onClick={handleVerifyPhoneCode}
-                                      disabled={isVerifyingPhoneCode}
-                                      className="min-w-[110px]"
-                                    >
-                                      {isVerifyingPhoneCode ? (
-                                        <>
-                                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                          Verifying...
-                                        </>
-                                      ) : (
-                                        "Verify"
-                                      )}
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="bio" className={isEditing ? "text-primary" : ""}>Bio</Label>
-                          {isEditing ? (
-                            <Textarea
-                              id="bio"
-                              value={formData.bio}
-                              onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                              className="bg-white/5 border-white/10 focus:border-primary/50 min-h-[100px]"
-                              placeholder="Tell us about yourself..."
-                              maxLength={500}
-                            />
-                          ) : (
-                            <p className="text-base leading-relaxed text-muted-foreground">
-                              {profile?.bio || "No bio provided yet."}
-                            </p>
-                          )}
-                        </div>
+                      <p className="text-lg text-muted-foreground">@{profile?.username || "username"}</p>
+                      <div className="flex items-center justify-center sm:justify-start gap-4 text-sm text-muted-foreground/80 pt-2">
+                        <span className="flex items-center gap-1.5">
+                          <Mail className="w-4 h-4" />
+                          {displayEmail}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <Calendar className="w-4 h-4" />
+                          {memberSinceText}
+                        </span>
                       </div>
-                    </motion.div>
+                    </div>
+                  </div>
 
-                    {/* Account Snapshot */}
-                    <motion.div variants={itemVariants} className="space-y-6">
-                      <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6">
-                        <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                          <Shield className="w-5 h-5 text-emerald-500" />
-                          Account Status
-                        </h3>
-                        <div className="space-y-4">
-                          <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Membership</p>
-                            <p className="font-medium">{memberSinceText}</p>
-                          </div>
-                          {!profile?.phone && (
-                            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-                              <p className="text-xs uppercase tracking-wide text-amber-400 mb-1">
-                                Action Recommended
-                              </p>
-                              <p className="text-sm text-amber-100">
-                                Add your mobile number to help secure your account and recover access if you get locked out.
-                              </p>
-                            </div>
-                          )}
-                          <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Last Active</p>
-                            <p className="font-medium">
-                              {profile?.updatedAt ? new Date(profile.updatedAt).toLocaleDateString() : "Just now"}
-                            </p>
-                          </div>
-                          <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-3">
-                            <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Connected Accounts</p>
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm text-muted-foreground">Google</span>
-                                {linkedProviders.google ? (
-                                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                                    Connected
-                                  </Badge>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="border-white/20 hover:bg-white/10"
-                                    onClick={() => handleLinkProvider("google")}
-                                    disabled={linkingProvider === "google"}
-                                  >
-                                    {linkingProvider === "google" ? (
-                                      <>
-                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                        Linking...
-                                      </>
-                                    ) : (
-                                      "Connect"
-                                    )}
-                                  </Button>
-                                )}
-                              </div>
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm text-muted-foreground">GitHub</span>
-                                {linkedProviders.github ? (
-                                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                                    Connected
-                                  </Badge>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="border-white/20 hover:bg-white/10"
-                                    onClick={() => handleLinkProvider("github")}
-                                    disabled={linkingProvider === "github"}
-                                  >
-                                    {linkingProvider === "github" ? (
-                                      <>
-                                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                        Linking...
-                                      </>
-                                    ) : (
-                                      "Connect"
-                                    )}
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6">
-                        <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                          <Activity className="w-5 h-5 text-blue-500" />
-                          Engagement
-                        </h3>
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors">
-                            <span className="text-sm text-muted-foreground">Hosted Rooms</span>
-                            <span className="font-bold">{profileStats.meetingsHosted}</span>
-                          </div>
-                          <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors">
-                            <span className="text-sm text-muted-foreground">Collaborators</span>
-                            <span className="font-bold">{profileStats.friends}</span>
-                          </div>
-                          <div className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors">
-                            <span className="text-sm text-muted-foreground">Group Sessions</span>
-                            <span className="font-bold">{profileStats.groups}</span>
-                          </div>
-                        </div>
-
-                        <Button
-                          variant="outline"
-                          className="w-full mt-6 border-white/10 hover:bg-white/10"
-                          onClick={() => {
-                            refetch();
-                            refetchMeetings();
-                          }}
-                          disabled={isFetching || isMeetingsFetching}
-                        >
-                          <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
-                          Sync Data
+                  <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+                    <Button
+                      variant="outline"
+                      className="gap-2 border-white/10 hover:bg-white/10 bg-transparent backdrop-blur-sm"
+                      onClick={handleAvatarRefresh}
+                      disabled={!profile}
+                    >
+                      <Camera className="w-4 h-4" />
+                      Shuffle Avatar
+                    </Button>
+                    {!isEditing ? (
+                      <Button onClick={() => setIsEditing(true)} className="gap-2 shadow-lg shadow-primary/20">
+                        <Edit2 className="w-4 h-4" />
+                        Edit Profile
+                      </Button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button variant="ghost" onClick={handleCancel} disabled={isSaving} className="hover:bg-white/10">
+                          Cancel
+                        </Button>
+                        <Button onClick={handleSave} disabled={isSaving} className="gap-2 min-w-[100px]">
+                          {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                          Save
                         </Button>
                       </div>
-                    </motion.div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Stats Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
+                  {statsCards.map((stat) => (
+                    <div
+                      key={stat.label}
+                      className="group relative overflow-hidden rounded-2xl border border-white/5 bg-white/5 p-4 hover:bg-white/10 transition-all duration-300"
+                    >
+                      <div className="relative z-10">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{stat.label}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <p className="text-2xl font-bold text-foreground">
+                            {statsLoading ? "—" : stat.value}
+                          </p>
+                          {statsLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                        </div>
+                      </div>
+                      <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-colors" />
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+
+              <div className="grid gap-8 lg:grid-cols-3">
+                {/* Profile Details Form */}
+                <motion.div variants={itemVariants} className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6 md:p-8">
+                  <div className="flex items-center justify-between mb-8">
+                    <div>
+                      <h2 className="text-xl font-semibold flex items-center gap-2">
+                        <User className="w-5 h-5 text-primary" />
+                        Profile Details
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-1">Manage your personal information</p>
+                    </div>
+                    {isEditing && (
+                      <Badge variant="outline" className="border-primary/50 text-primary animate-pulse">
+                        Editing Mode
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="space-y-8">
+                    {/* Basic Info Section */}
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="name" className={isEditing ? "text-primary" : ""}>Full Name</Label>
+                        {isEditing ? (
+                          <Input
+                            id="name"
+                            value={formData.name}
+                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            className="bg-white/5 border-white/10 focus:border-primary/50"
+                          />
+                        ) : (
+                          <p className="text-lg font-medium">{profile?.name || "Not set"}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="username" className={isEditing ? "text-primary" : ""}>Username</Label>
+                        {isEditing ? (
+                          <Input
+                            id="username"
+                            value={formData.username}
+                            onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase() })}
+                            className="bg-white/5 border-white/10 focus:border-primary/50"
+                          />
+                        ) : (
+                          <p className="text-lg font-medium">@{profile?.username || "username"}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="bio" className={isEditing ? "text-primary" : ""}>Bio</Label>
+                      {isEditing ? (
+                        <Textarea
+                          id="bio"
+                          value={formData.bio}
+                          onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                          className="bg-white/5 border-white/10 focus:border-primary/50 min-h-[100px]"
+                          placeholder="Tell us about yourself..."
+                        />
+                      ) : (
+                        <p className="text-base text-muted-foreground whitespace-pre-wrap">{profile?.bio || "No bio yet."}</p>
+                      )}
+                    </div>
+
+
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>Phone Number</Label>
+                        {isPhoneVerified && (
+                          <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30">
+                            <CheckCircle2 className="w-4 h-4 mr-1" />
+                            Verified
+                          </Badge>
+                        )}
+                      </div>
+                      {isEditing ? (
+                        <Input
+                          id="phone"
+                          type="tel"
+                          value={formData.phone}
+                          onChange={(e) => {
+                            setFormData({ ...formData, phone: e.target.value });
+                            if (e.target.value.trim()) {
+                              setPhoneError(null);
+                            }
+                          }}
+                          className="bg-white/5 border-white/10 focus:border-primary/50"
+                          placeholder="+1 (555) 000-0000"
+                        />
+                      ) : (
+                        <p className="text-lg font-medium">
+                          {profile?.phone || "Not set"}
+                        </p>
+                      )}
+                      {(!profile?.phone && !isEditing) && (
+                        <p className="text-xs text-red-500 mt-1">
+                          Add your mobile number to keep your account more secure.
+                        </p>
+                      )}
+                      {isEditing && phoneError && (
+                        <p className="text-xs text-red-500 mt-1">
+                          {phoneError}
+                        </p>
+                      )}
+                      {!isPhoneVerified && formData.phone && (
+                        <div className="mt-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-white/20 hover:bg-white/10"
+                              onClick={handleSendPhoneCode}
+                              disabled={isSendingPhoneCode}
+                            >
+                              {isSendingPhoneCode ? (
+                                <>
+                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                  Sending code...
+                                </>
+                              ) : (
+                                <>
+                                  <Phone className="w-3 h-3 mr-1" />
+                                  Send verification code
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                          {phoneVerificationId && (
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <Input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={6}
+                                placeholder="Enter 6-digit code"
+                                value={phoneCode}
+                                onChange={(e) => setPhoneCode(e.target.value)}
+                                className="bg-white/5 border-white/10 focus:border-primary/50"
+                              />
+                              <Button
+                                size="sm"
+                                onClick={handleVerifyPhoneCode}
+                                disabled={isVerifyingPhoneCode}
+                                className="min-w-[110px]"
+                              >
+                                {isVerifyingPhoneCode ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                    Verifying...
+                                  </>
+                                ) : (
+                                  "Verify"
+                                )}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                </motion.div>
+
+                {/* Sidebar */}
+                <motion.div variants={itemVariants} className="space-y-6">
+                  {/* Account Snapshot */}
+                  <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6">
+                    <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                      <Shield className="w-5 h-5 text-emerald-500" />
+                      Account Status
+                    </h3>
+                    <div className="space-y-4">
+                      <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Membership</p>
+                        <p className="font-medium">{memberSinceText}</p>
+                      </div>
+                      {!profile?.phone && (
+                        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                          <p className="text-xs uppercase tracking-wide text-amber-400 mb-1">
+                            Action Recommended
+                          </p>
+                          <p className="text-sm text-amber-100">
+                            Add your mobile number to help secure your account and recover access if you get locked out.
+                          </p>
+                        </div>
+                      )}
+                      <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Last Active</p>
+                        <p className="font-medium">
+                          {profile?.updatedAt ? new Date(profile.updatedAt).toLocaleDateString() : "Just now"}
+                        </p>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-3">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Connected Accounts</p>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm text-muted-foreground">Google</span>
+                            {linkedProviders.google ? (
+                              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                Connected
+                              </Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-white/20 hover:bg-white/10"
+                                onClick={() => handleLinkProvider("google")}
+                                disabled={linkingProvider === "google"}
+                              >
+                                {linkingProvider === "google" ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                    Linking...
+                                  </>
+                                ) : (
+                                  "Connect"
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm text-muted-foreground">GitHub</span>
+                            {linkedProviders.github ? (
+                              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                                Connected
+                              </Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-white/20 hover:bg-white/10"
+                                onClick={() => handleLinkProvider("github")}
+                                disabled={linkingProvider === "github"}
+                              >
+                                {linkingProvider === "github" ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                    Linking...
+                                  </>
+                                ) : (
+                                  "Connect"
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
-              )}
-            </div>
-          </main>
+              </div>
+            </motion.div>
+          )}
         </div>
-      </div>
+      </main >
       <div id="phone-recaptcha-container" className="hidden" />
-    </SidebarProvider>
+    </div >
   );
 }
