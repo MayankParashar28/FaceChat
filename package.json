@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build || true",
-    "start": "NODE_ENV=production node --loader tsx/cjs server/index.ts",
-    "check": "tsc",
+    "start": "NODE_ENV=production npx tsx server/index.ts",    "check": "tsc",
     "check-env": "node check-env.js"
   },
   "dependencies": {
@@ -96,6 +95,7 @@
     "wouter": "^3.3.5",
     "zod": "^3.24.2",
     "zod-validation-error": "^3.4.0"
+        "tsx": "^4.20.5",
   },
   "devDependencies": {
     "@replit/vite-plugin-cartographer": "^0.3.1",
