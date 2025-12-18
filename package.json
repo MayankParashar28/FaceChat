@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build || true",
-    "start": "NODE_ENV=production tsx server/index.ts",
+    "start": "NODE_ENV=production node --loader tsx/cjs server/index.ts",
     "check": "tsc",
     "check-env": "node check-env.js"
   },
