@@ -5,7 +5,7 @@ async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let errorData: any;
     const contentType = res.headers.get("content-type");
-    
+
     try {
       if (contentType && contentType.includes("application/json")) {
         errorData = await res.json();
@@ -16,7 +16,7 @@ async function throwIfResNotOk(res: Response) {
     } catch (e) {
       errorData = res.statusText || "Unknown error";
     }
-    
+
     // Create a more detailed error with all available information
     let errorMessage = `${res.status}: `;
     if (errorData?.error) {
@@ -28,7 +28,7 @@ async function throwIfResNotOk(res: Response) {
     } else {
       errorMessage += JSON.stringify(errorData);
     }
-    
+
     const error = new Error(errorMessage);
     (error as any).status = res.status;
     (error as any).statusText = res.statusText;
@@ -50,8 +50,8 @@ async function getAuthHeaders(forceRefresh = false): Promise<Record<string, stri
 
   try {
     // Force refresh if requested, otherwise get token (will auto-refresh if expired)
-    const token = forceRefresh 
-      ? await user.getIdToken(true) 
+    const token = forceRefresh
+      ? await user.getIdToken(true)
       : await user.getIdToken();
     return {
       Authorization: `Bearer ${token}`,
@@ -72,7 +72,7 @@ async function fetchWithAuthRetry(
   retries = 1
 ): Promise<Response> {
   let authHeaders = await getAuthHeaders();
-  
+
   const res = await fetch(url, {
     ...options,
     headers: {
@@ -86,7 +86,7 @@ async function fetchWithAuthRetry(
   if (res.status === 401 && retries > 0 && auth.currentUser) {
     console.log("Token expired, refreshing and retrying...");
     authHeaders = await getAuthHeaders(true); // Force refresh
-    
+
     const retryRes = await fetch(url, {
       ...options,
       headers: {
@@ -95,7 +95,7 @@ async function fetchWithAuthRetry(
       },
       credentials: "include",
     });
-    
+
     return retryRes;
   }
 
@@ -126,18 +126,18 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
-    const url = queryKey.join("/") as string;
-    
-    const res = await fetchWithAuthRetry(url);
+    async ({ queryKey }) => {
+      const url = queryKey.join("/") as string;
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
-    }
+      const res = await fetchWithAuthRetry(url);
 
-    await throwIfResNotOk(res);
-    return await res.json();
-  };
+      if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+        return null;
+      }
+
+      await throwIfResNotOk(res);
+      return await res.json();
+    };
 
 export const queryClient = new QueryClient({
   defaultOptions: {

@@ -1218,39 +1218,35 @@ export default function VideoCall() {
             <Button
               variant="destructive"
               className="rounded-2xl px-6 bg-red-600 hover:bg-red-700 transition-all duration-200 hover:scale-105"
-              onClick={() => {
-                // Optimistic UI: 1. Navigate immediately
-                if (meetingId) {
-                  setLocation(`/summary/${meetingId}`);
-                } else {
+              onClick={async () => {
+                try {
+                  if (meetingId) {
+                    // 1. Attempt to end the meeting on the server
+                    const token = await auth.currentUser?.getIdToken();
+                    if (token) {
+                      await fetch(`/ api / meetings / ${meetingId}/status`, {
+                        method: "PATCH",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization: `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ status: "ended" })
+                      });
+                    }
+                    // 2. Redirect to summary
+                    setLocation(`/summary/${meetingId}`);
+                  } else {
+                    // Fallback if meetingId load failed
+                    setLocation("/dashboard");
+                  }
+                } catch (error) {
+                  console.error("Error ending call:", error);
                   setLocation("/dashboard");
-                }
-
-                // 2. Cleanup Local Media Immediately
-                if (localStream) {
-                  localStream.getTracks().forEach(track => track.stop());
-                }
-                if (screenStreamRef.current) {
-                  screenStreamRef.current.getTracks().forEach(track => track.stop());
-                }
-
-                // 3. Notify Server in Background (Fire-and-forget)
-                if (meetingId && auth.currentUser) {
-                  auth.currentUser.getIdToken().then(token => {
-                    fetch(`/api/meetings/${meetingId}/status`, {
-                      method: "PATCH",
-                      headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${token}`
-                      },
-                      body: JSON.stringify({ status: "ended" })
-                    }).catch(console.error);
-                  });
                 }
               }}
             >
               <PhoneOff className="mr-2" /> End
-            </Button>
+            </Button >
           </TooltipTrigger >
           <TooltipContent>
             <p>End Call & View Summary</p>
