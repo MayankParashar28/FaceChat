@@ -7,10 +7,8 @@ import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
@@ -651,12 +649,7 @@ export default function Chats() {
     return setupScrollListener(viewport);
   }, [selectedChat, hasMoreMessages, isLoadingOlder, loadOlderMessages]);
 
-  const sidebarItems = [
-    { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
-    { title: "Chats", icon: MessageSquare, url: "/chats" },
-    { title: "Profile", icon: User, url: "/profile" },
-    { title: "Settings", icon: Settings, url: "/settings" }
-  ];
+
 
   const emojis = ["😊", "😂", "❤️", "👍", "🎉", "🔥", "✨", "👏"];
 
@@ -909,10 +902,7 @@ export default function Chats() {
     return me?.id || null;
   };
 
-  const style = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
-  };
+
 
   // Determine if a message was sent by the current user
   const isMessageFromMe = (msg: Message, conv?: Conversation | null) => {
@@ -944,445 +934,380 @@ export default function Chats() {
   };
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden">
-        {/* Background Gradients */}
-        <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[100px] animate-pulse-glow" />
-          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/10 blur-[100px] animate-pulse-glow animation-delay-500" />
+    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl">
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Chat List */}
+        <div className="w-80 border-r border-white/10 flex flex-col bg-white/5 backdrop-blur-sm">
+          <div className="p-4 border-b border-white/10">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search conversations..."
+                className="pl-10 bg-white/5 border-white/10 focus:bg-white/10 transition-all rounded-full"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="p-2 space-y-1">
+              {/* Show searched users first if search is active */}
+              {searchedUsers.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">Search Results</p>
+                  {searchedUsers.map((searchedUser) => (
+                    <div
+                      key={searchedUser.id}
+                      onClick={() => handleStartConversation(searchedUser.id)}
+                      className="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-white/10 transition-colors"
+                    >
+                      <div className="relative">
+                        <Avatar className="h-12 w-12 border border-white/10">
+                          {searchedUser.avatar && (
+                            <AvatarImage src={searchedUser.avatar} alt={searchedUser.name} />
+                          )}
+                          <AvatarFallback className="bg-primary/10 text-primary">
+                            {searchedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{searchedUser.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">@{searchedUser.username}</p>
+                      </div>
+                      <Badge variant="outline" className="text-xs border-white/10 bg-white/5">New Chat</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {searchQuery && searchedUsers.length === 0 && !isSearching && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No users found matching &quot;{searchQuery}&quot;</p>
+                </div>
+              )}
+
+              {isSearching && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>Searching...</p>
+                </div>
+              )}
+
+              {/* Show conversations */}
+              {filteredConversations.length > 0 && !searchQuery && (
+                <div>
+                  {filteredConversations.map((conv) => (
+                    <div
+                      key={conv.id}
+                      onClick={() => handleSelectChat(conv.id)}
+                      className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedChat === conv.id ? 'bg-white/10 border border-white/5 shadow-sm' : 'hover:bg-white/5 border border-transparent'
+                        }`}
+                    >
+                      <div className="relative">
+                        <Avatar className="h-12 w-12 border border-white/10">
+                          {!conv.isGroup && (conv.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
+                            <AvatarImage src={(conv.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(conv)} />
+                          )}
+                          <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                            {getConversationAvatar(conv)}
+                          </AvatarFallback>
+                        </Avatar>
+                        {isUserOnline(conv) && (
+                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full ring-2 ring-background" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
+                          {conv.lastMessage && (
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {formatTime(conv.lastMessage.createdAt)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground truncate">
+                          {(() => {
+                            if (!conv.lastMessage) return "No messages yet";
+                            const isMine = conv.lastMessage ? isMessageFromMe(conv.lastMessage, conv) : false;
+                            return `${isMine ? 'You: ' : ''}${conv.lastMessage.content}`;
+                          })()}
+                        </p>
+                      </div>
+                      {conv.unreadCount > 0 && (
+                        <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5 bg-primary text-primary-foreground">
+                          {conv.unreadCount}
+                        </Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
         </div>
 
-        <Sidebar className="border-r border-white/10 bg-white/5 backdrop-blur-xl">
-          <SidebarContent className="p-6">
-            <div className="flex items-center gap-3 px-2 mb-10">
-              <div className="relative">
-                <div className="absolute inset-0 bg-primary/20 blur-md rounded-full" />
-                <LogoMark className="h-8 w-8 relative z-10" />
-              </div>
-              <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
-                FaceCall
-              </span>
-            </div>
-
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-xs uppercase tracking-widest text-muted-foreground/70 mb-4">Menu</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu className="space-y-2">
-                  {sidebarItems.map((item) => (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild className="hover:bg-white/10 transition-colors rounded-xl p-3">
-                        <a href={item.url} className="flex items-center gap-3">
-                          <item.icon className="w-5 h-5 opacity-70" />
-                          <span className="font-medium">{item.title}</span>
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <div className="mt-auto pt-6 border-t border-white/10">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors cursor-pointer group">
-                <Avatar className="h-10 w-10 border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
-                  <AvatarImage src={getAvatarUrl(user?.photoURL, user?.uid, user?.email)} />
-                  <AvatarFallback>{getInitials(user?.displayName, user?.email)}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{user?.displayName || "User"}</p>
-                  <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+        {/* Chat Area */}
+        {selectedChat && selectedConversation ? (
+          <div className="flex-1 flex flex-col bg-transparent relative">
+            {/* Chat Header */}
+            <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Avatar className="h-10 w-10 border border-white/10">
+                    {!selectedConversation.isGroup && (selectedConversation.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
+                      <AvatarImage src={(selectedConversation.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(selectedConversation)} />
+                    )}
+                    <AvatarFallback className={selectedConversation.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                      {getConversationAvatar(selectedConversation)}
+                    </AvatarFallback>
+                  </Avatar>
+                  {!selectedConversation.isGroup && isUserOnline(selectedConversation) && (
+                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full" />
+                  )}
                 </div>
-                <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity" onClick={logout}>
-                  <LogOut className="h-4 w-4" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold">{getConversationName(selectedConversation)}</p>
+                    {isUserOnline(selectedConversation) && (
+                      <span className="text-xs text-muted-foreground">•</span>
+                    )}
+                  </div>
+                  {isUserTyping() ? (
+                    <p className="text-xs text-primary italic animate-pulse">{getTypingUser()} is typing...</p>
+                  ) : !selectedConversation.isGroup && isUserOnline(selectedConversation) ? (
+                    <p className="text-xs text-green-500">Online</p>
+                  ) : !selectedConversation.isGroup ? (
+                    <p className="text-xs text-muted-foreground">Offline</p>
+                  ) : selectedConversation.isGroup ? (
+                    <p className="text-xs text-muted-foreground">{selectedConversation.participants.length} members</p>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="hover:bg-white/10"
+                  onClick={() => {
+                    const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+                    setLocation(`/call/${roomId}`);
+                  }}
+                >
+                  <Phone className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="hover:bg-white/10"
+                  onClick={() => {
+                    const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+                    setLocation(`/call/${roomId}`);
+                  }}
+                >
+                  <VideoIcon className="h-5 w-5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="hover:bg-white/10">
+                  <MoreVertical className="h-5 w-5" />
                 </Button>
               </div>
             </div>
-          </SidebarContent>
-        </Sidebar>
 
-        <div className="flex flex-col flex-1 h-full overflow-hidden relative">
-          <header className="flex items-center justify-between gap-4 p-6 border-b border-white/5 bg-white/5 backdrop-blur-sm z-10">
-            <div className="flex items-center gap-4">
-              <SidebarTrigger />
-              <h1 className="text-xl font-semibold">Messages</h1>
-            </div>
-            <ThemeToggle />
-          </header>
-
-          <div className="flex-1 flex overflow-hidden">
-            {/* Chat List */}
-            <div className="w-80 border-r border-white/10 flex flex-col bg-white/5 backdrop-blur-sm">
-              <div className="p-4 border-b border-white/10">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search conversations..."
-                    className="pl-10 bg-white/5 border-white/10 focus:bg-white/10 transition-all rounded-full"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <ScrollArea className="flex-1">
-                <div className="p-2 space-y-1">
-                  {/* Show searched users first if search is active */}
-                  {searchedUsers.length > 0 && (
-                    <div className="mb-4">
-                      <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">Search Results</p>
-                      {searchedUsers.map((searchedUser) => (
-                        <div
-                          key={searchedUser.id}
-                          onClick={() => handleStartConversation(searchedUser.id)}
-                          className="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-white/10 transition-colors"
-                        >
-                          <div className="relative">
-                            <Avatar className="h-12 w-12 border border-white/10">
-                              {searchedUser.avatar && (
-                                <AvatarImage src={searchedUser.avatar} alt={searchedUser.name} />
-                              )}
-                              <AvatarFallback className="bg-primary/10 text-primary">
-                                {searchedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                              </AvatarFallback>
-                            </Avatar>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-sm truncate">{searchedUser.name}</p>
-                            <p className="text-xs text-muted-foreground truncate">@{searchedUser.username}</p>
-                          </div>
-                          <Badge variant="outline" className="text-xs border-white/10 bg-white/5">New Chat</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {searchQuery && searchedUsers.length === 0 && !isSearching && (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <p>No users found matching &quot;{searchQuery}&quot;</p>
-                    </div>
-                  )}
-
-                  {isSearching && (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <p>Searching...</p>
-                    </div>
-                  )}
-
-                  {/* Show conversations */}
-                  {filteredConversations.length > 0 && !searchQuery && (
-                    <div>
-                      {filteredConversations.map((conv) => (
-                        <div
-                          key={conv.id}
-                          onClick={() => handleSelectChat(conv.id)}
-                          className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedChat === conv.id ? 'bg-white/10 border border-white/5 shadow-sm' : 'hover:bg-white/5 border border-transparent'
-                            }`}
-                        >
-                          <div className="relative">
-                            <Avatar className="h-12 w-12 border border-white/10">
-                              {!conv.isGroup && (conv.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
-                                <AvatarImage src={(conv.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(conv)} />
-                              )}
-                              <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
-                                {getConversationAvatar(conv)}
-                              </AvatarFallback>
-                            </Avatar>
-                            {isUserOnline(conv) && (
-                              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full ring-2 ring-background" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2 mb-1">
-                              <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
-                              {conv.lastMessage && (
-                                <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                  {formatTime(conv.lastMessage.createdAt)}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-sm text-muted-foreground truncate">
-                              {(() => {
-                                if (!conv.lastMessage) return "No messages yet";
-                                const isMine = conv.lastMessage ? isMessageFromMe(conv.lastMessage, conv) : false;
-                                return `${isMine ? 'You: ' : ''}${conv.lastMessage.content}`;
-                              })()}
-                            </p>
-                          </div>
-                          {conv.unreadCount > 0 && (
-                            <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5 bg-primary text-primary-foreground">
-                              {conv.unreadCount}
-                            </Badge>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-
-            {/* Chat Area */}
-            {selectedChat && selectedConversation ? (
-              <div className="flex-1 flex flex-col bg-transparent relative">
-                {/* Chat Header */}
-                <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10">
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <Avatar className="h-10 w-10 border border-white/10">
-                        {!selectedConversation.isGroup && (selectedConversation.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
-                          <AvatarImage src={(selectedConversation.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(selectedConversation)} />
-                        )}
-                        <AvatarFallback className={selectedConversation.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
-                          {getConversationAvatar(selectedConversation)}
-                        </AvatarFallback>
-                      </Avatar>
-                      {!selectedConversation.isGroup && isUserOnline(selectedConversation) && (
-                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold">{getConversationName(selectedConversation)}</p>
-                        {isUserOnline(selectedConversation) && (
-                          <span className="text-xs text-muted-foreground">•</span>
-                        )}
-                      </div>
-                      {isUserTyping() ? (
-                        <p className="text-xs text-primary italic animate-pulse">{getTypingUser()} is typing...</p>
-                      ) : !selectedConversation.isGroup && isUserOnline(selectedConversation) ? (
-                        <p className="text-xs text-green-500">Online</p>
-                      ) : !selectedConversation.isGroup ? (
-                        <p className="text-xs text-muted-foreground">Offline</p>
-                      ) : selectedConversation.isGroup ? (
-                        <p className="text-xs text-muted-foreground">{selectedConversation.participants.length} members</p>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="hover:bg-white/10"
-                      onClick={() => {
-                        const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-                        setLocation(`/call/${roomId}`);
-                      }}
-                    >
-                      <Phone className="h-5 w-5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="hover:bg-white/10"
-                      onClick={() => {
-                        const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-                        setLocation(`/call/${roomId}`);
-                      }}
-                    >
-                      <VideoIcon className="h-5 w-5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="hover:bg-white/10">
-                      <MoreVertical className="h-5 w-5" />
-                    </Button>
-                  </div>
-                </div>
-
-                {pinnedMessages.length > 0 && (
-                  <div className="px-4 py-2 bg-white/5 border-b border-white/10 backdrop-blur-sm">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Pin className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-muted-foreground">Pinned:</span>
-                      <span className="truncate">{pinnedMessages[0].content}</span>
-                    </div>
-                  </div>
-                )}
-
-                <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-                  <div className="space-y-6" ref={messagesContainerRef}>
-                    {isLoadingOlder && (
-                      <div className="flex justify-center py-4">
-                        <p className="text-sm text-muted-foreground">Loading older messages...</p>
-                      </div>
-                    )}
-                    {messages.map((msg) => {
-                      const isMe = isMessageFromMe(msg, selectedConversation);
-                      return (
-                        <div
-                          key={msg.id}
-                          className="flex gap-3 group/message"
-                        >
-                          {!isMe && (
-                            <Avatar className="h-8 w-8 border border-white/10">
-                              {(selectedConversation.participants.find(p => p.id === msg.sender.id)?.avatar) && (
-                                <AvatarImage src={(selectedConversation.participants.find(p => p.id === msg.sender.id) as any).avatar} alt={msg.sender.name} />
-                              )}
-                              <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                                {msg.sender.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                              </AvatarFallback>
-                            </Avatar>
-                          )}
-                          <div className="flex flex-col items-start max-w-[70%]">
-                            {selectedConversation?.isGroup && (
-                              <span className="text-xs font-medium text-muted-foreground mb-1">
-                                {isMe ? 'You' : msg.sender.name}
-                              </span>
-                            )}
-                            <div className="relative">
-                              <div
-                                className={getMessageBubbleClasses(isMe, msg.isPinned)}
-                              >
-                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                                  {msg.content}
-                                </p>
-                                <div
-                                  className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${isMe ? 'text-primary/70 dark:text-primary-foreground/80' : 'text-muted-foreground/80'
-                                    }`}
-                                >
-                                  <span>{formatTime(msg.createdAt)}</span>
-                                  {isMe && msg.status && (
-                                    <span
-                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${msg.isOptimistic
-                                          ? "bg-muted/50 text-muted-foreground/70 opacity-70"
-                                          : msg.status === "seen"
-                                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                                            : msg.status === "delivered"
-                                              ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
-                                              : "bg-muted text-muted-foreground"
-                                        }`}
-                                    >
-                                      {msg.status === "seen" && (
-                                        <>
-                                          <CheckCheck className="h-3 w-3" />
-                                          Seen
-                                        </>
-                                      )}
-                                      {msg.status === "delivered" && (
-                                        <>
-                                          <CheckCheck className="h-3 w-3" />
-                                          Delivered
-                                        </>
-                                      )}
-                                      {msg.status === "sent" && (
-                                        <>
-                                          <Check className="h-3 w-3" />
-                                          {msg.isOptimistic ? "Sending..." : "Sent"}
-                                        </>
-                                      )}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="absolute -top-2 right-0 -mr-8 opacity-0 group-hover/message:opacity-100 transition-opacity">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 hover:bg-white/10"
-                                  onClick={() => handlePinMessage(msg.id, msg.isPinned)}
-                                >
-                                  <Pin className={`h-3 w-3 ${msg.isPinned ? 'fill-current' : ''}`} />
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div ref={scrollRef} />
-                  </div>
-                </ScrollArea>
-
-                {isUserTyping() && getTypingUser() && (
-                  <div className="px-4 py-2 border-t border-white/10 bg-white/5">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                        <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.2s' }} />
-                        <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.4s' }} />
-                      </div>
-                      <span className="italic">{getTypingUser()} is typing...</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="p-4 border-t border-white/10 bg-white/5 backdrop-blur-sm">
-                  <form onSubmit={handleSendMessage} className="relative flex items-end gap-2 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
-                    <div className="flex-1 flex flex-col gap-2">
-                      <div className="relative">
-                        <Input
-                          placeholder="Type a message..."
-                          value={message}
-                          onChange={(e) => handleTyping(e.target.value)}
-                          className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
-                        />
-                        <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
-                            onClick={handleFileAttach}
-                          >
-                            <Paperclip className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
-                            onClick={handleFileAttach}
-                          >
-                            <ImageIcon className="h-4 w-4" />
-                          </Button>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
-                              >
-                                <Smile className="h-4 w-4" />
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-2 bg-background/95 backdrop-blur-xl border-white/10" align="end">
-                              <div className="grid grid-cols-4 gap-1">
-                                {emojis.map((emoji, i) => (
-                                  <Button
-                                    key={i}
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-10 w-10 text-xl hover:bg-white/10"
-                                    onClick={() => handleEmojiSelect(emoji)}
-                                  >
-                                    {emoji}
-                                  </Button>
-                                ))}
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                        </div>
-                      </div>
-                    </div>
-                    <Button type="submit" size="icon" className="rounded-xl h-10 w-10 shadow-md">
-                      <Send className="h-4 w-4" />
-                    </Button>
-                  </form>
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                <div className="text-center">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
-                    <MessageSquare className="h-10 w-10 opacity-50" />
-                  </div>
-                  <p className="text-xl font-semibold mb-2">Select a conversation</p>
-                  <p className="text-sm text-muted-foreground/70">Choose a chat to start messaging</p>
+            {pinnedMessages.length > 0 && (
+              <div className="px-4 py-2 bg-white/5 border-b border-white/10 backdrop-blur-sm">
+                <div className="flex items-center gap-2 text-sm">
+                  <Pin className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">Pinned:</span>
+                  <span className="truncate">{pinnedMessages[0].content}</span>
                 </div>
               </div>
             )}
+
+            <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
+              <div className="space-y-6" ref={messagesContainerRef}>
+                {isLoadingOlder && (
+                  <div className="flex justify-center py-4">
+                    <p className="text-sm text-muted-foreground">Loading older messages...</p>
+                  </div>
+                )}
+                {messages.map((msg) => {
+                  const isMe = isMessageFromMe(msg, selectedConversation);
+                  return (
+                    <div
+                      key={msg.id}
+                      className="flex gap-3 group/message"
+                    >
+                      {!isMe && (
+                        <Avatar className="h-8 w-8 border border-white/10">
+                          {(selectedConversation.participants.find(p => p.id === msg.sender.id)?.avatar) && (
+                            <AvatarImage src={(selectedConversation.participants.find(p => p.id === msg.sender.id) as any).avatar} alt={msg.sender.name} />
+                          )}
+                          <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                            {msg.sender.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                      )}
+                      <div className="flex flex-col items-start max-w-[70%]">
+                        {selectedConversation?.isGroup && (
+                          <span className="text-xs font-medium text-muted-foreground mb-1">
+                            {isMe ? 'You' : msg.sender.name}
+                          </span>
+                        )}
+                        <div className="relative">
+                          <div
+                            className={getMessageBubbleClasses(isMe, msg.isPinned)}
+                          >
+                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                              {msg.content}
+                            </p>
+                            <div
+                              className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${isMe ? 'text-primary/70 dark:text-primary-foreground/80' : 'text-muted-foreground/80'
+                                }`}
+                            >
+                              <span>{formatTime(msg.createdAt)}</span>
+                              {isMe && msg.status && (
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${msg.isOptimistic
+                                    ? "bg-muted/50 text-muted-foreground/70 opacity-70"
+                                    : msg.status === "seen"
+                                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                                      : msg.status === "delivered"
+                                        ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
+                                        : "bg-muted text-muted-foreground"
+                                    }`}
+                                >
+                                  {msg.status === "seen" && (
+                                    <>
+                                      <CheckCheck className="h-3 w-3" />
+                                      Seen
+                                    </>
+                                  )}
+                                  {msg.status === "delivered" && (
+                                    <>
+                                      <CheckCheck className="h-3 w-3" />
+                                      Delivered
+                                    </>
+                                  )}
+                                  {msg.status === "sent" && (
+                                    <>
+                                      <Check className="h-3 w-3" />
+                                      {msg.isOptimistic ? "Sending..." : "Sent"}
+                                    </>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="absolute -top-2 right-0 -mr-8 opacity-0 group-hover/message:opacity-100 transition-opacity">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 hover:bg-white/10"
+                              onClick={() => handlePinMessage(msg.id, msg.isPinned)}
+                            >
+                              <Pin className={`h-3 w-3 ${msg.isPinned ? 'fill-current' : ''}`} />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={scrollRef} />
+              </div>
+            </ScrollArea>
+
+            {isUserTyping() && getTypingUser() && (
+              <div className="px-4 py-2 border-t border-white/10 bg-white/5">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
+                    <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.2s' }} />
+                    <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.4s' }} />
+                  </div>
+                  <span className="italic">{getTypingUser()} is typing...</span>
+                </div>
+              </div>
+            )}
+
+            <div className="p-4 border-t border-white/10 bg-white/5 backdrop-blur-sm">
+              <form onSubmit={handleSendMessage} className="relative flex items-end gap-2 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
+                <div className="flex-1 flex flex-col gap-2">
+                  <div className="relative">
+                    <Input
+                      placeholder="Type a message..."
+                      value={message}
+                      onChange={(e) => handleTyping(e.target.value)}
+                      className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
+                    />
+                    <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                        onClick={handleFileAttach}
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                        onClick={handleFileAttach}
+                      >
+                        <ImageIcon className="h-4 w-4" />
+                      </Button>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                          >
+                            <Smile className="h-4 w-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-2 bg-background/95 backdrop-blur-xl border-white/10" align="end">
+                          <div className="grid grid-cols-4 gap-1">
+                            {emojis.map((emoji, i) => (
+                              <Button
+                                key={i}
+                                variant="ghost"
+                                size="icon"
+                                className="h-10 w-10 text-xl hover:bg-white/10"
+                                onClick={() => handleEmojiSelect(emoji)}
+                              >
+                                {emoji}
+                              </Button>
+                            ))}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  </div>
+                </div>
+                <Button type="submit" size="icon" className="rounded-xl h-10 w-10 shadow-md">
+                  <Send className="h-4 w-4" />
+                </Button>
+              </form>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
+                <MessageSquare className="h-10 w-10 opacity-50" />
+              </div>
+              <p className="text-xl font-semibold mb-2">Select a conversation</p>
+              <p className="text-sm text-muted-foreground/70">Choose a chat to start messaging</p>
+            </div>
+          </div>
+        )}
       </div>
-    </SidebarProvider>
+    </div>
   );
 }

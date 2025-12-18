@@ -6,19 +6,25 @@ export interface UserSettings {
   backgroundBlur: boolean;
   emotionDetection: boolean;
   videoQuality: "sd" | "hd" | "full-hd";
-  audioQuality: "standard" | "high" | "studio";
-}
+  audioQuality: "high",
+  audioDeviceId: string;
+  videoDeviceId: string;
+  audioOutputDeviceId: string;
+};
 
 const DEFAULT_SETTINGS: UserSettings = {
-  autoJoinAudio: true,
-  autoJoinVideo: true,
+  autoJoinAudio: false,
+  autoJoinVideo: false,
   backgroundBlur: false,
   emotionDetection: true,
   videoQuality: "hd",
   audioQuality: "high",
+  audioDeviceId: "",
+  videoDeviceId: "",
+  audioOutputDeviceId: "",
 };
 
-const SETTINGS_STORAGE_KEY = "facecall_user_settings";
+const SETTINGS_STORAGE_KEY = "facecall_user_settings_v2";
 
 function loadSettings(): UserSettings {
   if (typeof window === "undefined") {

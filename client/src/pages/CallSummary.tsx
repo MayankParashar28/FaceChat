@@ -8,10 +8,11 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Clock, Users, Smile, CheckCircle, Download, Star, ArrowLeft,
   Loader2, AlertCircle, Sparkles, Zap, Heart, ThumbsUp, Brain,
-  Share2, Calendar
+  Share2, Calendar, LogOut
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { motion } from "framer-motion";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 interface MeetingParticipant {
   _id?: string;
@@ -24,10 +25,12 @@ interface MeetingAnalytics {
   totalDuration?: number;
   participantCount?: number;
   engagementScore?: number;
+  reactions?: Record<string, number>;
   emotionData?: {
     emotion?: string;
     percentage?: number;
     timestamp?: string;
+    count?: number;
   }[];
 }
 
@@ -73,16 +76,7 @@ function normalizeParticipants(participants: (MeetingParticipant | string)[] = [
 }
 
 // Helper to get icon and color for emotions
-const getEmotionConfig = (emotion: string) => {
-  const config: Record<string, { icon: any, color: string, label: string, gradient: string }> = {
-    "Happy": { icon: Smile, color: "text-yellow-400", label: "Joyful", gradient: "from-yellow-400/20 to-orange-500/20" },
-    "Neutral": { icon: Brain, color: "text-blue-400", label: "Focused", gradient: "from-blue-400/20 to-cyan-500/20" },
-    "Surprised": { icon: Zap, color: "text-purple-400", label: "Excited", gradient: "from-purple-400/20 to-pink-500/20" },
-    "Sad": { icon: Heart, color: "text-indigo-400", label: "Thoughtful", gradient: "from-indigo-400/20 to-blue-500/20" },
-    "Angry": { icon: ThumbsUp, color: "text-red-400", label: "Intense", gradient: "from-red-400/20 to-orange-500/20" }, // Using ThumbsUp as placeholder/metaphor
-  };
-  return config[emotion] || { icon: Sparkles, color: "text-primary", label: emotion, gradient: "from-primary/20 to-purple-500/20" };
-};
+
 
 export default function CallSummary() {
   const [, setLocation] = useLocation();
@@ -109,32 +103,56 @@ export default function CallSummary() {
 
     const startTime = meeting.startTime ? new Date(meeting.startTime) : null;
     const endTime = meeting.endTime ? new Date(meeting.endTime) : undefined;
-    const durationMinutes =
-      meeting.analytics?.totalDuration ??
-      (startTime ? Math.max(1, Math.round(((endTime ?? new Date()).getTime() - startTime.getTime()) / (1000 * 60))) : null);
+    const durationMinutes = (() => {
+      // 1. If we have explicit start and end times, calculate from them
+      if (startTime && endTime) {
+        return Math.max(1, Math.ceil((endTime.getTime() - startTime.getTime()) / (1000 * 60)));
+      }
+
+      // 2. If we have a stored total duration > 0, use it
+      if (meeting.analytics?.totalDuration && meeting.analytics.totalDuration > 0) {
+        return meeting.analytics.totalDuration;
+      }
+
+      // 3. If active/no end time, calculate from now
+      if (startTime) {
+        return Math.max(1, Math.ceil((new Date().getTime() - startTime.getTime()) / (1000 * 60)));
+      }
+
+      return 0;
+    })();
 
     const formattedDuration = durationMinutes !== null && durationMinutes !== undefined ? formatDuration(durationMinutes) : "—";
 
-    const emotionData =
-      meeting.analytics?.emotionData?.map((item) => ({
-        emotion: item.emotion || "Neutral",
-        percentage: item.percentage ?? 0,
-        count: item.percentage && participantCount
-          ? Math.max(1, Math.round((item.percentage / 100) * participantCount))
-          : undefined,
-      })) || [];
+    // Aggregate emotion data
+    const emotionMap = new Map<string, number>();
+    (meeting.analytics?.emotionData || []).forEach(item => {
+      const e = item.emotion || "Neutral";
+      const count = item.count || 1;
+      emotionMap.set(e, (emotionMap.get(e) || 0) + count);
+    });
+
+    const totalEmotions = Array.from(emotionMap.values()).reduce((a, b) => a + b, 0);
+    const aggregatedEmotions = Array.from(emotionMap.entries()).map(([emotion, count]) => ({
+      emotion,
+      percentage: totalEmotions ? Math.round((count / totalEmotions) * 100) : 0,
+    })).sort((a, b) => b.percentage - a.percentage);
 
     // Find top emotion
-    const topEmotion = emotionData.reduce((prev, current) =>
-      (prev.percentage > current.percentage) ? prev : current
-      , { emotion: "Neutral", percentage: 0 });
+    const topEmotion = aggregatedEmotions.length > 0 ? aggregatedEmotions[0] : { emotion: "Neutral", percentage: 0 };
+
+    // Process reactions
+    const reactions = Object.entries(meeting.analytics?.reactions || {})
+      .map(([emoji, count]) => ({ emoji, count }))
+      .sort((a, b) => b.count - a.count);
 
     return {
       title: meeting.title || "Call Summary",
       date: startTime ? startTime.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) : "",
       duration: formattedDuration,
       participants,
-      emotions: emotionData,
+      emotions: aggregatedEmotions,
+      reactions,
       topEmotion,
       stats: {
         totalParticipants: participantCount,
@@ -158,18 +176,18 @@ export default function CallSummary() {
   if (!isValidCallId || isError || !summaryData) {
     return (
       <div className="min-h-screen bg-background/95 backdrop-blur-3xl flex items-center justify-center p-6">
-        <Card className="max-w-md w-full border-white/10 bg-black/40 backdrop-blur-xl">
+        <Card className="max-w-md w-full border-border/50 bg-card/95 backdrop-blur-xl">
           <CardHeader className="text-center">
             <div className="mx-auto w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
               <AlertCircle className="h-6 w-6 text-red-400" />
             </div>
-            <CardTitle className="text-white">Unable to load summary</CardTitle>
-            <CardDescription className="text-white/60">
+            <CardTitle className="text-foreground">Unable to load summary</CardTitle>
+            <CardDescription className="text-muted-foreground">
               {(error as Error)?.message || "The call summary could not be found or is still processing."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center">
-            <Button onClick={() => setLocation("/dashboard")} variant="outline" className="border-white/10 hover:bg-white/5 text-white">
+            <Button onClick={() => setLocation("/dashboard")} variant="outline" className="border-border/50 hover:bg-accent hover:text-accent-foreground">
               Back to Dashboard
             </Button>
           </CardContent>
@@ -178,83 +196,35 @@ export default function CallSummary() {
     );
   }
 
-  const emotionConfig = getEmotionConfig(summaryData.topEmotion.emotion);
-  const TopEmotionIcon = emotionConfig.icon;
+
 
   return (
-    <div className="min-h-screen bg-background/95 backdrop-blur-3xl overflow-hidden relative flex flex-col">
+
+    <div className="relative min-h-screen overflow-auto bg-background">
       {/* Background Gradients */}
-      <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full bg-primary/10 blur-[120px] animate-pulse-glow" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full bg-purple-500/10 blur-[120px] animate-pulse-glow animation-delay-500" />
-      </div>
+      <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:50px_50px]" />
+      <div className="absolute top-0 left-0 w-full h-[500px] bg-primary/10 blur-[100px] rounded-full opacity-50 pointer-events-none" />
+      <div className="absolute bottom-0 right-0 w-full h-[500px] bg-blue-500/10 blur-[100px] rounded-full opacity-50 pointer-events-none" />
 
-      {/* Header */}
-      <header className="p-6 relative z-10">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-center justify-between bg-black/40 backdrop-blur-xl border border-white/10 p-2 rounded-full shadow-lg">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setLocation("/dashboard")}
-              className="rounded-full hover:bg-white/10 text-white/80 hover:text-white"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Dashboard
-            </Button>
-            <div className="flex items-center gap-2 px-4 border-l border-r border-white/10">
-              <Calendar className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium text-white">{summaryData.date}</span>
-            </div>
-            <div className="w-[100px]" /> {/* Spacer for balance */}
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1 p-6 relative z-10 overflow-y-auto">
+      <div className="max-w-5xl mx-auto space-y-8 pb-32 p-6 relative z-10">
         <div className="max-w-5xl mx-auto space-y-8 pb-24">
 
           {/* Title Section */}
           <div className="text-center space-y-2">
-            <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
-              {summaryData.title}
+            <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/60">
+              {summaryData?.title}
             </h1>
-            <p className="text-white/60">Call Summary & Analytics</p>
+            <p className="text-muted-foreground">Call Summary & Analytics</p>
           </div>
 
-          {/* Hero: Meeting Vibe */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="relative"
-          >
-            <div className={`absolute inset-0 bg-gradient-to-r ${emotionConfig.gradient} blur-3xl opacity-30 rounded-full`} />
-            <Card className="relative border-white/10 bg-black/40 backdrop-blur-xl overflow-hidden">
-              <CardContent className="p-12 flex flex-col items-center text-center">
-                <div className="relative mb-6 group">
-                  <div className={`absolute inset-0 bg-current blur-2xl opacity-20 rounded-full scale-150 group-hover:scale-175 transition-transform duration-700 ${emotionConfig.color}`} />
-                  <TopEmotionIcon className={`w-24 h-24 relative z-10 ${emotionConfig.color} drop-shadow-lg`} />
-                </div>
-                <h2 className="text-2xl font-medium text-white mb-2">Meeting Vibe</h2>
-                <div className="flex items-baseline gap-2">
-                  <span className={`text-5xl font-bold ${emotionConfig.color}`}>{emotionConfig.label}</span>
-                  <span className="text-xl text-white/40">({summaryData.topEmotion.percentage}%)</span>
-                </div>
-                <p className="text-white/60 mt-4 max-w-md">
-                  The dominant emotion detected during this session was <strong>{summaryData.topEmotion.emotion.toLowerCase()}</strong>,
-                  indicating a {emotionConfig.label.toLowerCase()} atmosphere.
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
+
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { label: "Duration", value: summaryData.duration, icon: Clock, color: "text-blue-400" },
-              { label: "Participants", value: summaryData.stats.totalParticipants, icon: Users, color: "text-green-400" },
-              { label: "Engagement", value: `${summaryData.stats.avgEngagement}%`, icon: Zap, color: "text-yellow-400" },
+              { label: "Duration", value: summaryData?.duration, icon: Clock, color: "text-blue-400" },
+              { label: "Participants", value: summaryData?.stats.totalParticipants, icon: Users, color: "text-green-400" },
+              { label: "Engagement", value: `${summaryData?.stats.avgEngagement}%`, icon: Zap, color: "text-yellow-400" },
             ].map((stat, index) => (
               <motion.div
                 key={index}
@@ -262,14 +232,14 @@ export default function CallSummary() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: index * 0.1 + 0.2 }}
               >
-                <Card className="border-white/10 bg-white/5 backdrop-blur-md hover:bg-white/10 transition-colors">
-                  <CardContent className="p-6 flex items-center gap-4">
-                    <div className={`p-3 rounded-xl bg-white/5 ${stat.color}`}>
+                <Card className="border-border/50 bg-card/40 backdrop-blur-md hover:bg-accent/50 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group">
+                  <CardContent className="p-6 flex items-center gap-5">
+                    <div className={`p-4 rounded-2xl bg-background/50 ${stat.color} group-hover:scale-110 transition-transform duration-300`}>
                       <stat.icon className="w-6 h-6" />
                     </div>
                     <div>
-                      <p className="text-sm text-white/40">{stat.label}</p>
-                      <p className="text-2xl font-bold text-white">{stat.value}</p>
+                      <p className="text-sm font-medium text-muted-foreground mb-1">{stat.label}</p>
+                      <p className="text-3xl font-bold text-foreground tracking-tight">{stat.value}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -284,111 +254,199 @@ export default function CallSummary() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.5, delay: 0.4 }}
             >
-              <Card className="h-full border-white/10 bg-black/40 backdrop-blur-xl">
+              <Card className="h-full border-border/50 bg-card/50 backdrop-blur-xl">
                 <CardHeader>
-                  <CardTitle className="text-white flex items-center gap-2">
+                  <CardTitle className="text-foreground flex items-center gap-2">
                     <Brain className="w-5 h-5 text-primary" />
                     Emotion Breakdown
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {summaryData.emotions.map((item, index) => (
+                  {summaryData?.emotions.map((item, index) => (
                     <div key={index} className="space-y-2">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-white font-medium">{item.emotion}</span>
-                        <span className="text-white/60">{item.percentage}%</span>
+                        <span className="text-foreground font-medium">{item.emotion}</span>
+                        <span className="text-muted-foreground">{item.percentage}%</span>
                       </div>
-                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-2 bg-secondary/50 rounded-full overflow-hidden">
                         <motion.div
                           initial={{ width: 0 }}
                           animate={{ width: `${item.percentage}%` }}
                           transition={{ duration: 1, delay: 0.5 + index * 0.1 }}
-                          className={`h-full rounded-full ${index === 0 ? 'bg-primary' : 'bg-white/20'
+                          className={`h-full rounded-full bg-gradient-to-r ${index === 0 ? 'from-primary to-primary/60' : 'from-secondary to-secondary/60'
                             }`}
                         />
                       </div>
                     </div>
                   ))}
-                  {summaryData.emotions.length === 0 && (
-                    <p className="text-white/40 text-center py-8">No emotion data available</p>
+                  {(!summaryData?.emotions || summaryData.emotions.length === 0) && (
+                    <p className="text-muted-foreground text-center py-8">No emotion data available</p>
                   )}
                 </CardContent>
               </Card>
             </motion.div>
 
-            {/* Participants List */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.4 }}
-            >
-              <Card className="h-full border-white/10 bg-black/40 backdrop-blur-xl">
-                <CardHeader>
-                  <CardTitle className="text-white flex items-center gap-2">
-                    <Users className="w-5 h-5 text-primary" />
-                    Attendees
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {summaryData.participants.map((participant, index) => (
-                      <div
-                        key={participant.id || index}
-                        className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-10 w-10 border border-white/10">
-                            <AvatarFallback className="bg-primary/20 text-primary">
-                              {participant.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")
-                                .toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium text-white">{participant.name}</span>
+            {/* Reactions & Participants Stack */}
+            <div className="space-y-8">
+              {/* Top Reactions */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.5, delay: 0.4 }}
+              >
+                <Card className="border-border/50 bg-card/50 backdrop-blur-xl">
+                  <CardHeader>
+                    <CardTitle className="text-foreground flex items-center gap-2">
+                      <Smile className="w-5 h-5 text-primary" />
+                      Top Reactions
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-4">
+                      {summaryData?.reactions.map((reaction, index) => (
+                        <div key={index} className="flex flex-col items-center p-3 bg-secondary/20 rounded-xl min-w-[80px]">
+                          <span className="text-3xl mb-1">{reaction.emoji}</span>
+                          <span className="text-sm font-medium text-foreground">{reaction.count}</span>
                         </div>
-                        {participant.attended ? (
-                          <Badge variant="secondary" className="bg-green-500/10 text-green-400 border-green-500/20">
-                            <CheckCircle className="w-3 h-3 mr-1" />
-                            Present
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="bg-white/5 text-white/40">
-                            Absent
-                          </Badge>
-                        )}
-                      </div>
-                    ))}
-                    {summaryData.participants.length === 0 && (
-                      <p className="text-white/40 text-center py-8">No participants recorded</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+                      ))}
+                      {(!summaryData?.reactions || summaryData.reactions.length === 0) && (
+                        <p className="text-muted-foreground w-full text-center py-4">No reactions recorded</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* Participants List */}
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
+              >
+                <Card className="h-full border-border/50 bg-card/50 backdrop-blur-xl">
+                  <CardHeader>
+                    <CardTitle className="text-foreground flex items-center gap-2">
+                      <Users className="w-5 h-5 text-primary" />
+                      Attendees
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                      {summaryData?.participants.map((participant, index) => (
+                        <div
+                          key={participant.id || index}
+                          className="flex items-center justify-between p-3 rounded-xl bg-card/30 border border-border/50 hover:bg-accent/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10 border border-border/50">
+                              <AvatarFallback className="bg-primary/20 text-primary">
+                                {participant.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")
+                                  .toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium text-foreground">{participant.name}</span>
+                          </div>
+                          {participant.attended ? (
+                            <Badge variant="secondary" className="bg-green-500/10 text-green-400 border-green-500/20">
+                              <CheckCircle className="w-3 h-3 mr-1" />
+                              Present
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="bg-secondary/50 text-muted-foreground">
+                              Absent
+                            </Badge>
+                          )}
+                        </div>
+                      ))}
+                      {(!summaryData?.participants || summaryData.participants.length === 0) && (
+                        <p className="text-muted-foreground text-center py-8">No participants recorded</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </div>
           </div>
+          {/* Floating Action Dock */}
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
+            <div className="flex items-center justify-between bg-background/80 backdrop-blur-2xl border border-border/50 p-2 rounded-full shadow-2xl ring-1 ring-white/10">
+              <Button variant="ghost" className="text-muted-foreground hover:text-foreground hover:bg-accent rounded-xl">
+                <Download className="w-4 h-4 mr-2" />
+                Recording
+              </Button>
+              <div className="w-px h-6 bg-border/50" />
+              <Button
+                variant="ghost"
+                className="hover:bg-accent hover:text-accent-foreground text-muted-foreground"
+                onClick={() => {
+                  const text = `Check out my call summary: ${window.location.href}`;
+                  if (navigator.share) {
+                    navigator.share({ title: 'FaceCall Summary', text, url: window.location.href }).catch(console.error);
+                  } else {
+                    navigator.clipboard.writeText(text);
+                    alert("Link copied to clipboard!");
+                  }
+                }}
+              >
+                <Share2 className="w-4 h-4 mr-2" />
+                Share
+              </Button>
+              <div className="w-px h-6 bg-border/50" />
 
-        </div>
-      </main>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl shadow-lg shadow-primary/20">
+                    <Star className="w-4 h-4 mr-2" />
+                    Rate Call
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="glass-panel border-white/10 sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Rate Quality</DialogTitle>
+                    <DialogDescription>How was the audio and video quality?</DialogDescription>
+                  </DialogHeader>
+                  <div className="flex justify-center gap-2 py-6">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Button
+                        key={star}
+                        variant="ghost"
+                        size="lg"
+                        className="hover:scale-110 transition-transform p-2"
+                        onClick={() => {
+                          // Mock backend call (rating logic)
+                          // In a real app we'd save this to DB
+                        }}
+                      >
+                        <Star className="w-8 h-8 fill-yellow-400 text-yellow-400" />
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <DialogTrigger asChild>
+                      <Button variant="ghost">Skip</Button>
+                    </DialogTrigger>
+                    <DialogTrigger asChild>
+                      <Button>Submit Feedback</Button>
+                    </DialogTrigger>
+                  </div>
+                </DialogContent>
+              </Dialog>
 
-      {/* Floating Action Dock */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
-        <div className="flex items-center gap-2 p-2 rounded-2xl bg-black/60 backdrop-blur-2xl border border-white/10 shadow-2xl">
-          <Button variant="ghost" className="text-white/80 hover:text-white hover:bg-white/10 rounded-xl">
-            <Download className="w-4 h-4 mr-2" />
-            Recording
-          </Button>
-          <div className="w-px h-6 bg-white/10" />
-          <Button variant="ghost" className="text-white/80 hover:text-white hover:bg-white/10 rounded-xl">
-            <Share2 className="w-4 h-4 mr-2" />
-            Share
-          </Button>
-          <div className="w-px h-6 bg-white/10" />
-          <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl shadow-lg shadow-primary/20">
-            <Star className="w-4 h-4 mr-2" />
-            Rate Call
-          </Button>
+              <div className="w-px h-6 bg-border/50" />
+
+              <Button
+                variant="ghost"
+                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl"
+                onClick={() => setLocation("/dashboard")}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Dashboard
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

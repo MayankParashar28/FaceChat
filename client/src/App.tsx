@@ -22,6 +22,7 @@ import Analytics from "@/pages/Analytics";
 import Meetings from "@/pages/Meetings";
 import VerifyEmail from "@/pages/EmailVerification";
 import NotFound from "@/pages/not-found";
+import Layout from "@/components/Layout";
 
 function Router() {
   return (
@@ -32,13 +33,17 @@ function Router() {
 
       <Route path="/dashboard">
         <ProtectedRoute>
-          <Dashboard />
+          <Layout>
+            <Dashboard />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
       <Route path="/chats">
         <ProtectedRoute>
-          <Chats />
+          <Layout>
+            <Chats />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
@@ -50,31 +55,41 @@ function Router() {
 
       <Route path="/summary/:callId">
         <ProtectedRoute>
-          <CallSummary />
+          <Layout>
+            <CallSummary />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
       <Route path="/settings">
         <ProtectedRoute>
-          <Settings />
+          <Layout>
+            <Settings />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
       <Route path="/profile">
         <ProtectedRoute>
-          <Profile />
+          <Layout>
+            <Profile />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
       <Route path="/analytics">
         <ProtectedRoute>
-          <Analytics />
+          <Layout>
+            <Analytics />
+          </Layout>
         </ProtectedRoute>
       </Route>
 
       <Route path="/meetings">
         <ProtectedRoute>
-          <Meetings />
+          <Layout>
+            <Meetings />
+          </Layout>
         </ProtectedRoute>
       </Route>
 

@@ -13,6 +13,7 @@ import { Message, Conversation, User, Meeting, ChatMessage } from "./models";
 import { authenticate, optionalAuthenticate } from "./middleware/auth";
 import { authRateLimiter, apiRateLimiter, usernameCheckRateLimiter } from "./middleware/rateLimiter";
 import { createOTP, verifyOTP } from "./services/otpService";
+import { transcriptionService } from "./services/transcription";
 import authRoutes from "./routes/auth";
 import userRoutes from "./routes/user";
 import chatRoutes from "./routes/chat";
@@ -29,6 +30,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const userSockets = new Map<string, string>();
+  const socketUserMap = new Map<string, string>(); // socketId -> userId
   const roomParticipants = new Map<string, Set<string>>(); // roomId -> Set of socketIds
 
   // Twilio Verify client (for phone number verification)
@@ -57,6 +59,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         userSockets.set(userId, socket.id);
+        socketUserMap.set(socket.id, userId);
         await setUserOnlineStatus(userId, true);
         io.emit("user:status", { userId, online: true });
 
@@ -369,6 +372,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       socket.join(`call:${roomId}`);
       console.log(`   Socket joined room: call:${roomId}`);
 
+      // Check for duplicate user in the room
+      console.log(`🔍 checking duplicate for room ${roomId}, User: ${userId}`);
+      console.log(`   Current roomParticipants:`, roomParticipants.has(roomId) ? Array.from(roomParticipants.get(roomId)!) : "Empty");
+
+      if (roomParticipants.has(roomId)) {
+        const existingSocketIds = Array.from(roomParticipants.get(roomId)!);
+        for (const existingSocketId of existingSocketIds) {
+          // Find userId for existing socket using robust map
+          const existingUserId = socketUserMap.get(existingSocketId);
+          console.log(`   Checking socket ${existingSocketId}: Maps to User ${existingUserId}`);
+
+          if (existingUserId === userId) {
+            console.warn(`User ${userId} is already in room ${roomId}. Rejecting duplicate connection.`);
+            socket.emit("call:error", { message: "You are already joined to this meeting in another tab or device." });
+            socket.leave(`call:${roomId}`); // Leave the room immediately
+            return; // Stop processing
+          }
+        }
+      }
+
       // Track participants - check BEFORE adding to determine if first user
       const isFirstUser = !roomParticipants.has(roomId) || roomParticipants.get(roomId)!.size === 0;
       if (!roomParticipants.has(roomId)) {
@@ -422,7 +445,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 startTime: new Date(),
                 roomId: roomId,
                 meetingType: 'video' as const,
-                status: 'active' as const
+                status: 'scheduled' as const // Start as scheduled, active only when 2nd user joins
               };
 
               console.log(`   Meeting data prepared:`, meetingData);
@@ -440,14 +463,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
             } else {
               console.log(`ℹ️ Meeting already exists for room: ${roomId}, ID: ${existingMeeting._id}`);
-              // Update existing meeting to active if it was ended
-              if (existingMeeting.status === 'ended') {
-                await mongoService.updateMeeting(existingMeeting._id.toString(), {
-                  status: 'active',
-                  startTime: new Date(),
-                  endTime: undefined
-                });
-                console.log(`✅ Updated existing meeting ${existingMeeting._id} to active`);
+
+              // CRITICAL FIX: Even if "First Socket", we must add this user to the existing meeting
+              // (They might be the 2nd PERSON, but 1st SOCKET due to refresh)
+              const updatedMeeting = await mongoService.addParticipantToMeeting(existingMeeting._id.toString(), dbUser._id.toString());
+
+              if (updatedMeeting) {
+                const currentParticipantCount = updatedMeeting.participants.length;
+
+                // Restart if ended
+                if (existingMeeting.status === 'ended') {
+                  const newStartTime = new Date();
+                  await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                    status: 'active',
+                    startTime: newStartTime,
+                    endTime: undefined,
+                    analytics: { participantCount: currentParticipantCount }
+                  });
+                  io.to(`call:${roomId}`).emit("call:meeting-active", { startTime: newStartTime.toISOString() });
+                }
+                // ACTIVATE if scheduled and now 2 people
+                else if (existingMeeting.status === 'scheduled' && currentParticipantCount === 2) {
+                  console.log(`🚀 Activating meeting (refresh case) ${roomId}`);
+                  const newStartTime = new Date();
+                  await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                    status: 'active',
+                    startTime: newStartTime
+                  });
+                  io.to(`call:${roomId}`).emit("call:meeting-active", { startTime: newStartTime.toISOString() });
+                }
               }
             }
           } catch (error: any) {
@@ -480,38 +524,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
           if (existingMeeting) {
-            const participantIds = existingMeeting.participants.map((p: any) =>
-              typeof p === 'object' ? p._id.toString() : p.toString()
-            );
-            if (!participantIds.includes(dbUser._id.toString())) {
-              const currentParticipantCount = roomParticipants.get(roomId)?.size || participantIds.length + 1;
-              await mongoService.updateMeeting(existingMeeting._id.toString(), {
-                participants: [...participantIds, dbUser._id.toString()],
-                analytics: {
-                  totalDuration: existingMeeting.analytics?.totalDuration || 0,
-                  participantCount: currentParticipantCount,
-                  engagementScore: existingMeeting.analytics?.engagementScore || 0,
-                  emotionData: existingMeeting.analytics?.emotionData || []
-                }
-              });
-            }
-            // Update status to active if it was ended
-            if (existingMeeting.status === 'ended') {
-              const currentParticipantCount = roomParticipants.get(roomId)?.size || participantIds.length + 1;
-              await mongoService.updateMeeting(existingMeeting._id.toString(), {
-                status: 'active',
-                startTime: new Date(),
-                endTime: undefined,
-                analytics: {
-                  totalDuration: 0, // Reset duration for new call
-                  participantCount: currentParticipantCount,
-                  engagementScore: 0,
-                  emotionData: []
-                }
-              });
-            } else {
-              // Update participant count in analytics
-              const currentParticipantCount = roomParticipants.get(roomId)?.size || participantIds.length + 1;
+            // Atomically add participant (or just get updated doc if already there)
+            const updatedMeeting = await mongoService.addParticipantToMeeting(existingMeeting._id.toString(), dbUser._id.toString());
+
+            if (updatedMeeting) {
+              const currentParticipantCount = updatedMeeting.participants.length;
+
+              // Update analytics
               await mongoService.updateMeeting(existingMeeting._id.toString(), {
                 analytics: {
                   totalDuration: existingMeeting.analytics?.totalDuration || 0,
@@ -520,6 +539,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   emotionData: existingMeeting.analytics?.emotionData || []
                 }
               });
+
+              // logic: if status is 'ended', restart it
+              if (existingMeeting.status === 'ended') {
+                const newStartTime = new Date();
+                await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                  status: 'active',
+                  startTime: newStartTime,
+                  endTime: undefined,
+                  analytics: {
+                    totalDuration: 0,
+                    participantCount: currentParticipantCount,
+                    engagementScore: 0,
+                    emotionData: []
+                  }
+                });
+                // Broadcast restart
+                io.to(`call:${roomId}`).emit("call:meeting-active", { startTime: newStartTime.toISOString() });
+              }
+              // logic: if status is 'scheduled' and we now have 2 people, ACTIVATE
+              else if (existingMeeting.status === 'scheduled' && currentParticipantCount === 2) {
+                console.log(`🚀 Activating scheduled meeting ${roomId} - 2nd participant joined`);
+                const newStartTime = new Date();
+                await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                  status: 'active',
+                  startTime: newStartTime
+                });
+
+                // Broadcast start
+                io.to(`call:${roomId}`).emit("call:meeting-active", { startTime: newStartTime.toISOString() });
+              }
             }
           }
         } catch (error) {
@@ -569,17 +618,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      socket.emit("call:existing-users", { participants: participantsWithData });
+      // Get current meeting start time if active
+      let meetingStartTime = null;
+      try {
+        const m = await mongoService.getMeetingByRoomId(roomId);
+        if (m && m.status === 'active' && m.startTime) {
+          meetingStartTime = m.startTime.toISOString();
+        }
+      } catch (e) { console.error("Error fetching start time", e); }
+
+      socket.emit("call:existing-users", {
+        participants: participantsWithData,
+        startTime: meetingStartTime
+      });
     });
 
-    socket.on("call:leave", async ({ roomId }: { roomId: string }) => {
-      console.log(`User leaving call room: ${roomId}`);
-      socket.leave(`call:${roomId}`);
+    const handleUserLeave = async (roomId: string, socketId: string) => {
+      console.log(`Handling user leave for room: ${roomId}, socket: ${socketId}`);
 
-      const wasLastUser = roomParticipants.has(roomId) && roomParticipants.get(roomId)!.size === 1;
+      const wasLastUser = roomParticipants.has(roomId) && roomParticipants.get(roomId)!.size <= 1;
 
       if (roomParticipants.has(roomId)) {
-        roomParticipants.get(roomId)!.delete(socket.id);
+        roomParticipants.get(roomId)!.delete(socketId);
         if (roomParticipants.get(roomId)!.size === 0) {
           roomParticipants.delete(roomId);
         }
@@ -593,10 +653,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const endTime = new Date();
             const startTime = existingMeeting.startTime;
             const durationMs = endTime.getTime() - startTime.getTime();
-            const durationMinutes = Math.floor(durationMs / (1000 * 60));
+            // Ensure at least 1 minute if duration is very sort, or ceil
+            const durationMinutes = Math.max(1, Math.ceil(durationMs / (1000 * 60)));
 
             // Get final participant count (before this user left)
             const finalParticipantCount = existingMeeting.participants.length;
+
+            // Calculate engagement score
+            let score = 0;
+            // 1. Duration (max 40)
+            score += Math.min(durationMinutes * 2, 40);
+
+            // 2. Participation (max 20)
+            score += Math.min(finalParticipantCount * 5, 20);
+
+            // 3. Reactions (max 20)
+            const reactionsMap = existingMeeting.analytics?.reactions;
+            let totalReactions = 0;
+            if (reactionsMap) {
+              if (reactionsMap instanceof Map) {
+                totalReactions = Array.from(reactionsMap.values()).reduce((a, b) => a + b, 0);
+              } else {
+                totalReactions = Object.values(reactionsMap).reduce((a: any, b: any) => a + b, 0) as number;
+              }
+            }
+            score += Math.min(totalReactions * 2, 20);
+
+            // 4. Emotion Sentiment (max 20)
+            const emotionData = existingMeeting.analytics?.emotionData || [];
+            if (emotionData.length > 5) {
+              const positiveEmotions = emotionData.filter((e: any) => ["Happy", "Surprised"].includes(e.emotion)).length;
+              score += Math.round((positiveEmotions / emotionData.length) * 20);
+            }
+
+            const engagementScore = Math.min(Math.round(score), 100);
 
             // Update meeting with end time, status, and analytics
             await mongoService.updateMeeting(existingMeeting._id.toString(), {
@@ -605,8 +695,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               analytics: {
                 totalDuration: durationMinutes, // Duration in minutes
                 participantCount: finalParticipantCount,
-                engagementScore: 0, // Can be calculated later based on activity
-                emotionData: existingMeeting.analytics?.emotionData || []
+                engagementScore,
+                emotionData: existingMeeting.analytics?.emotionData || [],
+                reactions: existingMeeting.analytics?.reactions
               }
             });
             console.log(`Marked meeting as ended for room: ${roomId}, duration: ${durationMinutes} minutes, participants: ${finalParticipantCount}`);
@@ -625,7 +716,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 totalDuration: existingMeeting.analytics?.totalDuration || 0,
                 participantCount: currentParticipantCount,
                 engagementScore: existingMeeting.analytics?.engagementScore || 0,
-                emotionData: existingMeeting.analytics?.emotionData || []
+                emotionData: existingMeeting.analytics?.emotionData || [],
+                reactions: existingMeeting.analytics?.reactions
               }
             });
           }
@@ -634,40 +726,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      socket.to(`call:${roomId}`).emit("call:user-left", { socketId: socket.id });
+      // Use io.to to ensure delivery even if socket has left/disconnected
+      io.to(`call:${roomId}`).emit("call:user-left", { socketId });
+    };
+
+    socket.on("call:leave", async ({ roomId }: { roomId: string }) => {
+      console.log(`User leaving call room: ${roomId}`);
+      socket.leave(`call:${roomId}`);
+      await handleUserLeave(roomId, socket.id);
     });
 
-    // WebRTC signaling
-    socket.on("call:offer", ({ roomId, offer, targetSocketId }: {
-      roomId: string;
-      offer: RTCSessionDescriptionInit;
-      targetSocketId: string
-    }) => {
-      socket.to(targetSocketId).emit("call:offer", {
-        offer,
-        socketId: socket.id
-      });
-    });
-
-    socket.on("call:answer", ({ roomId, answer, targetSocketId }: {
-      roomId: string;
-      answer: RTCSessionDescriptionInit;
-      targetSocketId: string
-    }) => {
-      socket.to(targetSocketId).emit("call:answer", {
-        answer,
-        socketId: socket.id
-      });
-    });
-
-    socket.on("call:ice-candidate", ({ roomId, candidate, targetSocketId }: {
-      roomId: string;
-      candidate: RTCIceCandidateInit;
-      targetSocketId: string
-    }) => {
-      socket.to(targetSocketId).emit("call:ice-candidate", {
-        candidate,
-        socketId: socket.id
+    // Generic signaling for simple-peer
+    socket.on("call:signal", ({ targetSocketId, signal, roomId }: { targetSocketId: string; signal: any; roomId: string }) => {
+      io.to(targetSocketId).emit("call:signal", {
+        signal,
+        senderId: socket.id
       });
     });
 
@@ -681,6 +754,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mediaType,
         enabled
       });
+    });
+
+    socket.on("call:reaction", async ({ roomId, emoji }: { roomId: string; emoji: string }) => {
+      // Broadcast reaction immediately for UI
+      socket.to(`call:${roomId}`).emit("call:reaction", {
+        socketId: socket.id,
+        emoji
+      });
+
+      // Update reaction count in database
+      try {
+        const meeting = await mongoService.getMeetingByRoomId(roomId);
+        if (meeting && meeting.status === 'active') {
+          // Use a dynamic key for the map update
+          const updateKey = `analytics.reactions.${emoji}`;
+          const update: any = { $inc: {} };
+          update.$inc[updateKey] = 1;
+
+          await Meeting.findByIdAndUpdate(meeting._id, update);
+        }
+      } catch (error) {
+        console.error("Error updating reaction analytics:", error);
+      }
+    });
+
+    socket.on("call:audio-stream", async ({ roomId, audioData }: { roomId: string; audioData: Buffer }) => {
+      try {
+        const userId = socketUserMap.get(socket.id);
+        if (!userId) return; // Only authenticated users
+
+        // Basic validation - ignore very small empty chunks
+        if (!audioData || audioData.length < 1000) return;
+
+        // Console log every chunk for debugging
+        console.log(`🎤 Received audio chunk from ${userId} (${audioData.length} bytes)`);
+
+        const result = await transcriptionService.transcribe(audioData, 'audio.webm');
+
+        if (result.text && result.text.trim().length > 0) {
+          console.log(`🎤 Transcription result (${roomId}): "${result.text}"`);
+
+          // Fetch user name for display
+          let speakerName = "Speaker";
+          try {
+            // We can fetch from DB or maybe we have a cache. For now, DB fetch is safe.
+            // We need to import User model if not available in this scope, but it is available in file.
+            const user = await User.findById(userId);
+            if (user) {
+              speakerName = (user as any).displayName || user.username || "Speaker";
+            }
+          } catch (e) {
+            console.error("Error fetching speaker name:", e);
+          }
+
+          // Broadcast to room
+          io.to(`call:${roomId}`).emit("call:caption", {
+            userId: userId,
+            userName: speakerName, // Send name directly
+            text: result.text,
+            timestamp: Date.now(),
+            isFinal: true
+          });
+        }
+      } catch (error: any) {
+        // Silent fail for transcription errors to not spam logs too much
+        if (error.message && !error.message.includes("401")) {
+          console.error("Transcription error:", error.message);
+        }
+      }
+    });
+
+    socket.on("call:emotion", async ({ roomId, emotion, percentage }: { roomId: string; emotion: string; percentage: number }) => {
+      console.log(`[SERVER] call:emotion received from ${socket.id} for room ${roomId}: ${emotion}`);
+
+      // Broadcast to others in the call
+      socket.to(`call:${roomId}`).emit("call:emotion", {
+        socketId: socket.id,
+        emotion,
+        percentage
+      });
+      console.log(`[SERVER] Broadcasted emotion to room call:${roomId}`);
+
+      try {
+        const meeting = await mongoService.getMeetingByRoomId(roomId);
+        // Allow recording in 'scheduled' state too, so solo testing works
+        if (meeting && (meeting.status === 'active' || meeting.status === 'scheduled')) {
+          // Push new emotion data point
+          // We limit the size of this array to prevent unbound growth for long meetings
+          await Meeting.findByIdAndUpdate(meeting._id, {
+            $push: {
+              "analytics.emotionData": {
+                emotion,
+                percentage,
+                timestamp: new Date(),
+                count: 1
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.error("Error logging emotion data:", error);
+      }
     });
 
     // Call chat messages
@@ -753,23 +928,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
 
+    // H: Caption Received
+    socket.on("call:caption", ({ roomId, text, userId }: { roomId: string, text: string, userId: string }) => {
+      // Broadcast caption to all other participants in the room
+      socket.to(`call:${roomId}`).emit("call:caption", {
+        userId,
+        text,
+        timestamp: Date.now()
+      });
+    });
+
     socket.on("disconnect", async () => {
       console.log("Client disconnected:", socket.id);
 
       // Remove from all call rooms
       for (const [roomId, participants] of Array.from(roomParticipants.entries())) {
         if (participants.has(socket.id)) {
-          participants.delete(socket.id);
-          io.to(`call:${roomId}`).emit("call:user-left", { socketId: socket.id });
-          if (participants.size === 0) {
-            roomParticipants.delete(roomId);
-          }
+          // Use handleUserLeave to ensure DB updates happen even on disconnect
+          await handleUserLeave(roomId, socket.id);
         }
       }
 
-      const userId = Array.from(userSockets.entries()).find(([, socketId]) => socketId === socket.id)?.[0];
+      const userId = socketUserMap.get(socket.id);
       if (userId) {
         userSockets.delete(userId);
+        socketUserMap.delete(socket.id); // Clean up reverse mapping
         await setUserOnlineStatus(userId, false);
         io.emit("user:status", { userId, online: false });
       }
