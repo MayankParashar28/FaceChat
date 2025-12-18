@@ -33,7 +33,7 @@ export function getAvatarUrl(photoURL?: string | null, uid?: string, email?: str
 // Search users by username via API
 export async function searchUsers(query: string, limit: number = 10) {
   const params = new URLSearchParams({ q: query, limit: String(limit) })
-  
+
   // Get auth token
   const user = auth.currentUser;
   const headers: Record<string, string> = {};
@@ -45,7 +45,7 @@ export async function searchUsers(query: string, limit: number = 10) {
       console.error("Failed to get auth token:", error);
     }
   }
-  
+
   const res = await fetch(`/api/users/search?${params.toString()}`, {
     headers,
     credentials: "include",
