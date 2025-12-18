@@ -94,8 +94,8 @@
     "wavefile": "^11.0.0",
     "wouter": "^3.3.5",
     "zod": "^3.24.2",
-    "zod-validation-error": "^3.4.0"
-        "tsx": "^4.20.5",
+    "zod-validation-error": "^3.4.0",
+        "tsx": "^4.20.5"
   },
   "devDependencies": {
     "@replit/vite-plugin-cartographer": "^0.3.1",
