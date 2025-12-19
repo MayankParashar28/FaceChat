@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-npm ci --include=dev
+npm install --legacy-peer-deps
 # Copy the entire application
 COPY . .
 
