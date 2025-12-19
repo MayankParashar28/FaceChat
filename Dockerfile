@@ -14,6 +14,8 @@ COPY . .
 
 # Build frontend (if needed)
 RUN npm run build
+# Prune devDependencies for production
+RUN npm prune --omit=dev
 
 # Expose port
 EXPOSE 3000
