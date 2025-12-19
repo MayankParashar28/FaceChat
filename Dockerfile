@@ -8,12 +8,12 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-npm install
+npm ci --include=dev
 # Copy the entire application
 COPY . .
 
 # Build frontend (if needed)
-RUN npm run build || true
+RUN npm run build
 
 # Expose port
 EXPOSE 3000
