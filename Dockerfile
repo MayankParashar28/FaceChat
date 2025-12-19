@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-npm ci
+npm install
 # Copy the entire application
 COPY . .
 
