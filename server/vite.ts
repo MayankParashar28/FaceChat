@@ -30,7 +30,13 @@ export async function setupVite(app: Express, server: Server) {
     allowedHosts: true as const,
   };
 
-    const viteConfig = (await import("../vite.config")).default;
+  try {
+  const viteConfig = (await import("../vite.config")).default;
+    console.log('viteConfig loaded successfully:', viteConfig);
+      } catch (error) {
+    console.error('Failed to load viteConfig:', error);
+    throw error;
+  }
   const vite = await createViteServer({
         ...viteConfig,
     
