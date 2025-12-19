@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build || true",
-    "start": "NODE_ENV=production npx tsx server/index.ts",    "check": "tsc",
-    "check-env": "node check-env.js"
+    "start": "NODE_ENV=production npx tsx server/index.ts",
+        "check": "tsc",
+        "check-env": "node check-env.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
