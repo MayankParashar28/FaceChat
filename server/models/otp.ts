@@ -55,7 +55,7 @@ const OTPSchema = new Schema<IOTP>(
 
 // Indexes
 OTPSchema.index({ email: 1, purpose: 1, createdAt: -1 });
-OTPSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// OTPSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export const OTP = mongoose.model<IOTP>("OTP", OTPSchema);
 
