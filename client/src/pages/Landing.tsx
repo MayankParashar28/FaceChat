@@ -141,7 +141,7 @@ export default function Landing() {
       </motion.nav>
 
       {/* Hero Section */}
-      <section className="pt-40 pb-20 px-6 relative">
+      <section className="pt-28 md:pt-40 pb-16 md:pb-20 px-6 relative">
         <motion.div
           style={{ opacity, scale }}
           className="max-w-7xl mx-auto"
@@ -164,7 +164,7 @@ export default function Landing() {
                 </span>
               </motion.div>
 
-              <h1 className="text-6xl lg:text-7xl font-bold mb-8 leading-tight">
+              <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-8 leading-tight">
                 <span className="block">Connect</span>
                 <span className="block">Smarter.</span>
                 <span className="block bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">
@@ -195,7 +195,7 @@ export default function Landing() {
               </div>
 
               {/* Stats */}
-              <div className="grid grid-cols-3 gap-8 pt-8 border-t border-white/10">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-8 pt-8 border-t border-white/10">
                 {[
                   { value: "50K+", label: "Active Users" },
                   { value: "1M+", label: "Meetings" },
@@ -227,7 +227,7 @@ export default function Landing() {
                 transition: "transform 0.3s ease-out"
               }}
             >
-              <div className="relative w-full h-[600px]">
+              <div className="relative w-full h-[400px] md:h-[600px]">
                 {/* Main 3D Card */}
                 <motion.div
                   className="absolute inset-0 rounded-3xl bg-gradient-to-br from-primary/20 via-violet-500/20 to-blue-500/20 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden"
@@ -323,7 +323,7 @@ export default function Landing() {
       </section>
 
       {/* Use Cases - New Section */}
-      <section className="py-20 px-6 relative">
+      <section className="py-16 md:py-20 px-6 relative">
         <div className="max-w-7xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -365,7 +365,7 @@ export default function Landing() {
 
 
       {/* Features Section with 3D Cards */}
-      <section id="features" className="py-32 px-6 relative">
+      <section id="features" className="py-20 md:py-32 px-6 relative">
         <div className="max-w-7xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -415,7 +415,7 @@ export default function Landing() {
 
 
       {/* How It Works */}
-      <section id="how-it-works" className="py-32 px-6 relative">
+      <section id="how-it-works" className="py-20 md:py-32 px-6 relative">
         <motion.div
           style={{ y: y2 }}
           className="max-w-6xl mx-auto"
@@ -480,7 +480,7 @@ export default function Landing() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 px-6 relative overflow-hidden">
+      <section className="py-16 md:py-20 px-6 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-violet-500/20 to-blue-500/20" />
         <motion.div
           className="max-w-4xl mx-auto text-center relative z-10"
