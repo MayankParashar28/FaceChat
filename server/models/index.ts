@@ -296,7 +296,7 @@ const MeetingSchema = new Schema<IMeeting>(
 
 /* ===== Indexes ===== */
 MeetingSchema.index({ hostId: 1, startTime: -1 });
-MeetingSchema.index({ roomId: 1 }, { unique: true });
+// MeetingSchema.index({ roomId: 1 }, { unique: true });
 MeetingSchema.index({ status: 1 });
 MeetingSchema.index({ startTime: 1 });
 MeetingSchema.index({ isDeleted: 1 });
