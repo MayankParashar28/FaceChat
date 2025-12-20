@@ -23,6 +23,7 @@ import Meetings from "@/pages/Meetings";
 import VerifyEmail from "@/pages/EmailVerification";
 import NotFound from "@/pages/not-found";
 import Layout from "@/components/Layout";
+import { ServerStatus } from "@/components/ServerStatus";
 
 function Router() {
   return (
@@ -105,6 +106,7 @@ function App() {
         <AuthProvider>
           <TooltipProvider>
             <Toaster />
+            <ServerStatus />
             <Router />
           </TooltipProvider>
         </AuthProvider>
