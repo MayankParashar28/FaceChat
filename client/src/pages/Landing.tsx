@@ -101,13 +101,13 @@ export default function Landing() {
         animate={{ y: 0 }}
         className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/60 border-b border-white/10"
       >
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 md:h-20 flex items-center justify-between">
           <motion.div
-            className="flex items-center gap-3"
+            className="flex items-center gap-2 md:gap-3"
             whileHover={{ scale: 1.05 }}
           >
-            <LogoMark className="h-10 w-10" />
-            <span className="text-2xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
+            <LogoMark className="h-8 w-8 md:h-10 md:w-10" />
+            <span className="text-xl md:text-2xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
               AI Meet
             </span>
           </motion.div>
@@ -117,22 +117,24 @@ export default function Landing() {
             <a href="#how-it-works" className="text-sm font-medium hover:text-primary transition-colors">How It Works</a>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
             {!loading && !user && (
               <>
                 <Link href="/login">
-                  <Button variant="ghost">Login</Button>
+                  <Button variant="ghost" size="sm" className="hidden md:inline-flex">Login</Button>
                 </Link>
                 <Link href="/login">
-                  <Button className="gap-2">
-                    Sign Up <ArrowRight className="w-4 h-4" />
+                  <Button size="sm" className="gap-2 text-xs md:text-sm h-8 md:h-10 px-3 md:px-4">
+                    <span className="hidden md:inline">Sign Up</span>
+                    <span className="md:hidden">Login</span>
+                    <ArrowRight className="w-3 h-3 md:w-4 md:h-4" />
                   </Button>
                 </Link>
               </>
             )}
             {!loading && user && (
               <Link href="/dashboard">
-                <Button>Dashboard</Button>
+                <Button size="sm" className="h-8 md:h-10">Dashboard</Button>
               </Link>
             )}
             <ThemeToggle />
@@ -141,12 +143,12 @@ export default function Landing() {
       </motion.nav>
 
       {/* Hero Section */}
-      <section className="pt-28 md:pt-40 pb-16 md:pb-20 px-6 relative">
+      <section className="pt-24 md:pt-40 pb-12 md:pb-20 px-4 md:px-6 relative">
         <motion.div
           style={{ opacity, scale }}
           className="max-w-7xl mx-auto"
         >
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 md:gap-16 items-center">
             {/* Left Content */}
             <motion.div
               initial={{ opacity: 0, x: -50 }}
@@ -154,17 +156,17 @@ export default function Landing() {
               transition={{ duration: 0.8 }}
             >
               <motion.div
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-primary/20 to-violet-500/20 border border-primary/20 text-sm font-medium mb-8"
+                className="inline-flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 rounded-full bg-gradient-to-r from-primary/20 to-violet-500/20 border border-primary/20 text-xs md:text-sm font-medium mb-6 md:mb-8"
                 animate={{ y: [0, -5, 0] }}
                 transition={{ duration: 2, repeat: Infinity }}
               >
-                <Sparkles className="w-4 h-4 text-primary" />
+                <Sparkles className="w-3 h-3 md:w-4 md:h-4 text-primary" />
                 <span className="bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
                   AI-Powered Video Calling
                 </span>
               </motion.div>
 
-              <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-8 leading-tight">
+              <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold mb-6 md:mb-8 leading-tight">
                 <span className="block">Connect</span>
                 <span className="block">Smarter.</span>
                 <span className="block bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">
@@ -172,22 +174,22 @@ export default function Landing() {
                 </span>
               </h1>
 
-              <p className="text-xl text-muted-foreground mb-10 leading-relaxed">
+              <p className="text-lg md:text-xl text-muted-foreground mb-8 md:mb-10 leading-relaxed max-w-lg lg:max-w-none">
                 Experience the future of video communication with intelligent features like{" "}
                 <span className="text-foreground font-medium">emotion detection</span>,{" "}
                 <span className="text-foreground font-medium">facial recognition</span>, and{" "}
                 <span className="text-foreground font-medium">smart attendance</span>.
               </p>
 
-              <div className="flex flex-wrap gap-4 mb-12">
-                <Link href="/dashboard">
-                  <Button size="lg" className="px-8 h-14 text-lg gap-2 shadow-xl shadow-primary/20">
+              <div className="flex flex-col sm:flex-row gap-4 mb-10 md:mb-12">
+                <Link href="/dashboard" className="w-full sm:w-auto">
+                  <Button size="lg" className="w-full sm:w-auto px-8 h-12 md:h-14 text-base md:text-lg gap-2 shadow-xl shadow-primary/20">
                     <Play className="w-5 h-5" fill="currentColor" />
                     Start Video Call
                   </Button>
                 </Link>
-                <Link href="/dashboard">
-                  <Button size="lg" variant="outline" className="px-8 h-14 text-lg gap-2">
+                <Link href="/dashboard" className="w-full sm:w-auto">
+                  <Button size="lg" variant="outline" className="w-full sm:w-auto px-8 h-12 md:h-14 text-base md:text-lg gap-2">
                     Join Room
                     <ArrowRight className="w-5 h-5" />
                   </Button>
@@ -195,7 +197,7 @@ export default function Landing() {
               </div>
 
               {/* Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-8 pt-8 border-t border-white/10">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-6 md:gap-8 pt-8 border-t border-white/10">
                 {[
                   { value: "50K+", label: "Active Users" },
                   { value: "1M+", label: "Meetings" },
@@ -207,10 +209,10 @@ export default function Landing() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.5 + i * 0.1 }}
                   >
-                    <div className="text-3xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
+                    <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
                       {stat.value}
                     </div>
-                    <div className="text-sm text-muted-foreground mt-1">{stat.label}</div>
+                    <div className="text-xs md:text-sm text-muted-foreground mt-1">{stat.label}</div>
                   </motion.div>
                 ))}
               </div>
@@ -221,7 +223,7 @@ export default function Landing() {
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.8 }}
-              className="relative perspective-1000"
+              className="relative perspective-1000 hidden md:block"
               style={{
                 transform: `rotateY(${mousePosition.x}deg) rotateX(${-mousePosition.y}deg)`,
                 transition: "transform 0.3s ease-out"
@@ -323,19 +325,19 @@ export default function Landing() {
       </section>
 
       {/* Use Cases - New Section */}
-      <section className="py-16 md:py-20 px-6 relative">
+      <section className="py-12 md:py-20 px-4 md:px-6 relative">
         <div className="max-w-7xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-center mb-16"
+            className="text-center mb-10 md:mb-16"
           >
-            <h2 className="text-4xl font-bold mb-4">Perfect For Every Team</h2>
-            <p className="text-lg text-muted-foreground">Trusted by professionals across industries</p>
+            <h2 className="text-3xl md:text-4xl font-bold mb-3 md:mb-4">Perfect For Every Team</h2>
+            <p className="text-base md:text-lg text-muted-foreground">Trusted by professionals across industries</p>
           </motion.div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             {useCases.map((useCase, i) => (
               <motion.div
                 key={i}
@@ -348,13 +350,13 @@ export default function Landing() {
               >
                 <div className="p-6 rounded-2xl bg-gradient-to-br from-card to-card/50 backdrop-blur-sm border border-white/10 text-center">
                   <motion.div
-                    className="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-primary to-violet-500 flex items-center justify-center shadow-lg"
+                    className="w-14 h-14 md:w-16 md:h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-primary to-violet-500 flex items-center justify-center shadow-lg"
                     whileHover={{ rotate: 360 }}
                     transition={{ duration: 0.6 }}
                   >
-                    <useCase.icon className="w-8 h-8 text-white" />
+                    <useCase.icon className="w-6 h-6 md:w-8 md:h-8 text-white" />
                   </motion.div>
-                  <h3 className="font-bold mb-2">{useCase.title}</h3>
+                  <h3 className="font-bold mb-2 text-lg">{useCase.title}</h3>
                   <p className="text-sm text-muted-foreground">{useCase.desc}</p>
                 </div>
               </motion.div>
@@ -363,28 +365,27 @@ export default function Landing() {
         </div>
       </section>
 
-
       {/* Features Section with 3D Cards */}
-      <section id="features" className="py-20 md:py-32 px-6 relative">
+      <section id="features" className="py-16 md:py-32 px-4 md:px-6 relative">
         <div className="max-w-7xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-center mb-20"
+            className="text-center mb-12 md:mb-20"
           >
-            <h2 className="text-5xl font-bold mb-6">
+            <h2 className="text-4xl md:text-5xl font-bold mb-4 md:mb-6">
               Powered by{" "}
               <span className="bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">
                 Advanced AI
               </span>
             </h2>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+            <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
               Discover intelligent features that transform your video calling experience
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
             {features.map((feature, index) => (
               <motion.div
                 key={index}
@@ -396,23 +397,22 @@ export default function Landing() {
                 className="group relative"
               >
                 <div className={`absolute -inset-1 bg-gradient-to-r ${feature.color} opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 rounded-2xl`} />
-                <div className="relative p-8 rounded-2xl bg-card/80 backdrop-blur-sm border border-white/10 h-full hover:border-white/20 transition-colors">
+                <div className="relative p-6 md:p-8 rounded-2xl bg-card/80 backdrop-blur-sm border border-white/10 h-full hover:border-white/20 transition-colors">
                   <motion.div
-                    className={`w-16 h-16 rounded-xl bg-gradient-to-r ${feature.color} flex items-center justify-center mb-6 shadow-lg`}
+                    className={`w-14 h-14 md:w-16 md:h-16 rounded-xl bg-gradient-to-r ${feature.color} flex items-center justify-center mb-4 md:mb-6 shadow-lg`}
                     whileHover={{ rotate: 360 }}
                     transition={{ duration: 0.6 }}
                   >
-                    <feature.icon className="w-8 h-8 text-white" />
+                    <feature.icon className="w-6 h-6 md:w-8 md:h-8 text-white" />
                   </motion.div>
-                  <h3 className="text-2xl font-bold mb-3">{feature.title}</h3>
-                  <p className="text-muted-foreground leading-relaxed">{feature.description}</p>
+                  <h3 className="text-xl md:text-2xl font-bold mb-2 md:mb-3">{feature.title}</h3>
+                  <p className="text-sm md:text-base text-muted-foreground leading-relaxed">{feature.description}</p>
                 </div>
               </motion.div>
             ))}
           </div>
         </div>
       </section>
-
 
       {/* How It Works */}
       <section id="how-it-works" className="py-20 md:py-32 px-6 relative">

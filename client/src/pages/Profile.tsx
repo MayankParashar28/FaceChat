@@ -552,10 +552,10 @@ export default function Profile() {
   };
 
   return (
-    <div className="flex-1 overflow-auto p-6 md:p-10">
+    <div className="flex-1 overflow-auto p-0 sm:p-6 md:p-10">
 
-      <main className="flex-1 overflow-auto p-6 md:p-10">
-        <div className="max-w-5xl mx-auto space-y-8">
+      <main className="flex-1 overflow-auto p-2 sm:p-6 md:p-10">
+        <div className="max-w-5xl mx-auto space-y-4 md:space-y-8">
           {isLoading ? (
             <div className="space-y-8 animate-pulse">
               {/* Profile Header Skeleton */}
@@ -660,15 +660,15 @@ export default function Profile() {
               className="space-y-8"
             >
               {/* Profile Header Card */}
-              <motion.div variants={itemVariants} className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-8 shadow-2xl">
+              <motion.div variants={itemVariants} className="relative overflow-hidden rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-4 md:p-8 shadow-2xl">
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent opacity-50 pointer-events-none" />
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
 
                 <div className="relative flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
                   <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
-                    <div className="relative group">
+                    <div className="relative group mx-auto sm:mx-0">
                       <div className="absolute inset-0 bg-primary/30 blur-xl rounded-full opacity-70 group-hover:opacity-100 transition-opacity" />
-                      <Avatar className="relative h-32 w-32 border-4 border-white/10 shadow-2xl">
+                      <Avatar className="relative h-24 w-24 md:h-32 md:w-32 border-4 border-white/10 shadow-2xl">
                         <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
                         <AvatarFallback className="text-3xl bg-background/50 backdrop-blur">
                           {getInitials(displayName, displayEmail)}
@@ -752,9 +752,9 @@ export default function Profile() {
                 </div>
               </motion.div>
 
-              <div className="grid gap-8 lg:grid-cols-3">
+              <div className="grid gap-4 md:gap-8 lg:grid-cols-3">
                 {/* Profile Details Form */}
-                <motion.div variants={itemVariants} className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6 md:p-8">
+                <motion.div variants={itemVariants} className="lg:col-span-2 rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-4 md:p-8">
                   <div className="flex items-center justify-between mb-8">
                     <div>
                       <h2 className="text-xl font-semibold flex items-center gap-2">
@@ -918,7 +918,7 @@ export default function Profile() {
                 {/* Sidebar */}
                 <motion.div variants={itemVariants} className="space-y-6">
                   {/* Account Snapshot */}
-                  <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-6">
+                  <div className="rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-4 md:p-6">
                     <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
                       <Shield className="w-5 h-5 text-emerald-500" />
                       Account Status
