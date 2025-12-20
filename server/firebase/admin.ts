@@ -3,12 +3,40 @@ import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getDatabase, type Database } from 'firebase-admin/database';
 
 // Firebase Admin SDK configuration
-const firebaseConfig = {
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-  databaseURL: process.env.FIREBASE_DATABASE_URL,
-};
+interface FirebaseConfig {
+  projectId?: string;
+  privateKey?: string;
+  clientEmail?: string;
+  databaseURL?: string;
+}
+
+let firebaseConfig: FirebaseConfig = {};
+
+// Try to parse FIREBASE_SERVICE_ACCOUNT first (Render deployment)
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    firebaseConfig = {
+      projectId: serviceAccount.project_id,
+      privateKey: serviceAccount.private_key,
+      clientEmail: serviceAccount.client_email,
+      databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id}.firebaseio.com`,
+    };
+    console.log('✅ Parsed FIREBASE_SERVICE_ACCOUNT environment variable');
+  } catch (error) {
+    console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT:', error);
+  }
+}
+
+// Fallback to individual environment variables if parsing failed or keys are missing
+if (!firebaseConfig.projectId || !firebaseConfig.privateKey || !firebaseConfig.clientEmail) {
+  firebaseConfig = {
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    databaseURL: process.env.FIREBASE_DATABASE_URL,
+  };
+}
 
 // Initialize Firebase Admin SDK
 let app: App | null = null;
@@ -97,13 +125,13 @@ export async function getUserOnlineStatus(userId: string) {
 // Listen to user online status changes
 export function listenToUserStatus(userId: string, callback: (status: any) => void) {
   if (!database) {
-    return () => {};
+    return () => { };
   }
   const userStatusRef = database.ref(`users/${userId}/status`);
   userStatusRef.on('value', (snapshot) => {
     callback(snapshot.val());
   });
-  
+
   // Return unsubscribe function
   return () => userStatusRef.off('value');
 }
@@ -111,13 +139,13 @@ export function listenToUserStatus(userId: string, callback: (status: any) => vo
 // Listen to all users online status
 export function listenToAllUsersStatus(callback: (users: any) => void) {
   if (!database) {
-    return () => {};
+    return () => { };
   }
   const usersRef = database.ref('users');
   usersRef.on('value', (snapshot) => {
     callback(snapshot.val());
   });
-  
+
   // Return unsubscribe function
   return () => usersRef.off('value');
 }
