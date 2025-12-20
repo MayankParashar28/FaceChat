@@ -510,16 +510,53 @@ export default function Landing() {
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-6 border-t border-white/10 relative z-10">
+      <footer className="py-16 px-6 border-t border-white/10 bg-card/30 backdrop-blur-lg relative z-10">
         <div className="max-w-7xl mx-auto">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-3">
-              <LogoMark className="h-8 w-8" />
-              <span className="text-xl font-bold">AI Meet</span>
+          <div className="grid md:grid-cols-4 gap-12 mb-16">
+            <div className="col-span-2">
+              <div className="flex items-center gap-3 mb-6">
+                <LogoMark className="h-8 w-8" />
+                <span className="text-xl font-bold">AI Meet</span>
+              </div>
+              <p className="text-muted-foreground max-w-sm leading-relaxed">
+                Transforming video communication with advanced AI tailored for modern teams.
+                Secure, smart, and seamless.
+              </p>
             </div>
+
+            <div>
+              <h4 className="font-bold mb-6">Product</h4>
+              <ul className="space-y-4 text-sm text-muted-foreground">
+                <li><a href="#features" className="hover:text-primary transition-colors">Features</a></li>
+                <li><a href="#how-it-works" className="hover:text-primary transition-colors">How it Works</a></li>
+                <li><a href="#" className="hover:text-primary transition-colors">Pricing</a></li>
+                <li><a href="#" className="hover:text-primary transition-colors">Enterprise</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <h4 className="font-bold mb-6">Legal</h4>
+              <ul className="space-y-4 text-sm text-muted-foreground">
+                <li><a href="#" className="hover:text-primary transition-colors">Privacy Policy</a></li>
+                <li><a href="#" className="hover:text-primary transition-colors">Terms of Service</a></li>
+                <li><a href="#" className="hover:text-primary transition-colors">Cookie Policy</a></li>
+                <li><a href="#" className="hover:text-primary transition-colors">Security</a></li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="pt-8 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">
-              © 2025 AI Meet. Transforming video communication with AI.
+              © 2025 AI Meet. All rights reserved.
             </p>
+            <div className="flex items-center gap-6">
+              {/* Social placeholders */}
+              {['Twitter', 'LinkedIn', 'GitHub'].map((social) => (
+                <a key={social} href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                  {social}
+                </a>
+              ))}
+            </div>
           </div>
         </div>
       </footer>
