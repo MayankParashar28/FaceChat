@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon } from "lucide-react";
+import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon, ArrowLeft } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { io, Socket } from "socket.io-client";
@@ -938,7 +938,7 @@ export default function Chats() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Chat List */}
-        <div className="w-80 border-r border-white/10 flex flex-col bg-white/5 backdrop-blur-sm">
+        <div className={`${selectedChat ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-white/10 flex-col bg-white/5 backdrop-blur-sm h-full`}>
           <div className="p-4 border-b border-white/10">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1050,10 +1050,18 @@ export default function Chats() {
 
         {/* Chat Area */}
         {selectedChat && selectedConversation ? (
-          <div className="flex-1 flex flex-col bg-transparent relative">
+          <div className={`${!selectedChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-transparent relative w-full h-full`}>
             {/* Chat Header */}
-            <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10">
+            <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10 shrink-0">
               <div className="flex items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="md:hidden -ml-2 hover:bg-white/10"
+                  onClick={() => setSelectedChat(null)}
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </Button>
                 <div className="relative">
                   <Avatar className="h-10 w-10 border border-white/10">
                     {!selectedConversation.isGroup && (selectedConversation.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
@@ -1297,7 +1305,7 @@ export default function Chats() {
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+          <div className="hidden md:flex flex-1 items-center justify-center text-muted-foreground">
             <div className="text-center">
               <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
                 <MessageSquare className="h-10 w-10 opacity-50" />

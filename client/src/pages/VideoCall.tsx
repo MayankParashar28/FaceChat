@@ -121,11 +121,16 @@ type RemoteParticipantVideoProps = {
   onPin?: (id: string) => void;
   isPinned?: boolean;
   isSpotlightMode?: boolean;
+  className?: string;
 };
 
-const RemoteParticipantVideo = memo(forwardRef<HTMLDivElement, RemoteParticipantVideoProps>(({ participant, onPin, isPinned, isSpotlightMode }, ref) => {
+const RemoteParticipantVideo = memo(forwardRef<HTMLDivElement, RemoteParticipantVideoProps>(({ participant, onPin, isPinned, isSpotlightMode, className }, ref) => {
   const { volume } = useAudioAnalysis(participant.stream || null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Default to aspect-video if no class provided (backward compatibility)
+  // If className is provided (e.g. for full screen), we don't force aspect-video.
+  const baseClasses = className ? className : "w-full aspect-video";
 
   return (
     <motion.div
@@ -134,7 +139,7 @@ const RemoteParticipantVideo = memo(forwardRef<HTMLDivElement, RemoteParticipant
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
-      className={`relative w-full aspect-video bg-black/50 rounded-[2rem] overflow-hidden shadow-2xl group transition-all duration-300 ${participant.isAudioOn && (volume > 20 && !participant.isLocal) ? 'border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 'border border-white/10'}`}
+      className={`relative ${baseClasses} bg-black/50 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-2xl group transition-all duration-300 ${participant.isAudioOn && (volume > 20 && !participant.isLocal) ? 'border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 'border border-white/10'}`}
     >
       {/* Video Element */}
       {participant.isLocal ? (
@@ -204,7 +209,25 @@ export default function VideoCall() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
-  const [participants, setParticipants] = useState<Map<string, Participant>>(new Map());
+  // Initialize participants with a placeholder for the local user immediately
+  const [participants, setParticipants] = useState<Map<string, Participant>>(() => {
+    const map = new Map();
+    // We don't have user object fully yet probably, but we can set a placeholder
+    // creating a better optimistic UI
+    map.set("local", {
+      socketId: "local",
+      userId: "", // Will update when user loads
+      name: "You",
+      avatar: "",
+      isLocal: true,
+      isVideoOn: settings.autoJoinVideo,
+      isAudioOn: settings.autoJoinAudio,
+      stream: undefined, // Stream is loading
+      status: 'connecting',
+      isLoading: true // Custom flag for UI
+    } as any);
+    return map;
+  });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [meetingId, setMeetingId] = useState<string | null>(null);
 
@@ -245,7 +268,11 @@ export default function VideoCall() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const { volume } = useAudioAnalysis(localStream);
 
-  const { expression, confidence, isLoaded: isFaceModelLoaded } = useFaceExpression(localVideoRef);
+  // Face Expression Hook - Removed for performance as ref was not attached
+  // const { expression, confidence, isLoaded: isFaceModelLoaded } = useFaceExpression(localVideoRef);
+  const expression = "Neutral"; // Fallback
+  const confidence = 0;
+  const isFaceModelLoaded = false;
   const { videoDevices, audioInputDevices, audioOutputDevices } = useMediaDevices();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [pinnedSocketId, setPinnedSocketId] = useState<string | null>(null);
@@ -253,6 +280,50 @@ export default function VideoCall() {
   const lastSentEmotionRef = useRef<{ emotion: string; timestamp: number }>({ emotion: "", timestamp: 0 });
   const callStartTimeRef = useRef<number | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+
+  // Sync ref with state
+  useEffect(() => {
+    localStreamRef.current = localStream;
+
+    // If stream changes (and exists), update all existing peers
+    if (localStream) {
+      peersRef.current.forEach((peer) => {
+        // Simple way to ensure stream is sent:
+        // We can't easily check if stream is already added in SimplePeer API without accessing internals
+        // But if we track it, we can manage it.
+        // For now, assume if the peer exists and we have a NEW stream, we might need to replace tracks.
+        // But simpler: just addStream if it's the first time, or rely on the initial createPeer.
+
+        // This effect mainly handles the case where stream loads AFTER connection
+        // Check internal _senderTracks to see if we are sending?
+        // Note: accessing private/internal props is risky.
+
+        // Better approach: When peer is created, we attach the CURRENT stream.
+        // If stream changes later, we should use replaceTrack (complex) or renegotiate.
+        // For this fix, we focus on connection stability.
+        // Let's assume user connects -> stream loads -> we add stream.
+
+        // If peer was created without stream, we need addStream
+        if (!(peer as any)._pc.getLocalStreams().length) {
+          peer.addStream(localStream);
+        } else {
+          // If we already have a stream, replacing tracks is cleaner but complex.
+          // We'll skip complex replacement for now to avoid breaking existing logic,
+          // focusing on the "connects then loads" case.
+          const senders = (peer as any)._pc.getSenders();
+          const videoSender = senders.find((s: any) => s.track?.kind === 'video');
+          const audioSender = senders.find((s: any) => s.track?.kind === 'audio');
+
+          const newVideoTrack = localStream.getVideoTracks()[0];
+          const newAudioTrack = localStream.getAudioTracks()[0];
+
+          if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack);
+          if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack);
+        }
+      });
+    }
+  }, [localStream]);
 
 
   // Debug Face Detection - Removed
@@ -353,7 +424,8 @@ export default function VideoCall() {
   // --- Socket Logic ---
   // Consolidating all socket connection and event logic into one effect to prevent race conditions
   useEffect(() => {
-    if (!roomId || !user || !localStream) return;
+    // Only wait for Room ID and User. Do NOT wait for localStream.
+    if (!roomId || !user) return;
 
     // 1. Initialize Socket
     const newSocket = io(window.location.origin, {
@@ -411,14 +483,14 @@ export default function VideoCall() {
       }
 
       existingUsers.forEach((user) => {
-        createPeer(user.socketId, user.userId, user.userName, user.userAvatar, true, localStream);
+        createPeer(user.socketId, user.userId, user.userName, user.userAvatar, true, localStreamRef.current);
       });
     });
 
     // C: New user joined (We are existing)
     newSocket.on("call:user-joined", ({ socketId, userId, userName, userAvatar }) => {
       console.log("New user joined:", socketId);
-      createPeer(socketId, userId, userName, userAvatar, false, localStream);
+      createPeer(socketId, userId, userName, userAvatar, false, localStreamRef.current);
     });
 
     // D: Meeting Activated
@@ -436,7 +508,7 @@ export default function VideoCall() {
       } else {
         // Handle late signal / non-initiator case
         console.log("Received signal for new peer:", senderId);
-        createPeer(senderId, senderId, "Connecting...", "", false, localStream);
+        createPeer(senderId, senderId, "Connecting...", "", false, localStreamRef.current);
         // Wait a tick for peer to be created in map? createPeer is sync but state update is async
         // peersRef is a Ref so it's sync.
         const newPeer = peersRef.current.get(senderId);
@@ -513,8 +585,9 @@ export default function VideoCall() {
       newSocket.disconnect();
       peersRef.current.forEach(p => p.destroy());
       peersRef.current.clear();
+      peersRef.current.clear();
     };
-  }, [roomId, user, localStream]); // Restore localStream dependency
+  }, [roomId, user]); // Removed localStream dependency to prevent reconnects
 
   // Track latest expression/confidence in a ref so the interval can access it without stale closures
   const latestExpressionRef = useRef(expression);
@@ -575,8 +648,8 @@ export default function VideoCall() {
           },
           audio: {
             echoCancellation: true,
-            noiseSuppression: settings.audioQuality !== "studio",
-            autoGainControl: settings.audioQuality !== "studio",
+            noiseSuppression: true,
+            autoGainControl: true,
             deviceId: settings.audioDeviceId ? { exact: settings.audioDeviceId } : undefined
           }
         });
@@ -627,14 +700,14 @@ export default function VideoCall() {
   // Old effect removed in favor of consolidated one
 
   // --- Helper: Create Peer ---
-  function createPeer(targetSocketId: string, userId: string, name: string, avatar: string, initiator: boolean, stream: MediaStream) {
+  function createPeer(targetSocketId: string, userId: string, name: string, avatar: string, initiator: boolean, stream: MediaStream | null) {
     // Avoid duplicate peers
     if (peersRef.current.has(targetSocketId)) return;
 
     const peer = new SimplePeer({
       initiator,
       trickle: true,
-      stream,
+      stream: stream || undefined,
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -962,7 +1035,31 @@ export default function VideoCall() {
 
   // --- Render ---
   const participantsList = Array.from(participants.values());
-  const gridCols = participantsList.length === 1 ? "grid-cols-1" : participantsList.length <= 4 ? "grid-cols-2" : "grid-cols-3";
+  const localParticipant = participantsList.find(p => p.isLocal);
+  const otherParticipants = participantsList.filter(p => !p.isLocal);
+  const hasMultipleParticipants = participantsList.length > 1;
+
+  // Dynamic Grid / Layout Logic
+  const getGridClass = () => {
+    // Both Mobile & Desktop: If Multiple, Local is floating. Grid only holds Remotes.
+    // Effective Count = Remotes Count.
+    const effectiveCount = hasMultipleParticipants ? participantsList.length - 1 : participantsList.length;
+
+    if (pinnedSocketId) return "flex-col md:flex-row";
+
+    // Mobile Base (Grid)
+    let mobileClass = "";
+    if (effectiveCount === 1) mobileClass = "grid grid-cols-1 grid-rows-1";
+    else if (effectiveCount === 2) mobileClass = "grid grid-cols-1 grid-rows-2";
+    else if (effectiveCount <= 4) mobileClass = "grid grid-cols-2 grid-rows-2";
+    else mobileClass = "grid grid-cols-2";
+
+    // Desktop Base (Flex)
+    let desktopClass = "md:flex md:flex-wrap md:justify-center md:content-center";
+
+    return `${mobileClass} ${desktopClass}`;
+  };
+
 
   return (
     <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative">
@@ -972,19 +1069,19 @@ export default function VideoCall() {
       </div>
 
       {/* Header */}
-      <div className="absolute top-6 left-6 right-6 z-50 flex justify-between items-center pointer-events-none">
-        <div className="pointer-events-auto bg-black/40 backdrop-blur-md px-6 py-3 rounded-full flex gap-6 text-white border border-white/10 items-center shadow-2xl transition-all hover:bg-black/50">
-          <div className="flex items-center gap-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
-            <span className="font-semibold tracking-wide text-lg">{roomId}</span>
+      <div className="absolute top-12 md:top-6 left-0 right-0 z-50 flex justify-center items-center pointer-events-none px-4">
+        <div className="pointer-events-auto bg-black/40 backdrop-blur-md px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-3 md:gap-6 text-white border border-white/10 items-center shadow-2xl transition-all hover:bg-black/50 overflow-hidden max-w-full">
+          <div className="flex items-center gap-2 md:gap-3 shrink-0">
+            <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
+            <span className="font-semibold tracking-wide text-sm md:text-lg truncate max-w-[100px] md:max-w-none">{roomId}</span>
           </div>
-          <div className="h-5 w-px bg-white/20" />
-          <span className="font-mono text-base opacity-90">{formatDuration(callDuration)}</span>
-          <div className="h-5 w-px bg-white/20" />
+          <div className="h-4 md:h-5 w-px bg-white/20 shrink-0" />
+          <span className="font-mono text-xs md:text-base opacity-90 shrink-0">{formatDuration(callDuration)}</span>
+          <div className="hidden md:block h-5 w-px bg-white/20 shrink-0" />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-white/10 transition-colors" onClick={copyInviteLink}>
-                {copied ? <Check className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5 text-white/90" />}
+              <Button variant="ghost" size="icon" className="h-8 w-8 md:h-9 md:w-9 rounded-full hover:bg-white/10 transition-colors shrink-0" onClick={copyInviteLink}>
+                {copied ? <Check className="w-4 h-4 md:w-5 md:h-5 text-green-400" /> : <Copy className="w-4 h-4 md:w-5 md:h-5 text-white/90" />}
               </Button>
             </TooltipTrigger>
             <TooltipContent><p>Copy Link</p></TooltipContent>
@@ -993,22 +1090,51 @@ export default function VideoCall() {
       </div>
 
       {/* Video Grid */}
-      {/* Video Grid */}
-      <div className={`w-full h-full flex ${pinnedSocketId ? 'flex-col md:flex-row' : 'flex-wrap justify-center content-center'} gap-4 p-4 md:p-8 pt-24 pb-40 md:pr-44 overflow-y-auto`}>
+      <div className="w-full h-full relative overflow-hidden bg-black">
         <AnimatePresence mode="popLayout">
           {/* Default Grid Mode */}
-          {!pinnedSocketId && participantsList.map((p) => (
-            <div
-              key={p.socketId}
-              className={`relative ${participantsList.length <= 4 ? "w-[calc(50%-0.5rem)]" : "w-[calc(33.33%-0.7rem)]"} aspect-video`}
-            >
-              <RemoteParticipantVideo
-                participant={p}
-                onPin={setPinnedSocketId}
-                isPinned={false}
-              />
-            </div>
-          ))}
+          {!pinnedSocketId && participantsList.map((p) => {
+            // WhatsApp Style Logic
+            const isLocal = p.isLocal;
+            const isAlone = participantsList.length === 1;
+            const isOneOnOne = participantsList.length === 2;
+            const isGroup = participantsList.length > 2;
+
+            // Class Construction - preventing conflicts
+            let containerClass = "overflow-hidden transition-all duration-500 "; // No base position
+
+            if (isLocal && !isAlone) {
+              // Local & Others present: Floating PIP (bottom-right)
+              // STRICTLY FIXED. Remove 'relative' to avoid conflict.
+              containerClass += "fixed !bottom-20 !right-4 w-24 md:w-56 aspect-[3/4] md:aspect-video z-[60] rounded-xl shadow-2xl border border-white/20 ring-1 ring-black/50 object-cover";
+            }
+            else if (isAlone) {
+              // Alone: Local User is Full Screen
+              containerClass += "absolute inset-0 w-full h-full z-0";
+            }
+            else if (isOneOnOne && !isLocal) {
+              // One-on-One Remote: Full Screen
+              containerClass += "absolute inset-0 w-full h-full z-0";
+            }
+            else {
+              // Group Remote or Fallback: Grid Cell
+              containerClass += "relative w-full h-full bg-zinc-900";
+            }
+
+            return (
+              <div
+                key={p.socketId}
+                className={containerClass}
+              >
+                <RemoteParticipantVideo
+                  participant={p}
+                  onPin={setPinnedSocketId}
+                  isPinned={false}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            );
+          })}
 
           {/* Pinned Mode */}
           {pinnedSocketId && (
@@ -1047,211 +1173,220 @@ export default function VideoCall() {
           )}
 
         </AnimatePresence>
-      </div>
+      </div >
 
       {/* Captions Overlay Moved to Bottom - duplicate removed */}
 
       {/* Controls */}
-      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex gap-4 p-4 bg-black/60 backdrop-blur-2xl rounded-[2.5rem] border border-white/10 shadow-2xl transition-all hover:scale-105 hover:bg-black/70">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isMicOn ? "secondary" : "destructive"}
-              size="icon"
-              className="rounded-2xl w-12 h-12 transition-all duration-200 hover:scale-105"
-              onClick={toggleMic}
-            >
-              {isMicOn ? <Mic /> : <MicOff />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{isMicOn ? "Mute Microphone" : "Unmute Microphone"}</p>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isVideoOn ? "secondary" : "destructive"}
-              size="icon"
-              className="rounded-2xl w-12 h-12 transition-all duration-200 hover:scale-105"
-              onClick={toggleVideo}
-            >
-              {isVideoOn ? <VideoIcon /> : <VideoOff />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{isVideoOn ? "Turn Off Camera" : "Turn On Camera"}</p>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isScreenSharing ? "secondary" : "ghost"}
-              size="icon"
-              className={`text - white hover: bg - white / 10 rounded - 2xl w - 12 h - 12 transition - all duration - 200 hover: scale - 105 ${isScreenSharing ? 'bg-blue-500 text-white' : ''} `}
-              onClick={toggleScreenShare}
-            >
-              <MonitorUp />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{isScreenSharing ? "Stop Sharing" : "Share Screen"}</p>
-          </TooltipContent>
-        </Tooltip>
-
-
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isSidebarOpen && activeTab === "chat" ? "secondary" : "ghost"}
-              size="icon"
-              className={`text - white hover: bg - white / 10 rounded - 2xl w - 12 h - 12 transition - all duration - 200 hover: scale - 105 ${isSidebarOpen && activeTab === "chat" ? "bg-white/20" : ""} `}
-              onClick={() => {
-                if (isSidebarOpen && activeTab === "chat") {
-                  setIsSidebarOpen(false);
-                } else {
-                  setIsSidebarOpen(true);
-                  setActiveTab("chat");
-                }
-              }}
-            >
-              <MessageSquare />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Chat</p>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isSidebarOpen && activeTab === "participants" ? "secondary" : "ghost"}
-              size="icon"
-              className={`text - white hover: bg - white / 10 rounded - 2xl w - 12 h - 12 transition - all duration - 200 hover: scale - 105 ${isSidebarOpen && activeTab === "participants" ? "bg-white/20" : ""} `}
-              onClick={() => {
-                if (isSidebarOpen && activeTab === "participants") {
-                  setIsSidebarOpen(false);
-                } else {
-                  setIsSidebarOpen(true);
-                  setActiveTab("participants");
-                }
-              }}
-            >
-              <Users />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Participants</p>
-          </TooltipContent>
-        </Tooltip>
-
-        {/* Mobile Reactions */}
-        <div className="relative md:hidden">
-          <AnimatePresence>
-            {showReactionsMenu && (
-              <motion.div
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex gap-2 min-w-max"
-              >
-                {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => {
-                      if (socket && roomId) {
-                        socket.emit("call:reaction", { roomId, emoji });
-                        // Show locally
-                        const id = Date.now().toString() + Math.random();
-                        const x = Math.random() * 80 + 10;
-                        setReactions(prev => [...prev, { id, emoji, x }]);
-                        setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
-                        setShowReactionsMenu(false);
-                      }
-                    }}
-                    className="p-2 hover:bg-white/10 rounded-xl text-2xl transition-transform hover:scale-125 active:scale-95"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
+      <div className="absolute bottom-4 md:bottom-10 left-0 right-0 md:left-1/2 md:-translate-x-1/2 z-50 flex justify-center md:gap-4 p-2 pointer-events-none">
+        <div className="pointer-events-auto flex gap-3 md:gap-4 p-2 md:p-4 bg-black/80 md:bg-black/60 backdrop-blur-2xl rounded-2xl md:rounded-[2.5rem] border border-white/10 shadow-2xl transition-all hover:scale-105 hover:bg-black/90 md:hover:bg-black/70 overflow-x-auto max-w-[95vw] [&::-webkit-scrollbar]:hidden">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="ghost"
+                variant={isMicOn ? "secondary" : "destructive"}
                 size="icon"
-                className={`text - white hover: bg - white / 10 rounded - 2xl w - 12 h - 12 transition - all duration - 200 hover: scale - 105 ${showReactionsMenu ? "bg-white/20" : ""} `}
-                onClick={() => setShowReactionsMenu(!showReactionsMenu)}
+                className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
+                onClick={toggleMic}
               >
-                <Smile />
+                {isMicOn ? <Mic className="w-4 h-4 md:w-5 md:h-5" /> : <MicOff className="w-4 h-4 md:w-5 md:h-5" />}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>Reactions</p>
+              <p>{isMicOn ? "Mute Microphone" : "Unmute Microphone"}</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isVideoOn ? "secondary" : "destructive"}
+                size="icon"
+                size="icon"
+                className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
+                onClick={toggleVideo}
+              >
+                {isVideoOn ? <VideoIcon className="w-4 h-4 md:w-5 md:h-5" /> : <VideoOff className="w-4 h-4 md:w-5 md:h-5" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{isVideoOn ? "Turn Off Camera" : "Turn On Camera"}</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isScreenSharing ? "secondary" : "ghost"}
+                size="icon"
+                size="icon"
+                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? 'bg-blue-500 text-white' : ''}`}
+                onClick={toggleScreenShare}
+              >
+                <MonitorUp className="w-4 h-4 md:w-5 md:h-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{isScreenSharing ? "Stop Sharing" : "Share Screen"}</p>
+            </TooltipContent>
+          </Tooltip>
+
+
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isSidebarOpen && activeTab === "chat" ? "secondary" : "ghost"}
+                size="icon"
+                size="icon"
+                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "chat" ? "bg-white/20" : ""}`}
+                onClick={() => {
+                  if (isSidebarOpen && activeTab === "chat") {
+                    setIsSidebarOpen(false);
+                  } else {
+                    setIsSidebarOpen(true);
+                    setActiveTab("chat");
+                  }
+                }}
+              >
+                <MessageSquare className="w-4 h-4 md:w-5 md:h-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Chat</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isSidebarOpen && activeTab === "participants" ? "secondary" : "ghost"}
+                size="icon"
+                size="icon"
+                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "participants" ? "bg-white/20" : ""}`}
+                onClick={() => {
+                  if (isSidebarOpen && activeTab === "participants") {
+                    setIsSidebarOpen(false);
+                  } else {
+                    setIsSidebarOpen(true);
+                    setActiveTab("participants");
+                  }
+                }}
+              >
+                <Users className="w-4 h-4 md:w-5 md:h-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Participants</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Mobile Reactions */}
+          <div className="relative md:hidden shrink-0">
+            <AnimatePresence>
+              {showReactionsMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex gap-1 min-w-max"
+                >
+                  {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => {
+                        if (socket && roomId) {
+                          socket.emit("call:reaction", { roomId, emoji });
+                          // Show locally
+                          const id = Date.now().toString() + Math.random();
+                          const x = Math.random() * 80 + 10;
+                          setReactions(prev => [...prev, { id, emoji, x }]);
+                          setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
+                          setShowReactionsMenu(false);
+                        }
+                      }}
+                      className="p-2 hover:bg-white/10 rounded-xl text-xl transition-transform active:scale-95"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  size="icon"
+                  className={`text-white hover:bg-white/10 rounded-xl w-8 h-8 shrink-0 transition-all duration-200 ${showReactionsMenu ? "bg-white/20" : ""}`}
+                  onClick={() => setShowReactionsMenu(!showReactionsMenu)}
+                >
+                  <Smile className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Reactions</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={showCaptions ? "secondary" : "ghost"}
+                size="icon"
+                size="icon"
+                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${showCaptions ? "bg-white/20" : ""}`}
+                onClick={() => setShowCaptions(!showCaptions)}
+              >
+                <Captions className="w-4 h-4 md:w-5 md:h-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{showCaptions ? "Hide Captions" : "Show Captions"}</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="destructive"
+                variant="destructive"
+                className="rounded-xl md:rounded-2xl px-4 md:px-6 h-8 md:h-12 bg-red-600 hover:bg-red-700 transition-all duration-200 shrink-0"
+                onClick={async () => {
+                  try {
+                    if (meetingId) {
+                      // 1. Attempt to end the meeting on the server
+                      const token = await auth.currentUser?.getIdToken();
+                      if (token) {
+                        await fetch(`/api/meetings/${meetingId}/status`, {
+                          method: "PATCH",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${token}`
+                          },
+                          body: JSON.stringify({ status: "ended" })
+                        });
+                      }
+                      // 2. Redirect to summary
+                      setLocation(`/summary/${meetingId}`);
+                    } else {
+                      // Fallback if meetingId load failed
+                      setLocation("/dashboard");
+                    }
+                  } catch (error) {
+                    console.error("Error ending call:", error);
+                    setLocation("/dashboard");
+                  }
+                }}
+              >
+                <PhoneOff className="mr-2 w-4 h-4 md:w-5 md:h-5" /> <span className="hidden md:inline">End</span>
+              </Button >
+            </TooltipTrigger >
+            <TooltipContent>
+              <p>End Call & View Summary</p>
             </TooltipContent>
           </Tooltip>
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={showCaptions ? "secondary" : "ghost"}
-              size="icon"
-              className={`text - white hover: bg - white / 10 rounded - 2xl w - 12 h - 12 transition - all duration - 200 hover: scale - 105 ${showCaptions ? "bg-white/20" : ""} `}
-              onClick={() => setShowCaptions(!showCaptions)}
-            >
-              <Captions />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{showCaptions ? "Hide Captions" : "Show Captions"}</p>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="destructive"
-              className="rounded-2xl px-6 bg-red-600 hover:bg-red-700 transition-all duration-200 hover:scale-105"
-              onClick={async () => {
-                try {
-                  if (meetingId) {
-                    // 1. Attempt to end the meeting on the server
-                    const token = await auth.currentUser?.getIdToken();
-                    if (token) {
-                      await fetch(`/ api / meetings / ${meetingId}/status`, {
-                        method: "PATCH",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization: `Bearer ${token}`
-                        },
-                        body: JSON.stringify({ status: "ended" })
-                      });
-                    }
-                    // 2. Redirect to summary
-                    setLocation(`/summary/${meetingId}`);
-                  } else {
-                    // Fallback if meetingId load failed
-                    setLocation("/dashboard");
-                  }
-                } catch (error) {
-                  console.error("Error ending call:", error);
-                  setLocation("/dashboard");
-                }
-              }}
-            >
-              <PhoneOff className="mr-2" /> End
-            </Button >
-          </TooltipTrigger >
-          <TooltipContent>
-            <p>End Call & View Summary</p>
-          </TooltipContent>
-        </Tooltip>
       </div>
 
       {/* Right Side Vertical Reaction Bar */}
@@ -1281,7 +1416,7 @@ export default function VideoCall() {
       {/* Sidebar (Chat & Participants) */}
       {
         isSidebarOpen && (
-          <div className="absolute top-24 right-6 bottom-28 w-96 bg-black/90 backdrop-blur-xl rounded-3xl border border-white/10 flex flex-col z-[70] shadow-2xl overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
+          <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-black/95 md:bg-black/90 backdrop-blur-xl md:rounded-3xl border-l md:border border-white/10 flex flex-col z-[70] shadow-2xl overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
             <div className="p-4 border-b border-white/10 flex justify-between items-center">
               <h3 className="text-white font-medium">
                 {activeTab === "chat" ? "Group Chat" : "Participants"}
@@ -1541,6 +1676,6 @@ export default function VideoCall() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }

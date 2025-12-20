@@ -18,7 +18,8 @@ export function ServerStatus() {
         setIsChecking(true);
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            // Increase timeout to 15s to prevent premature aborts on slow networks
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
             const res = await fetch('/api/health', {
                 signal: controller.signal,
@@ -44,9 +45,11 @@ export function ServerStatus() {
                 setIsVisible(true);
             }
         } catch (error: any) {
+            // Check for AbortError specifically
+            const isTimeout = error.name === 'AbortError' || error.message?.includes('aborted');
             setHealth({
                 status: 'unhealthy',
-                error: error.message || 'Connection failed'
+                error: isTimeout ? 'Request timed out (server slow)' : (error.message || 'Connection failed')
             });
             setIsVisible(true);
         } finally {
