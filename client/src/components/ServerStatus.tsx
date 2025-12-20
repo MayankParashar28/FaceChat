@@ -63,7 +63,7 @@ export function ServerStatus() {
         return () => clearInterval(interval);
     }, []);
 
-    if (!isVisible && health.status === 'healthy') return null;
+    if (!isVisible && health.status !== 'unhealthy') return null;
 
     return (
         <div className={cn(
@@ -81,7 +81,7 @@ export function ServerStatus() {
 
                 <div className="flex-1">
                     <h3 className="font-semibold text-sm">
-                        {health.status === 'healthy' ? 'System Operational' : 'Connection Issue'}
+                        {health.status === 'healthy' ? 'System Operational' : (health.status === 'unknown' ? 'Checking connection...' : 'Connection Issue')}
                     </h3>
                     <p className="text-xs mt-1 opacity-90">
                         {health.error || (health.status === 'healthy'
