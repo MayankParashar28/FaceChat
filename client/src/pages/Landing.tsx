@@ -73,11 +73,6 @@ export default function Landing() {
     }
   ];
 
-  const testimonials = [
-    { name: "Sarah Johnson", role: "Product Manager", company: "TechCorp", text: "The emotion detection feature helped us understand our team's engagement in a whole new way!", rating: 5 },
-    { name: "Mike Chen", role: "CEO", company: "StartupX", text: "Best video calling platform we've used. The AI features are game-changing.", rating: 5 },
-    { name: "Emily Rodriguez", role: "Team Lead", company: "Innovate Inc", text: "Facial recognition for attendance saves us hours every week. Incredibly useful!", rating: 5 },
-  ];
 
   const useCases = [
     { icon: Brain, title: "Remote Teams", desc: "Track engagement and collaboration" },
@@ -119,7 +114,7 @@ export default function Landing() {
 
           <div className="hidden md:flex items-center gap-8">
             <a href="#features" className="text-sm font-medium hover:text-primary transition-colors">Features</a>
-            <a href="#testimonials" className="text-sm font-medium hover:text-primary transition-colors">Testimonials</a>
+            <a href="#how-it-works" className="text-sm font-medium hover:text-primary transition-colors">How It Works</a>
           </div>
 
           <div className="flex items-center gap-3">
@@ -418,59 +413,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Testimonials - New 3D Cards */}
-      <section id="testimonials" className="py-32 px-6 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-violet-500/5 to-transparent" />
-
-        <motion.div
-          style={{ y: y2 }}
-          className="max-w-7xl mx-auto relative z-10"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-20"
-          >
-            <h2 className="text-5xl font-bold mb-6">Loved by Teams Worldwide</h2>
-            <p className="text-xl text-muted-foreground">See what our users say about AI Meet</p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            {testimonials.map((testimonial, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 50, rotateY: -15 }}
-                whileInView={{ opacity: 1, y: 0, rotateY: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.15 }}
-                whileHover={{ y: -15, rotateY: 5, scale: 1.05 }}
-                className="group relative"
-                style={{ transformStyle: "preserve-3d" }}
-              >
-                <div className="absolute -inset-1 bg-gradient-to-r from-primary to-violet-500 opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 rounded-2xl" />
-                <div className="relative p-8 rounded-2xl bg-card border border-white/10 group-hover:border-white/20 transition-colors">
-                  <div className="flex gap-1 mb-4">
-                    {Array.from({ length: testimonial.rating }).map((_, j) => (
-                      <Star key={j} className="w-5 h-5 fill-yellow-500 text-yellow-500" />
-                    ))}
-                  </div>
-                  <p className="text-lg mb-6 leading-relaxed">"{testimonial.text}"</p>
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary to-violet-500 flex items-center justify-center text-white font-bold">
-                      {testimonial.name.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="font-bold">{testimonial.name}</div>
-                      <div className="text-sm text-muted-foreground">{testimonial.role} at {testimonial.company}</div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-      </section>
 
       {/* How It Works */}
       <section id="how-it-works" className="py-32 px-6 relative">
@@ -549,8 +491,8 @@ export default function Landing() {
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
           >
-            <h2 className="text-6xl font-bold mb-6">
-              Ready to Transform <br />
+            <h2 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
+              Ready to Transform{" "}
               <span className="bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">
                 Your Calls?
               </span>
