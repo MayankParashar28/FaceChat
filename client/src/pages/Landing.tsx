@@ -480,28 +480,27 @@ export default function Landing() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-32 px-6 relative overflow-hidden">
+      <section className="py-20 px-6 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-violet-500/20 to-blue-500/20" />
         <motion.div
-          style={{ y: y1 }}
-          className="max-w-5xl mx-auto text-center relative z-10"
+          className="max-w-4xl mx-auto text-center relative z-10"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
+            initial={{ opacity: 0, scale: 0.9 }}
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
           >
-            <h2 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
+            <h2 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">
               Ready to Transform{" "}
               <span className="bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">
                 Your Calls?
               </span>
             </h2>
-            <p className="text-xl text-muted-foreground mb-10 max-w-2xl mx-auto">
+            <p className="text-lg text-muted-foreground mb-8 max-w-xl mx-auto">
               Join thousands using AI to make video calls smarter and more productive.
             </p>
             <Link href="/login">
-              <Button size="lg" className="px-10 h-16 text-lg gap-3 shadow-2xl shadow-primary/30">
+              <Button size="lg" className="px-8 h-14 text-lg gap-3 shadow-2xl shadow-primary/30">
                 Get Started Free
                 <ArrowRight className="w-5 h-5" />
               </Button>
@@ -511,7 +510,7 @@ export default function Landing() {
       </section>
 
       {/* Footer */}
-      <footer className="py-16 px-6 border-t border-white/10 relative z-10">
+      <footer className="py-12 px-6 border-t border-white/10 relative z-10">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-3">
