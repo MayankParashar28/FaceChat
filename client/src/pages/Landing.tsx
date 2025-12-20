@@ -1,96 +1,24 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Video, Sparkles, Users, Shield, BarChart3, Zap, ArrowRight, Play, Globe, Lock, Smile, MessageSquare, Star, CheckCircle2, TrendingUp, Brain, Headphones, Camera } from "lucide-react";
+import { Video, Sparkles, Users, Shield, BarChart3, Zap, ArrowRight, Play, Globe, Lock, Smile, MessageSquare, Star, TrendingUp, Brain, Headphones, Camera } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
-import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion";
+import { motion, useScroll, useTransform } from "framer-motion";
 import { useState, useEffect } from "react";
 
 export default function Landing() {
   const { user, loading } = useAuth();
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [activeFeature, setActiveFeature] = useState(0);
   const { scrollYProgress } = useScroll();
 
-  // Game state
-  const [gameActive, setGameActive] = useState(false);
-  const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(30);
-  const [gameIcons, setGameIcons] = useState<Array<{ id: number; x: number; y: number; icon: any; color: string }>>([]);
-  const [highScore, setHighScore] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return parseInt(localStorage.getItem('aiMeetGameHighScore') || '0');
-    }
-    return 0;
-  });
 
   const y1 = useTransform(scrollYProgress, [0, 1], [0, -200]);
   const y2 = useTransform(scrollYProgress, [0, 1], [0, -100]);
-  const y3 = useTransform(scrollYProgress, [0, 1], [0, -50]);
   const opacity = useTransform(scrollYProgress, [0, 0.5], [1, 0]);
   const scale = useTransform(scrollYProgress, [0, 0.3], [1, 0.95]);
 
-  const gameIconTypes = [
-    { icon: Sparkles, color: "from-violet-500 to-purple-500" },
-    { icon: Shield, color: "from-blue-500 to-cyan-500" },
-    { icon: Users, color: "from-emerald-500 to-teal-500" },
-    { icon: Video, color: "from-pink-500 to-rose-500" },
-    { icon: Star, color: "from-yellow-500 to-amber-500" },
-  ];
-
-  // Game logic
-  const startGame = () => {
-    setGameActive(true);
-    setScore(0);
-    setTimeLeft(30);
-    spawnIcons();
-  };
-
-  const spawnIcons = () => {
-    const icons = Array.from({ length: 5 }, (_, i) => {
-      const iconType = gameIconTypes[Math.floor(Math.random() * gameIconTypes.length)];
-      return {
-        id: Date.now() + i,
-        x: Math.random() * 80 + 10,
-        y: Math.random() * 70 + 15,
-        icon: iconType.icon,
-        color: iconType.color
-      };
-    });
-    setGameIcons(icons);
-  };
-
-  const catchIcon = (id: number) => {
-    setScore(prev => prev + 10);
-    setGameIcons(prev => prev.filter(icon => icon.id !== id));
-
-    // Spawn new icon
-    setTimeout(() => {
-      if (gameActive) {
-        const iconType = gameIconTypes[Math.floor(Math.random() * gameIconTypes.length)];
-        setGameIcons(prev => [...prev, {
-          id: Date.now(),
-          x: Math.random() * 80 + 10,
-          y: Math.random() * 70 + 15,
-          icon: iconType.icon,
-          color: iconType.color
-        }]);
-      }
-    }, 200);
-  };
-
-  const endGame = () => {
-    setGameActive(false);
-    if (score > highScore) {
-      setHighScore(score);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('aiMeetGameHighScore', score.toString());
-      }
-    }
-    setGameIcons([]);
-  };
-
+  // Game logic removed
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       setMousePosition({
@@ -100,25 +28,11 @@ export default function Landing() {
     };
     window.addEventListener("mousemove", handleMouseMove);
 
-    const interval = setInterval(() => {
-      setActiveFeature((prev) => (prev + 1) % 6);
-    }, 3000);
-
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
-      clearInterval(interval);
     };
   }, []);
 
-  // Game timer
-  useEffect(() => {
-    if (gameActive && timeLeft > 0) {
-      const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (timeLeft === 0 && gameActive) {
-      endGame();
-    }
-  }, [gameActive, timeLeft]);
 
   const features = [
     {
@@ -205,7 +119,6 @@ export default function Landing() {
 
           <div className="hidden md:flex items-center gap-8">
             <a href="#features" className="text-sm font-medium hover:text-primary transition-colors">Features</a>
-            <a href="#demo" className="text-sm font-medium hover:text-primary transition-colors">Demo</a>
             <a href="#testimonials" className="text-sm font-medium hover:text-primary transition-colors">Testimonials</a>
           </div>
 
@@ -455,135 +368,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Interactive Demo Section - New */}
-      <section id="demo" className="py-32 px-6 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-violet-500/5 to-blue-500/5" />
-
-        <motion.div
-          style={{ y: y3 }}
-          className="max-w-7xl mx-auto relative z-10"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-20"
-          >
-            <h2 className="text-5xl font-bold mb-6">
-              See AI Meet <span className="bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">In Action</span>
-            </h2>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Watch how our AI-powered features transform your video calling experience
-            </p>
-          </motion.div>
-
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            {/* Demo Preview */}
-            <motion.div
-              initial={{ opacity: 0, x: -50 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              className="relative"
-            >
-              <div className="relative aspect-video rounded-3xl overflow-hidden border-2 border-white/10 shadow-2xl">
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-violet-500/30 to-blue-500/30 backdrop-blur-sm" />
-
-                {/* Simulated UI */}
-                <div className="relative h-full p-6 flex flex-col">
-                  <div className="flex gap-3 mb-4">
-                    {[1, 2, 3].map((i) => (
-                      <motion.div
-                        key={i}
-                        className="flex-1 aspect-video rounded-xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center"
-                        animate={{ scale: [1, 1.05, 1] }}
-                        transition={{ duration: 2, delay: i * 0.3, repeat: Infinity }}
-                      >
-                        <Camera className="w-8 h-8 text-white/50" />
-                      </motion.div>
-                    ))}
-                  </div>
-
-                  {/* Simulated active feature display */}
-                  <div className="flex-1 flex items-center justify-center">
-                    <AnimatePresence mode="wait">
-                      <motion.div
-                        key={activeFeature}
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.8 }}
-                        className="text-center"
-                      >
-                        {(() => {
-                          const ActiveIcon = features[activeFeature].icon;
-                          return (
-                            <>
-                              <div className={`w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-r ${features[activeFeature].color} flex items-center justify-center shadow-xl`}>
-                                <ActiveIcon className="w-10 h-10 text-white" />
-                              </div>
-                              <h3 className="text-2xl font-bold text-white mb-2">{features[activeFeature].title}</h3>
-                              <p className="text-white/80 text-sm">{features[activeFeature].description}</p>
-                            </>
-                          );
-                        })()}
-                      </motion.div>
-                    </AnimatePresence>
-                  </div>
-                </div>
-
-                {/* Corner Accent */}
-                <div className="absolute top-4 right-4">
-                  <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center shadow-lg shadow-green-500/50">
-                    <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Floating Indicator */}
-              <motion.div
-                className="absolute -bottom-6 -right-6 px-6 py-3 rounded-full bg-card border-2 border-primary shadow-xl"
-                animate={{ y: [0, -10, 0] }}
-                transition={{ duration: 2, repeat: Infinity }}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-sm font-medium">Live Demo</span>
-                </div>
-              </motion.div>
-            </motion.div>
-
-            {/* Feature List */}
-            <motion.div
-              initial={{ opacity: 0, x: 50 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              className="space-y-4"
-            >
-              {features.map((feature, i) => (
-                <motion.div
-                  key={i}
-                  className={`p-4 rounded-xl border transition-all cursor-pointer ${activeFeature === i
-                    ? "bg-card/80 border-primary shadow-lg shadow-primary/10"
-                    : "border-white/10 hover:border-white/20"
-                    }`}
-                  onClick={() => setActiveFeature(i)}
-                  whileHover={{ x: 10 }}
-                >
-                  <div className="flex items-start gap-4">
-                    <div className={`w-12 h-12 rounded-xl bg-gradient-to-r ${feature.color} flex items-center justify-center flex-shrink-0`}>
-                      <feature.icon className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-bold mb-1">{feature.title}</h4>
-                      <p className="text-sm text-muted-foreground">{feature.description}</p>
-                    </div>
-                    <CheckCircle2 className={`w-5 h-5 flex-shrink-0 ${activeFeature === i ? "text-primary" : "text-muted-foreground/30"}`} />
-                  </div>
-                </motion.div>
-              ))}
-            </motion.div>
-          </div>
-        </motion.div>
-      </section>
 
       {/* Features Section with 3D Cards */}
       <section id="features" className="py-32 px-6 relative">
@@ -686,135 +470,6 @@ export default function Landing() {
             ))}
           </div>
         </motion.div>
-      </section>
-
-      {/* Interactive Game Section - NEW */}
-      <section className="py-32 px-6 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-violet-500/10 to-blue-500/10" />
-
-        <div className="max-w-6xl mx-auto relative z-10">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="text-center mb-12"
-          >
-            <h2 className="text-5xl font-bold mb-6">
-              Try Our{" "}
-              <span className="bg-gradient-to-r from-primary via-violet-500 to-blue-500 bg-clip-text text-transparent">
-                Feature Catch Game!
-              </span>
-            </h2>
-            <p className="text-xl text-muted-foreground">Click the icons as fast as you can before time runs out!</p>
-          </motion.div>
-
-          {!gameActive ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="text-center"
-            >
-              <div className="max-w-md mx-auto p-8 rounded-3xl bg-card/80 backdrop-blur-sm border border-white/10 mb-8">
-                <div className="mb-6">
-                  <div className="text-6xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent mb-2">
-                    {highScore}
-                  </div>
-                  <div className="text-sm text-muted-foreground">High Score</div>
-                </div>
-                <Button
-                  onClick={startGame}
-                  size="lg"
-                  className="px-10 h-14 text-lg gap-3 shadow-xl shadow-primary/30"
-                >
-                  <Play className="w-5 h-5" fill="currentColor" />
-                  Start Game
-                </Button>
-              </div>
-
-              <div className="text-sm text-muted-foreground">
-                💡 Tip: Click the floating AI feature icons to score points. Each icon is worth 10 points!
-              </div>
-            </motion.div>
-          ) : (
-            <div className="relative">
-              {/* Game HUD */}
-              <div className="flex justify-between items-center mb-8">
-                <div className="flex gap-6">
-                  <div className="px-6 py-3 rounded-full bg-card border-2 border-primary">
-                    <div className="flex items-center gap-2">
-                      <Star className="w-5 h-5 text-yellow-500" fill="currentColor" />
-                      <span className="text-2xl font-bold">{score}</span>
-                    </div>
-                  </div>
-                  <div className="px-6 py-3 rounded-full bg-card border-2 border-violet-500">
-                    <div className="flex items-center gap-2">
-                      <div className="text-2xl font-bold">{timeLeft}s</div>
-                    </div>
-                  </div>
-                </div>
-                <Button
-                  onClick={endGame}
-                  variant="outline"
-                  size="sm"
-                >
-                  End Game
-                </Button>
-              </div>
-
-              {/* Game Area */}
-              <div className="relative aspect-video rounded-3xl bg-card/50 backdrop-blur-sm border-2 border-white/10 overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-violet-500/5 to-blue-500/5" />
-
-                {/* Grid Background */}
-                <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:2rem_2rem]" />
-
-                {/* Floating Icons */}
-                <AnimatePresence>
-                  {gameIcons.map((iconData) => {
-                    const IconComponent = iconData.icon;
-                    return (
-                      <motion.button
-                        key={iconData.id}
-                        initial={{ scale: 0, rotate: -180 }}
-                        animate={{ scale: 1, rotate: 0 }}
-                        exit={{ scale: 0, rotate: 180 }}
-                        whileHover={{ scale: 1.2 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => catchIcon(iconData.id)}
-                        className={`absolute w-16 h-16 rounded-2xl bg-gradient-to-br ${iconData.color} flex items-center justify-center shadow-2xl cursor-pointer hover:shadow-primary/50 transition-shadow`}
-                        style={{
-                          left: `${iconData.x}%`,
-                          top: `${iconData.y}%`,
-                        }}
-                      >
-                        <IconComponent className="w-8 h-8 text-white" />
-                      </motion.button>
-                    );
-                  })}
-                </AnimatePresence>
-
-                {/* Center Message when no icons */}
-                {gameIcons.length === 0 && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-muted-foreground">Click fast!</div>
-                  </div>
-                )}
-              </div>
-
-              {/* Progress Bar */}
-              <div className="mt-6">
-                <div className="h-2 bg-card rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-primary to-violet-500"
-                    initial={{ width: "100%" }}
-                    animate={{ width: `${(timeLeft / 30) * 100}%` }}
-                    transition={{ duration: 0.5 }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </section>
 
       {/* How It Works */}
