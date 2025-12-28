@@ -7,14 +7,17 @@ import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon, ArrowLeft } from "lucide-react";
+import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon, ArrowLeft, Lock, Unlock } from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
 import { auth } from "@/lib/firebase";
 import { User as FirebaseUser } from "firebase/auth";
 import { getAvatarUrl, getInitials, searchUsers } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 type Message = {
   id: string;
@@ -55,10 +58,12 @@ type SearchedUser = {
   username: string;
   email: string;
   avatar?: string;
+  connectionStatus?: 'connected' | 'discovered' | 'none';
 };
 
 export default function Chats() {
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const { user, logout } = useAuth();
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -744,6 +749,41 @@ export default function Chats() {
 
     try {
       const token = await firebaseUser.getIdToken();
+
+      // DISCOVERY CHECK
+      const discoveryRes = await fetch(`/api/discovery/${userId}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!discoveryRes.ok) {
+        console.error("Discovery check failed");
+        // Fallback to allowing chat creation if discovery fails (or handle error)
+      } else {
+        const discoveryData = await discoveryRes.json();
+
+        if (discoveryData.status === 'discovered' && !discoveryData.messagingUnlocked) {
+          // SHOW LOCKED UI - User A has discovered B, but B hasn't discovered A yet.
+          toast({
+            variant: "destructive",
+            title: "🔒 Messaging Locked",
+            description: "You have discovered this user, but they must discover you back to unlock messaging.",
+          });
+          return; // STOP HERE
+        }
+
+        if (discoveryData.status === 'matched') {
+          // It's a Match!
+          toast({
+            title: "🎉 It's a Match!",
+            description: "You have discovered each other — messaging unlocked!",
+            className: "bg-green-500/10 border-green-500/20 text-green-600 dark:text-green-400",
+          });
+        }
+      }
+
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: {
@@ -785,6 +825,23 @@ export default function Chats() {
       console.error('Error creating conversation:', error);
     }
   };
+
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on("discovery:match", (data: any) => {
+      // data = { partner: { name, ... }, connectionId }
+      toast({
+        title: "🎉 It's a Match!",
+        description: `You and ${data.partner.name} have discovered each other — messaging unlocked!`,
+        className: "bg-green-500/10 border-green-500/20 text-green-600 dark:text-green-400",
+      });
+    });
+
+    return () => {
+      socket.off("discovery:match");
+    };
+  }, [socket, toast]);
 
   const handleTyping = (value: string) => {
     setMessage(value);
@@ -924,6 +981,34 @@ export default function Chats() {
     });
   };
 
+  const handleDeleteConversation = async (e: React.MouseEvent, conversationId: string) => {
+    e.stopPropagation(); // Prevent opening the chat
+    if (!confirm("Remove this match from your list?")) return;
+
+    try {
+      const token = await firebaseUser?.getIdToken();
+      const res = await fetch(`/api/conversations/${conversationId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        await refetchConversations();
+        if (selectedChat === conversationId) {
+          setSelectedChat(null);
+        }
+        toast({
+          title: "Removed",
+          description: "Match removed from your list.",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to delete", err);
+    }
+  };
+
   const getMessageBubbleClasses = (isMine: boolean, isPinned: boolean) => {
     const base = isMine
       ? "bg-primary/15 text-primary dark:text-primary-foreground border border-primary/20"
@@ -935,7 +1020,6 @@ export default function Chats() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl">
-
       <div className="flex-1 flex overflow-hidden">
         {/* Chat List */}
         <div className={`${selectedChat ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-white/10 flex-col bg-white/5 backdrop-blur-sm h-full`}>
@@ -977,7 +1061,19 @@ export default function Chats() {
                         <p className="font-medium text-sm truncate">{searchedUser.name}</p>
                         <p className="text-xs text-muted-foreground truncate">@{searchedUser.username}</p>
                       </div>
-                      <Badge variant="outline" className="text-xs border-white/10 bg-white/5">New Chat</Badge>
+                      <div className="flex flex-col items-end gap-1">
+                        {searchedUser.connectionStatus === 'connected' ? (
+                          <Badge variant="outline" className="text-xs border-green-500/20 bg-green-500/10 text-green-500 gap-1">
+                            <Unlock className="h-3 w-3" />
+                            Match
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs border-white/10 bg-white/5 text-muted-foreground gap-1">
+                            <Lock className="h-3 w-3" />
+                            Locked
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1002,7 +1098,7 @@ export default function Chats() {
                     <div
                       key={conv.id}
                       onClick={() => handleSelectChat(conv.id)}
-                      className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedChat === conv.id ? 'bg-white/10 border border-white/5 shadow-sm' : 'hover:bg-white/5 border border-transparent'
+                      className={`group relative flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedChat === conv.id ? 'bg-white/10 border border-white/5 shadow-sm' : 'hover:bg-white/5 border border-transparent'
                         }`}
                     >
                       <div className="relative">
@@ -1029,12 +1125,27 @@ export default function Chats() {
                         </div>
                         <p className="text-sm text-muted-foreground truncate">
                           {(() => {
-                            if (!conv.lastMessage) return "No messages yet";
+                            if (!conv.lastMessage) return "New Match";
                             const isMine = conv.lastMessage ? isMessageFromMe(conv.lastMessage, conv) : false;
                             return `${isMine ? 'You: ' : ''}${conv.lastMessage.content}`;
                           })()}
                         </p>
                       </div>
+
+                      {/* X Button for empty matches */}
+                      {!conv.lastMessage && (
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex opacity-100 z-10">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            onClick={(e) => handleDeleteConversation(e, conv.id)}
+                          >
+                            <LogOut className="h-4 w-4 rotate-180" />
+                          </Button>
+                        </div>
+                      )}
+
                       {conv.unreadCount > 0 && (
                         <Badge className="h-5 min-w-5 flex items-center justify-center px-1.5 bg-primary text-primary-foreground">
                           {conv.unreadCount}
@@ -1116,9 +1227,43 @@ export default function Chats() {
                 >
                   <VideoIcon className="h-5 w-5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="hover:bg-white/10">
-                  <MoreVertical className="h-5 w-5" />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="hover:bg-white/10">
+                      <MoreVertical className="h-5 w-5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48 bg-background/95 backdrop-blur-xl border-white/10">
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      onClick={() => {
+                        toast({ title: "Profile View", description: "This feature is coming soon!" });
+                      }}
+                    >
+                      <User className="w-4 h-4 mr-2" />
+                      View Profile
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="cursor-pointer text-orange-500 focus:text-orange-500"
+                      onClick={() => {
+                        toast({ title: "Chat Cleared", description: "History cleared for this session." });
+                      }}
+                    >
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Clear Chat
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator className="bg-white/10" />
+                    <DropdownMenuItem
+                      className="cursor-pointer text-red-500 focus:text-red-500"
+                      onClick={() => {
+                        toast({ title: "User Blocked", description: "You will no longer receive messages from them." });
+                      }}
+                    >
+                      <Lock className="w-4 h-4 mr-2" />
+                      Block User
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
 

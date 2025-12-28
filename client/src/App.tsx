@@ -22,6 +22,8 @@ const Settings = lazy(() => import("@/pages/Settings"));
 const Profile = lazy(() => import("@/pages/Profile"));
 const Analytics = lazy(() => import("@/pages/Analytics"));
 const Meetings = lazy(() => import("@/pages/Meetings"));
+const Notifications = lazy(() => import("@/pages/Notifications"));
+const InviteHandler = lazy(() => import("@/pages/InviteHandler"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const Layout = lazy(() => import("@/components/Layout"));
 
@@ -34,79 +36,93 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 //   </div>
 // );
 
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+
 function Router() {
   return (
-    <Suspense fallback={<PageSkeleton />}>
-      <Switch>
-        <Route path="/" component={Landing} />
-        <Route path="/login" component={Login} />
-        <Route path="/verify-email" component={EmailVerification} />
+    <ErrorBoundary>
+      <Suspense fallback={<PageSkeleton />}>
+        <Switch>
+          <Route path="/" component={Landing} />
+          <Route path="/login" component={Login} />
+          <Route path="/verify-email" component={EmailVerification} />
 
-        <Route path="/dashboard">
-          <ProtectedRoute>
-            <Layout>
-              <Dashboard />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/dashboard">
+            <ProtectedRoute>
+              <Layout>
+                <Dashboard />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/chats">
-          <ProtectedRoute>
-            <Layout>
-              <Chats />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/chats">
+            <ProtectedRoute>
+              <Layout>
+                <Chats />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/call/:roomId">
-          <ProtectedRoute>
-            <VideoCall />
-          </ProtectedRoute>
-        </Route>
+          <Route path="/call/:roomId">
+            <ProtectedRoute>
+              <VideoCall />
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/summary/:callId">
-          <ProtectedRoute>
-            <Layout>
-              <CallSummary />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/summary/:callId">
+            <ProtectedRoute>
+              <Layout>
+                <CallSummary />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/settings">
-          <ProtectedRoute>
-            <Layout>
-              <Settings />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/settings">
+            <ProtectedRoute>
+              <Layout>
+                <Settings />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/profile">
-          <ProtectedRoute>
-            <Layout>
-              <Profile />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/profile">
+            <ProtectedRoute>
+              <Layout>
+                <Profile />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/analytics">
-          <ProtectedRoute>
-            <Layout>
-              <Analytics />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/analytics">
+            <ProtectedRoute>
+              <Layout>
+                <Analytics />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route path="/meetings">
-          <ProtectedRoute>
-            <Layout>
-              <Meetings />
-            </Layout>
-          </ProtectedRoute>
-        </Route>
+          <Route path="/meetings">
+            <ProtectedRoute>
+              <Layout>
+                <Meetings />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
 
-        <Route component={NotFound} />
-      </Switch>
-    </Suspense>
+          <Route path="/notifications">
+            <ProtectedRoute>
+              <Layout>
+                <Notifications />
+              </Layout>
+            </ProtectedRoute>
+          </Route>
+
+          <Route path="/invite/:code" component={InviteHandler} />
+
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 

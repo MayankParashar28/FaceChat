@@ -305,21 +305,31 @@ export default function VideoCall() {
         // Let's assume user connects -> stream loads -> we add stream.
 
         // If peer was created without stream, we need addStream
-        if (!(peer as any)._pc.getLocalStreams().length) {
-          peer.addStream(localStream);
+        // If peer was created without stream, we need addStream
+        // Check if any senders exist to determine if we're already sending tracks
+        const pc = (peer as any)._pc;
+        if (pc && pc.getSenders) {
+          if (pc.getSenders().length === 0) {
+            peer.addStream(localStream);
+          } else {
+            // We already have senders, try to replace tracks
+            const senders = pc.getSenders();
+            const videoSender = senders.find((s: any) => s.track?.kind === 'video');
+            const audioSender = senders.find((s: any) => s.track?.kind === 'audio');
+
+            const newVideoTrack = localStream.getVideoTracks()[0];
+            const newAudioTrack = localStream.getAudioTracks()[0];
+
+            if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack).catch((e: any) => console.log("Replace video track error", e));
+            if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack).catch((e: any) => console.log("Replace audio track error", e));
+          }
         } else {
-          // If we already have a stream, replacing tracks is cleaner but complex.
-          // We'll skip complex replacement for now to avoid breaking existing logic,
-          // focusing on the "connects then loads" case.
-          const senders = (peer as any)._pc.getSenders();
-          const videoSender = senders.find((s: any) => s.track?.kind === 'video');
-          const audioSender = senders.find((s: any) => s.track?.kind === 'audio');
-
-          const newVideoTrack = localStream.getVideoTracks()[0];
-          const newAudioTrack = localStream.getAudioTracks()[0];
-
-          if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack);
-          if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack);
+          // Fallback/Safety if API mismatch, just try adding if it seems empty (risky but better than crashing)
+          // But actually, if getSenders calls failed, we might be in a weird state.
+          // Safe default: use addStream if we think we haven't added it. 
+          // Better: checking _senderTracks on simple-peer internals if possible, but let's stick to standard PC checks.
+          // For now, if no PC or no getSenders (unlikely on modern browser), we skip to avoid error.
+          console.warn("Could not check peer connection state for stream.");
         }
       });
     }
@@ -1050,26 +1060,31 @@ export default function VideoCall() {
     // Mobile Base (Grid)
     let mobileClass = "";
     if (effectiveCount === 1) mobileClass = "grid grid-cols-1 grid-rows-1";
-    else if (effectiveCount === 2) mobileClass = "grid grid-cols-1 grid-rows-2";
+    else if (effectiveCount === 2) mobileClass = "grid grid-cols-1 grid-rows-2"; // Stack 2 vertical on mobile
     else if (effectiveCount <= 4) mobileClass = "grid grid-cols-2 grid-rows-2";
-    else mobileClass = "grid grid-cols-2";
+    else mobileClass = "grid grid-cols-2 auto-rows-fr"; // 3+ columns flow
 
-    // Desktop Base (Flex)
-    let desktopClass = "md:flex md:flex-wrap md:justify-center md:content-center";
+    // Desktop Base (Flex or Grid)
+    // For desktop, let's stick to flex for now as it centers nicely, or precise grid
+    let desktopClass = "md:grid md:grid-cols-2 md:grid-rows-1"; // Default for small counts
+    if (effectiveCount === 1) desktopClass = "md:flex md:items-center md:justify-center";
+    else if (effectiveCount === 2) desktopClass = "md:grid md:grid-cols-2 md:grid-rows-1";
+    else if (effectiveCount <= 4) desktopClass = "md:grid md:grid-cols-2 md:grid-rows-2";
+    else desktopClass = "md:grid md:grid-cols-3 md:auto-rows-fr";
 
-    return `${mobileClass} ${desktopClass}`;
+    return `${mobileClass} ${desktopClass} w-full h-full`;
   };
 
 
   return (
-    <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative">
+    <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative font-sans">
       {/* Smart Pulse */}
       <div className="absolute top-24 left-4 z-50 hidden md:block">
         <SmartPulse sentiment={sentiment} engagement={Math.max(20, volume)} />
       </div>
 
       {/* Header */}
-      <div className="absolute top-12 md:top-6 left-0 right-0 z-50 flex justify-center items-center pointer-events-none px-4">
+      <div className="absolute top-4 md:top-6 left-0 right-0 z-50 flex justify-center items-center pointer-events-none px-4">
         <div className="pointer-events-auto bg-black/40 backdrop-blur-md px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-3 md:gap-6 text-white border border-white/10 items-center shadow-2xl transition-all hover:bg-black/50 overflow-hidden max-w-full">
           <div className="flex items-center gap-2 md:gap-3 shrink-0">
             <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
@@ -1090,7 +1105,7 @@ export default function VideoCall() {
       </div>
 
       {/* Video Grid */}
-      <div className="w-full h-full relative overflow-hidden bg-black">
+      <div className={`w-full h-full relative overflow-hidden bg-black ${getGridClass()}`}>
         <AnimatePresence mode="popLayout">
           {/* Default Grid Mode */}
           {!pinnedSocketId && participantsList.map((p) => {
@@ -1100,21 +1115,25 @@ export default function VideoCall() {
             const isOneOnOne = participantsList.length === 2;
             const isGroup = participantsList.length > 2;
 
-            // Class Construction - preventing conflicts
+            // Class Construction
             let containerClass = "overflow-hidden transition-all duration-500 "; // No base position
 
             if (isLocal && !isAlone) {
               // Local & Others present: Floating PIP (bottom-right)
-              // STRICTLY FIXED. Remove 'relative' to avoid conflict.
-              containerClass += "fixed !bottom-20 !right-4 w-24 md:w-56 aspect-[3/4] md:aspect-video z-[60] rounded-xl shadow-2xl border border-white/20 ring-1 ring-black/50 object-cover";
+              // Stacked higher on mobile to avoid controls
+              containerClass += "fixed bottom-24 right-4 w-28 md:bottom-8 md:right-8 md:w-64 aspect-[3/4] md:aspect-video z-[60] rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/50 object-cover";
             }
             else if (isAlone) {
               // Alone: Local User is Full Screen
-              containerClass += "absolute inset-0 w-full h-full z-0";
+              containerClass += "col-span-full row-span-full w-full h-full z-0";
             }
             else if (isOneOnOne && !isLocal) {
               // One-on-One Remote: Full Screen
-              containerClass += "absolute inset-0 w-full h-full z-0";
+              containerClass += "col-span-full row-span-full w-full h-full z-0";
+            }
+            else if (p.isLocal) {
+              // Fallback for local
+              return null;
             }
             else {
               // Group Remote or Fallback: Grid Cell
@@ -1201,7 +1220,6 @@ export default function VideoCall() {
               <Button
                 variant={isVideoOn ? "secondary" : "destructive"}
                 size="icon"
-                size="icon"
                 className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
                 onClick={toggleVideo}
               >
@@ -1217,7 +1235,6 @@ export default function VideoCall() {
             <TooltipTrigger asChild>
               <Button
                 variant={isScreenSharing ? "secondary" : "ghost"}
-                size="icon"
                 size="icon"
                 className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? 'bg-blue-500 text-white' : ''}`}
                 onClick={toggleScreenShare}
@@ -1236,7 +1253,6 @@ export default function VideoCall() {
             <TooltipTrigger asChild>
               <Button
                 variant={isSidebarOpen && activeTab === "chat" ? "secondary" : "ghost"}
-                size="icon"
                 size="icon"
                 className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "chat" ? "bg-white/20" : ""}`}
                 onClick={() => {
@@ -1260,7 +1276,6 @@ export default function VideoCall() {
             <TooltipTrigger asChild>
               <Button
                 variant={isSidebarOpen && activeTab === "participants" ? "secondary" : "ghost"}
-                size="icon"
                 size="icon"
                 className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "participants" ? "bg-white/20" : ""}`}
                 onClick={() => {
@@ -1317,7 +1332,6 @@ export default function VideoCall() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  size="icon"
                   className={`text-white hover:bg-white/10 rounded-xl w-8 h-8 shrink-0 transition-all duration-200 ${showReactionsMenu ? "bg-white/20" : ""}`}
                   onClick={() => setShowReactionsMenu(!showReactionsMenu)}
                 >
@@ -1334,7 +1348,6 @@ export default function VideoCall() {
               <Button
                 variant={showCaptions ? "secondary" : "ghost"}
                 size="icon"
-                size="icon"
                 className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${showCaptions ? "bg-white/20" : ""}`}
                 onClick={() => setShowCaptions(!showCaptions)}
               >
@@ -1349,7 +1362,6 @@ export default function VideoCall() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="destructive"
                 variant="destructive"
                 className="rounded-xl md:rounded-2xl px-4 md:px-6 h-8 md:h-12 bg-red-600 hover:bg-red-700 transition-all duration-200 shrink-0"
                 onClick={async () => {
