@@ -370,7 +370,7 @@ export default function Dashboard() {
       </motion.div>
 
       {/* Quick Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Video} label="Weekly Calls" value={weeklyMeetings} trend="+12% vs last week" delay={0.1} />
         <StatCard icon={Users} label="Collaborators" value={collaboratorCount} trend="Active collaborators" delay={0.2} />
         <StatCard icon={Clock} label="Avg Duration" value={`${avgDuration}m`} trend="Average call duration" delay={0.3} />
@@ -384,16 +384,16 @@ export default function Dashboard() {
         <div className="lg:col-span-2 space-y-8">
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <ActionButton icon={Zap} label="Instant meeting" onClick={createCall} variant="primary" delay={0.5} />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4">
+            <ActionButton icon={Zap} label="Instant" onClick={createCall} variant="primary" delay={0.5} />
 
             <Dialog open={joinDialogOpen} onOpenChange={setJoinDialogOpen}>
               <DialogTrigger asChild>
                 <div className="w-full">
-                  <ActionButton icon={Users} label="Join room" onClick={() => setJoinDialogOpen(true)} variant="secondary" delay={0.7} />
+                  <ActionButton icon={Users} label="Join" onClick={() => setJoinDialogOpen(true)} variant="secondary" delay={0.7} />
                 </div>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[400px] glass-panel border-white/10">
+              <DialogContent className="w-[90vw] max-w-[400px] glass-panel border-white/10">
                 <DialogHeader>
                   <DialogTitle>Join a room</DialogTitle>
                   <DialogDescription>
@@ -424,10 +424,10 @@ export default function Dashboard() {
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
               <DialogTrigger asChild>
                 <div className="w-full">
-                  <ActionButton icon={CalendarPlus} label="Schedule meeting" onClick={() => setScheduleDialogOpen(true)} variant="secondary" delay={0.6} />
+                  <ActionButton icon={CalendarPlus} label="Schedule" onClick={() => setScheduleDialogOpen(true)} variant="secondary" delay={0.6} />
                 </div>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[420px] glass-panel border-white/10">
+              <DialogContent className="w-[90vw] max-w-[420px] glass-panel border-white/10">
                 <DialogHeader>
                   <DialogTitle>Schedule a Meeting</DialogTitle>
                   <DialogDescription>
@@ -473,7 +473,7 @@ export default function Dashboard() {
               </DialogContent>
             </Dialog>
 
-            <ActionButton icon={BarChart3} label="View analytics" onClick={() => setLocation("/analytics")} variant="secondary" delay={0.8} />
+            <ActionButton icon={BarChart3} label="Analytics" onClick={() => setLocation("/analytics")} variant="secondary" delay={0.8} />
           </div>
 
           {/* Recent Meetings List */}
@@ -525,7 +525,7 @@ export default function Dashboard() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="space-y-0"
+                    className="space-y-2"
                   >
                     {filteredMeetings.slice(0, 5).map((meeting, i) => (
                       <motion.div
@@ -533,13 +533,13 @@ export default function Dashboard() {
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.1 }}
-                        className="group relative overflow-hidden rounded-xl p-4 hover:bg-accent/30 transition-all cursor-pointer flex items-center justify-between border-b border-border/20 last:border-0"
+                        className="group relative overflow-hidden rounded-xl p-3 md:p-4 hover:bg-accent/30 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between border border-border/10 bg-white/5 gap-3"
                         onClick={() => setLocation(`/summary/${meeting._id}`)}
                       >
-                        <div className="flex items-center gap-4">
-                          <div className="flex -space-x-3 rtl:space-x-reverse">
+                        <div className="flex items-center gap-3 md:gap-4">
+                          <div className="flex -space-x-3 rtl:space-x-reverse shrink-0">
                             {meeting.participants.slice(0, 3).map((p: any, idx) => (
-                              <Avatar key={idx} className="border-2 border-background h-10 w-10">
+                              <Avatar key={idx} className="border-2 border-background h-8 w-8 md:h-10 md:w-10">
                                 <AvatarImage src={p.avatar} />
                                 <AvatarFallback className="bg-primary/10 text-[10px] text-primary">
                                   {getInitials(p.name || "U")}
@@ -547,21 +547,21 @@ export default function Dashboard() {
                               </Avatar>
                             ))}
                             {meeting.participants.length > 3 && (
-                              <div className="flex items-center justify-center h-10 w-10 rounded-full border-2 border-background bg-muted text-[10px] font-medium text-muted-foreground">
+                              <div className="flex items-center justify-center h-8 w-8 md:h-10 md:w-10 rounded-full border-2 border-background bg-muted text-[10px] font-medium text-muted-foreground">
                                 +{meeting.participants.length - 3}
                               </div>
                             )}
                           </div>
-                          <div className="flex items-center gap-6">
-                            <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors min-w-[120px]">{meeting.title || "Untitled Session"}</h3>
-                            <div className="flex items-center gap-6 text-xs text-muted-foreground font-medium">
-                              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> {formatTimeAgo(new Date(meeting.startTime))}</span>
-                              <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {calculateDuration(new Date(meeting.startTime), meeting.endTime ? new Date(meeting.endTime) : undefined)}</span>
+                          <div className="flex flex-col gap-1 min-w-0">
+                            <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors truncate">{meeting.title || "Untitled Session"}</h3>
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground font-medium">
+                              <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {formatTimeAgo(new Date(meeting.startTime))}</span>
+                              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {calculateDuration(new Date(meeting.startTime), meeting.endTime ? new Date(meeting.endTime) : undefined)}</span>
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <Badge variant="outline" className="bg-background/50 border-border/50 text-xs font-medium px-2 py-0.5 h-6">Completed</Badge>
+                        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto mt-1 sm:mt-0 pl-[44px] sm:pl-0">
+                          <Badge variant="outline" className="bg-background/50 border-border/50 text-[10px] font-medium px-2 py-0.5 h-5">Completed</Badge>
                           <ArrowUpRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
                         </div>
                         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-foreground/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 pointer-events-none" />

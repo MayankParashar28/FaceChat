@@ -59,13 +59,48 @@ router.get("/search", apiRateLimiter, authenticate, async (req, res) => {
         const max = Math.max(1, Math.min(25, Number(limit) || 10));
         const users = await mongoService.searchUsersByUsername(q.trim(), max);
 
-        // Return minimal safe fields
-        const result = users.map((u) => ({
-            id: u._id.toString(),
-            name: u.name,
-            username: u.username,
-            email: u.email,
-            avatar: (u as any).avatar ?? null,
+        if (!req.user) {
+            return res.status(401).json({ error: "Authentication required" });
+        }
+        const requesterUid = req.user.uid;
+        const requester = req.user.dbUser || await mongoService.getUserByFirebaseUid(requesterUid);
+
+        // Import models dynamically if needed or rely on existing imports (need to add to top of file if not present)
+        // Assuming Connection and Discovery are exported from ../models
+        const { Connection, Discovery } = await import("../models");
+
+        const result = await Promise.all(users.map(async (u) => {
+            let status: 'connected' | 'discovered' | 'none' = 'none';
+
+            if (requester) {
+                // Check for active connection
+                const connection = await Connection.findOne({
+                    participants: { $all: [requester._id, u._id] },
+                    status: 'active'
+                });
+
+                if (connection) {
+                    status = 'connected';
+                } else {
+                    // Check if *requester* has discovered *target*
+                    const discovery = await Discovery.findOne({
+                        viewerId: requester._id,
+                        targetId: u._id
+                    });
+                    if (discovery) {
+                        status = 'discovered';
+                    }
+                }
+            }
+
+            return {
+                id: u._id.toString(),
+                name: u.name,
+                username: u.username,
+                email: u.email,
+                avatar: (u as any).avatar ?? null,
+                connectionStatus: status
+            };
         }));
 
         res.json(result);

@@ -9,7 +9,7 @@ import mongoose from "mongoose";
 import { mongoService } from "./services/mongodb";
 import { verifyFirebaseToken, setUserOnlineStatus } from "./firebase/admin";
 import { mongoHealthCheck } from "./database/mongodb";
-import { Message, Conversation, User, Meeting, ChatMessage } from "./models";
+import { Message, Conversation, User, Meeting, ChatMessage, Connection, Notification } from "./models";
 import { authenticate, optionalAuthenticate } from "./middleware/auth";
 import { authRateLimiter, apiRateLimiter, usernameCheckRateLimiter } from "./middleware/rateLimiter";
 import { createOTP, verifyOTP } from "./services/otpService";
@@ -18,6 +18,10 @@ import authRoutes from "./routes/auth";
 import userRoutes from "./routes/user";
 import chatRoutes from "./routes/chat";
 import meetingRoutes from "./routes/meeting";
+import discoveryRoutes from "./routes/discovery";
+
+import notificationRoutes from "./routes/notification";
+import inviteRoutes from "./routes/invite";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -28,6 +32,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       credentials: true,
     }
   });
+
+  // Make IO accessible in routes
+  app.set("io", io);
+
+  // Register API Routes
+  app.use("/api/auth", authRoutes);
+  app.use("/api/users", userRoutes);
+  app.use("/api/chat", chatRoutes);
+  app.use("/api/meetings", meetingRoutes);
+  app.use("/api/discovery", discoveryRoutes);
+  app.use("/api/notifications", notificationRoutes);
+  app.use("/api/invites", inviteRoutes);
+
 
   const userSockets = new Map<string, string>();
   const socketUserMap = new Map<string, string>(); // socketId -> userId
@@ -206,6 +223,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           socket.emit("message:error", { error: "Message not found" });
           return;
         }
+
+        // --- MUTUAL SEARCH GUARD ---
+        // Verify that the sender and receiver have a mutual connection
+        // For groups, we might need different logic, but for 1-on-1:
+        const conversationToCheck = await Conversation.findById(data.conversationId);
+        if (conversationToCheck && !conversationToCheck.isGroup) {
+          const otherParticipantId = conversationToCheck.participants.find(p => p.toString() !== dbUser._id.toString());
+
+          if (otherParticipantId) {
+            // const connection = await Connection.findOne({
+            //   participants: { $all: [dbUser._id, otherParticipantId] },
+            //   status: 'active'
+            // });
+            //
+
+            // if (!connection) {
+            //   // NO MUTUAL CONNECTION! Block message.
+            //   // (Optional: Allow if they are 'friends' in the future)
+            //
+            //   socket.emit("message:error", { error: "Messaging locked. You must both discover each other first." });
+
+            //   // Delete the message we just optimistically created
+            //   await Message.findByIdAndDelete(message._id);
+            //   return;
+            // }
+          }
+        }
+        // ---------------------------
 
         // Format message for client
         const senderId = typeof populatedMessage.senderId === 'string'
@@ -649,6 +694,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (wasLastUser) {
         try {
           const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
+
+          // MISSED CALL DETECTION
+          // If only 1 participant was ever in the meeting when it ends (or acts as end)
+          if (existingMeeting && existingMeeting.participants.length === 1) {
+            try {
+              // Assuming roomId is conversationId
+              const conversation = await Conversation.findById(roomId);
+              if (conversation) {
+                const missedCallUserIds = conversation.participants
+                  .map(p => p.toString())
+                  .filter(pId => pId !== existingMeeting.participants[0].toString());
+
+                const hostUser = await User.findById(existingMeeting.participants[0]);
+                const hostName = hostUser ? hostUser.name : "Someone";
+
+                // Send notifications
+                const notifications = missedCallUserIds.map(userId => ({
+                  userId,
+                  type: "missed_call",
+                  title: "Missed Call 📞",
+                  message: `You missed a call from ${hostName}`,
+                  relatedId: existingMeeting._id
+                }));
+
+                if (notifications.length > 0) {
+                  await Notification.create(notifications);
+                }
+              }
+            } catch (e) {
+              console.error("Error creating missed call notifications:", e);
+            }
+          }
+
           if (existingMeeting && existingMeeting.status === 'active') {
             const endTime = new Date();
             const startTime = existingMeeting.startTime;

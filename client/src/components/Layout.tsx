@@ -7,7 +7,8 @@ import {
     User,
     Settings,
     LogOut,
-    Search
+    Search,
+    Bell
 } from "lucide-react";
 import {
     Sidebar,
@@ -28,6 +29,8 @@ import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { auth } from "@/lib/firebase";
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -37,10 +40,29 @@ export default function Layout({ children }: LayoutProps) {
     const [location] = useLocation();
     const { user, logout } = useAuth();
 
+    // Fetch notifications to get unread count
+    const { data: notifications = [] } = useQuery({
+        queryKey: ["notifications"],
+        queryFn: async () => {
+            if (!auth.currentUser) return [];
+            const token = await auth.currentUser.getIdToken();
+            const res = await fetch("/api/notifications", {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.ok) return [];
+            return res.json();
+        },
+        enabled: !!user,
+        refetchInterval: 10000 // Poll every 10s
+    });
+
+    const unreadCount = notifications.filter((n: any) => !n.isRead).length;
+
     const sidebarItems = [
         { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
         { title: "Chats", icon: MessageSquare, url: "/chats" },
         { title: "Meetings", icon: Calendar, url: "/meetings" },
+        { title: "Notifications", icon: Bell, url: "/notifications", badge: unreadCount },
         { title: "Analytics", icon: BarChart3, url: "/analytics" },
         { title: "Profile", icon: User, url: "/profile" },
         { title: "Settings", icon: Settings, url: "/settings" }
@@ -79,9 +101,14 @@ export default function Layout({ children }: LayoutProps) {
                                                 className="hover:bg-white/[0.08] hover:shadow-sm transition-all duration-200 rounded-xl p-3 group-data-[state=expanded]:w-full data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                                                 tooltip={item.title}
                                             >
-                                                <a href={item.url} className="flex items-center gap-3">
+                                                <a href={item.url} className="flex items-center gap-3 relative">
                                                     <item.icon className="w-5 h-5 opacity-70" />
-                                                    <span className="font-medium group-data-[collapsible=icon]:hidden">{item.title}</span>
+                                                    <span className="font-medium group-data-[collapsible=icon]:hidden flex-1">{item.title}</span>
+                                                    {item.badge !== undefined && item.badge > 0 && (
+                                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:top-0 group-data-[collapsible=icon]:right-0">
+                                                            {item.badge}
+                                                        </span>
+                                                    )}
                                                 </a>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>
@@ -123,7 +150,7 @@ export default function Layout({ children }: LayoutProps) {
                         <ThemeToggle />
                     </header>
 
-                    <main className="flex-1 overflow-y-auto p-4 md:p-6 scrollbar-hide w-full">
+                    <main className="flex-1 overflow-y-auto px-4 py-6 md:p-6 scrollbar-hide w-full">
                         {children}
                     </main>
                 </div>

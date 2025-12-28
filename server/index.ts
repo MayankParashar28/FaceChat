@@ -3,8 +3,12 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { connectToMongoDB, testMongoConnection } from "./database/mongodb";
+import { startCronJobs } from "./services/cron";
 
 const app = express();
+
+// Start background jobs
+startCronJobs();
 
 declare module 'http' {
   interface IncomingMessage {

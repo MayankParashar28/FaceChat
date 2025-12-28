@@ -147,20 +147,20 @@ export default function Meetings() {
                                 </DialogDescription>
                             </DialogHeader>
                             <div className="grid gap-4 py-4">
-                                <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="title" className="text-right">
+                                <div className="grid grid-cols-1 md:grid-cols-4 items-start md:items-center gap-2 md:gap-4">
+                                    <Label htmlFor="title" className="text-left md:text-right">
                                         Title
                                     </Label>
                                     <Input
                                         id="title"
                                         value={newMeetingTitle}
                                         onChange={(e) => setNewMeetingTitle(e.target.value)}
-                                        className="col-span-3 bg-white/5 border-white/10"
+                                        className="col-span-1 md:col-span-3 bg-white/5 border-white/10"
                                         placeholder="Team Sync"
                                     />
                                 </div>
-                                <div className="grid grid-cols-4 items-center gap-4">
-                                    <Label htmlFor="time" className="text-right">
+                                <div className="grid grid-cols-1 md:grid-cols-4 items-start md:items-center gap-2 md:gap-4">
+                                    <Label htmlFor="time" className="text-left md:text-right">
                                         Time
                                     </Label>
                                     <Input
@@ -168,7 +168,7 @@ export default function Meetings() {
                                         type="time"
                                         value={newMeetingTime}
                                         onChange={(e) => setNewMeetingTime(e.target.value)}
-                                        className="col-span-3 bg-white/5 border-white/10"
+                                        className="col-span-1 md:col-span-3 bg-white/5 border-white/10"
                                     />
                                 </div>
                             </div>

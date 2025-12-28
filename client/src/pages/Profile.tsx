@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Settings, LogOut, LayoutDashboard, MessageSquare, User, Mail, Calendar, Phone, Edit2, Save, X, Camera, CheckCircle2, Loader2, RefreshCw, Shield, Activity, Briefcase, Share2 } from "lucide-react";
+import { Settings, LogOut, LayoutDashboard, MessageSquare, User, Mail, Calendar, Phone, Edit2, Save, X, Camera, CheckCircle2, Loader2, RefreshCw, Shield, Activity, Briefcase, Share2, Download, Clock, Check, Copy, Plus, QrCode } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { LogoMark } from "@/components/LogoMark";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
@@ -17,6 +17,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 interface UserProfile {
   _id: string;
@@ -61,6 +62,93 @@ export default function Profile() {
   const [isVerifyingPhoneCode, setIsVerifyingPhoneCode] = useState(false);
   const [phoneCode, setPhoneCode] = useState("");
   const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
+
+  // Invite System State
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
+  const [isGeneratingInvite, setIsGeneratingInvite] = useState(false);
+
+  const generateInviteMutation = useMutation({
+    mutationFn: async () => {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error("Not authenticated");
+      const response = await fetch("/api/invites/generate", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error("Failed to generate invite");
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setInviteCode(data.code);
+      setInviteExpiresAt(data.expiresAt);
+      toast({ title: "Invite Generated", description: "Share this code or link with a friend." });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message || "Could not generate invite.", variant: "destructive" });
+    }
+  });
+
+  const handleGenerateInvite = () => {
+    setIsGeneratingInvite(true);
+    generateInviteMutation.mutate(undefined, {
+      onSettled: () => setIsGeneratingInvite(false)
+    });
+  };
+
+  const inviteUrl = inviteCode ? `${window.location.origin}/invite/${inviteCode}` : "";
+
+  const copyInviteToClipboard = () => {
+    if (inviteUrl) {
+      navigator.clipboard.writeText(inviteUrl);
+      toast({ title: "Copied!", description: "Invite link copied to clipboard." });
+    }
+  };
+
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Join me on FaceCallAI',
+          text: 'Connect with me instantly!',
+          url: inviteUrl,
+        });
+      } catch (err) {
+        console.error('Error sharing:', err);
+      }
+    } else {
+      copyInviteToClipboard();
+    }
+  };
+
+  const handleDownloadQR = async () => {
+    try {
+      const response = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(inviteUrl)}`);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `facecall-invite-${inviteCode}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Downloaded", description: "QR Code saved to downloads." });
+    } catch (err) {
+      toast({ title: "Error", description: "Could not download QR code", variant: "destructive" });
+    }
+  };
+
+  const timeLeft = useMemo(() => {
+    if (!inviteExpiresAt) return null;
+    const expires = new Date(inviteExpiresAt).getTime();
+    const now = Date.now();
+    const diff = expires - now;
+    if (diff <= 0) return "Expired";
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    return `${hours}h ${minutes}m left`;
+  }, [inviteExpiresAt]);
 
   // Fetch user profile from MongoDB with real-time updates
   const { data: profile, isLoading, error, refetch, isFetching } = useQuery<UserProfile>({
@@ -711,6 +799,86 @@ export default function Profile() {
                       <Camera className="w-4 h-4" />
                       Shuffle Avatar
                     </Button>
+
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button className="gap-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white border-0 shadow-lg shadow-purple-500/20">
+                          <QrCode className="w-4 h-4" />
+                          Create Invite
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-md bg-background border-border backdrop-blur-xl">
+                        <DialogHeader>
+                          <DialogTitle>Share Invite</DialogTitle>
+                          <DialogDescription>
+                            Create a one-time link for a friend to instantly connect with you. Expires in 24 hours.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="flex flex-col items-center space-y-6 py-4">
+                          {!inviteCode ? (
+                            <Button
+                              onClick={handleGenerateInvite}
+                              disabled={isGeneratingInvite}
+                              className="w-full h-12 text-lg font-medium relative overflow-hidden group"
+                              variant="secondary"
+                            >
+                              <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 group-hover:opacity-100 opacity-0 transition-opacity" />
+                              {isGeneratingInvite ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Plus className="w-5 h-5 mr-2" />}
+                              Generate New Invite
+                            </Button>
+                          ) : (
+                            <>
+                              <div className="relative group">
+                                <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
+                                <div className="relative p-4 bg-white rounded-xl shadow-2xl ring-1 ring-gray-900/5">
+                                  <img
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(inviteUrl)}`}
+                                    alt="QR Code"
+                                    className="w-48 h-48"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 w-full">
+                                <Button className="flex-1 gap-2" variant="outline" onClick={handleDownloadQR}>
+                                  <Download className="w-4 h-4" />
+                                  Save QR
+                                </Button>
+                                <Button className="flex-1 gap-2" onClick={handleShare}>
+                                  <Share2 className="w-4 h-4" />
+                                  Share
+                                </Button>
+                              </div>
+
+                              <div className="space-y-2 w-full">
+                                <Label className="text-muted-foreground text-xs uppercase tracking-wider font-semibold ml-1">Invite Link</Label>
+                                <div className="flex items-center gap-2 p-1.5 bg-muted rounded-lg border border-border/50">
+                                  <div className="flex-1 px-3 text-sm font-medium truncate select-all text-foreground/90">
+                                    {inviteUrl}
+                                  </div>
+                                  <Button size="sm" variant="ghost" className="h-8 w-8 hover:bg-background/80" onClick={copyInviteToClipboard}>
+                                    <Copy className="w-4 h-4" />
+                                  </Button>
+                                </div>
+
+                                <div className="flex items-center justify-center gap-2 text-xs font-medium text-amber-500/90 py-2 bg-amber-500/5 rounded-full mt-4">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  <span>{timeLeft || "Expires in 24h"}</span>
+                                </div>
+
+                                <Button
+                                  variant="ghost"
+                                  className="w-full text-muted-foreground hover:bg-destructive/5 hover:text-destructive text-xs h-8 mt-2"
+                                  onClick={() => { setInviteCode(null); setInviteExpiresAt(null); }}
+                                >
+                                  Generate New Code
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                     {!isEditing ? (
                       <Button onClick={() => setIsEditing(true)} className="gap-2 shadow-lg shadow-primary/20">
                         <Edit2 className="w-4 h-4" />
@@ -731,22 +899,22 @@ export default function Profile() {
                 </div>
 
                 {/* Stats Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mt-8 pt-8 border-t border-white/10">
                   {statsCards.map((stat) => (
                     <div
                       key={stat.label}
-                      className="group relative overflow-hidden rounded-2xl border border-white/5 bg-white/5 p-4 hover:bg-white/10 transition-all duration-300"
+                      className="group relative overflow-hidden rounded-xl md:rounded-2xl border border-white/5 bg-white/5 p-3 md:p-4 hover:bg-white/10 transition-all duration-300"
                     >
                       <div className="relative z-10">
-                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{stat.label}</p>
+                        <p className="text-[10px] md:text-xs font-medium uppercase tracking-wider text-muted-foreground truncate">{stat.label}</p>
                         <div className="flex items-center gap-2 mt-1">
-                          <p className="text-2xl font-bold text-foreground">
+                          <p className="text-xl md:text-2xl font-bold text-foreground truncate">
                             {statsLoading ? "—" : stat.value}
                           </p>
-                          {statsLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                          {statsLoading && <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin text-muted-foreground" />}
                         </div>
                       </div>
-                      <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-colors" />
+                      <div className="absolute -right-4 -bottom-4 w-12 h-12 md:w-16 md:h-16 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-colors" />
                     </div>
                   ))}
                 </div>

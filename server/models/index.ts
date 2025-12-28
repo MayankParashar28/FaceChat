@@ -437,8 +437,56 @@ MessageSchema.index({ senderId: 1 });
 MessageSchema.index({ isPinned: 1, createdAt: -1 });
 
 /* =========================================================
- *  EXPORT MODELS
+ *  DISCOVERY MODEL (Mutual Search/Tinder-like)
  * ========================================================= */
+
+export interface IDiscovery extends Document {
+  _id: Types.ObjectId;
+  viewerId: Types.ObjectId;
+  targetId: Types.ObjectId;
+  timestamp: Date;
+}
+
+const DiscoverySchema = new Schema<IDiscovery>(
+  {
+    viewerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    targetId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    timestamp: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+
+DiscoverySchema.index({ viewerId: 1, targetId: 1 }, { unique: true });
+DiscoverySchema.index({ targetId: 1 });
+
+/* =========================================================
+ *  CONNECTION MODEL (Mutual Match)
+ * ========================================================= */
+
+export interface IConnection extends Document {
+  _id: Types.ObjectId;
+  participants: Types.ObjectId[];
+  status: "active" | "blocked";
+  unlockedAt: Date;
+}
+
+const ConnectionSchema = new Schema<IConnection>(
+  {
+    participants: [
+      { type: Schema.Types.ObjectId, ref: "User", required: true },
+    ],
+    status: {
+      type: String,
+      enum: ["active", "blocked"],
+      default: "active",
+    },
+    unlockedAt: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+
+ConnectionSchema.index({ participants: 1 });
+
 
 export const User = mongoose.model<IUser>("User", UserSchema);
 export const Meeting = mongoose.model<IMeeting>("Meeting", MeetingSchema);
@@ -452,7 +500,14 @@ export const Conversation = mongoose.model<IConversation>(
 );
 export const Message = mongoose.model<IMessage>("Message", MessageSchema);
 export const ActivityLog = mongoose.model<IActivityLog>("ActivityLog", ActivityLogSchema);
+export const Discovery = mongoose.model<IDiscovery>("Discovery", DiscoverySchema);
+export const Connection = mongoose.model<IConnection>("Connection", ConnectionSchema);
 
 // Export OTP model (for email verification)
 export { OTP } from './otp';
 export type { IOTP } from './otp';
+export { Notification } from './notification';
+export type { INotification } from './notification';
+export { Invite } from './invite';
+export type { IInvite } from './invite';
+
