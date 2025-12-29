@@ -1009,6 +1009,78 @@ export default function Chats() {
     }
   };
 
+  const handleClearChat = async () => {
+    if (!selectedChat || !firebaseUser) return;
+    if (!confirm("Are you sure you want to clear the chat history? This cannot be undone.")) return;
+
+    try {
+      const token = await firebaseUser.getIdToken();
+      const res = await fetch(`/api/chat/${selectedChat}/clear`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        setMessages([]); // Clear local messages immediately
+        toast({
+          title: "Chat Cleared",
+          description: "History cleared for this session.",
+        });
+      } else {
+        throw new Error("Failed to clear chat");
+      }
+    } catch (err) {
+      console.error("Failed to clear chat", err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to clear chat history.",
+      });
+    }
+  };
+
+  const handleBlockUser = async () => {
+    if (!selectedConversation || !firebaseUser) return;
+
+    // Find the other user
+    const otherUser = selectedConversation.participants.find(p => p.firebaseUid !== user?.uid);
+    if (!otherUser) return;
+
+    if (!confirm(`Are you sure you want to block ${otherUser.name}? You will no longer receive messages from them.`)) return;
+
+    try {
+      const token = await firebaseUser.getIdToken();
+      // Use the MongoDB ID (otherUser.id) for the block endpoint
+      const res = await fetch(`/api/discovery/block/${otherUser.id}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        toast({
+          title: "User Blocked",
+          description: `You have blocked ${otherUser.name}.`,
+        });
+        // Optionally remove the chat or refresh
+        await refetchConversations();
+        setSelectedChat(null);
+      } else {
+        throw new Error("Failed to block user");
+      }
+    } catch (err) {
+      console.error("Failed to block user", err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to block user.",
+      });
+    }
+  };
+
   const getMessageBubbleClasses = (isMine: boolean, isPinned: boolean) => {
     const base = isMine
       ? "bg-primary/15 text-primary dark:text-primary-foreground border border-primary/20"
@@ -1237,6 +1309,7 @@ export default function Chats() {
                     <DropdownMenuItem
                       className="cursor-pointer"
                       onClick={() => {
+                        // TODO: Implement navigation to user profile when available
                         toast({ title: "Profile View", description: "This feature is coming soon!" });
                       }}
                     >
@@ -1245,9 +1318,7 @@ export default function Chats() {
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       className="cursor-pointer text-orange-500 focus:text-orange-500"
-                      onClick={() => {
-                        toast({ title: "Chat Cleared", description: "History cleared for this session." });
-                      }}
+                      onClick={handleClearChat}
                     >
                       <LogOut className="w-4 h-4 mr-2" />
                       Clear Chat
@@ -1255,9 +1326,7 @@ export default function Chats() {
                     <DropdownMenuSeparator className="bg-white/10" />
                     <DropdownMenuItem
                       className="cursor-pointer text-red-500 focus:text-red-500"
-                      onClick={() => {
-                        toast({ title: "User Blocked", description: "You will no longer receive messages from them." });
-                      }}
+                      onClick={handleBlockUser}
                     >
                       <Lock className="w-4 h-4 mr-2" />
                       Block User
