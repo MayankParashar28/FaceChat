@@ -207,4 +207,36 @@ router.get("/status/:targetId", authenticate, async (req, res) => {
     }
 });
 
+// Block a user
+router.post("/block/:targetId", authenticate, async (req, res) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Authentication required" });
+
+        const { targetId } = req.params;
+        const viewerUid = req.user.uid;
+        const viewer = req.user.dbUser || await mongoService.getUserByFirebaseUid(viewerUid);
+        if (!viewer) return res.status(404).json({ error: "Viewer not found" });
+
+        // Find the active connection
+        const connection = await Connection.findOne({
+            participants: { $all: [viewer._id, targetId] }
+        });
+
+        if (connection) {
+            // Update status to blocked
+            connection.status = 'blocked';
+            await connection.save();
+            return res.json({ success: true, message: "User blocked" });
+        }
+
+        // If no connection exists, we might want to create a blocked record or just ignore
+        // For now, let's assume blocking only works if you have a connection/match
+        return res.status(404).json({ error: "Connection not found" });
+
+    } catch (error) {
+        console.error("Error blocking user:", error);
+        res.status(500).json({ error: "Failed to block user" });
+    }
+});
+
 export default router;
