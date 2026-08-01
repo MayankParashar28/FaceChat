@@ -52,6 +52,7 @@ type Participant = {
 type ChatMessage = {
   id: string;
   socketId: string;
+  userId?: string;
   sender: string;
   avatar?: string;
   message: string;
@@ -154,7 +155,8 @@ const RemoteParticipantVideo = memo(forwardRef<HTMLDivElement, RemoteParticipant
           <SmartPulse
             sentiment={participant.emotion}
             engagement={participant.engagement || 0}
-            className="!w-16 !h-16"
+            userName={participant.name}
+            showLabel={true}
           />
         </div>
       )}
@@ -177,21 +179,36 @@ const RemoteParticipantVideo = memo(forwardRef<HTMLDivElement, RemoteParticipant
       )}
 
       {/* Overlay Info */}
-      <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center opacity-0 group-hover:opacity-100 transition-opacity">
-        <span className="text-white font-medium bg-black/60 px-2 py-1 rounded-md text-sm">{participant.name} {participant.isLocal && "(You)"}</span>
-        <div className="flex gap-2">
+      <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center z-30 pointer-events-none">
+        <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-white font-medium text-xs md:text-sm shadow-md">
+          <span>{participant.name} {participant.isLocal && "(You)"}</span>
+          {participant.emotion && (
+            <span className="text-[10px] text-primary bg-primary/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">
+              {participant.emotion}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-1.5 pointer-events-auto">
           {onPin && (
             <Button
               size="icon"
               variant="ghost"
-              className={`h-8 w-8 rounded-full ${isPinned ? 'bg-blue-500/20 text-blue-400' : 'bg-black/40 text-white hover:bg-white/20'}`}
+              className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? 'bg-blue-500/20 text-blue-400' : 'bg-black/50 text-white hover:bg-white/20'}`}
               onClick={() => onPin(participant.socketId)}
             >
-              {isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+              {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
             </Button>
           )}
-          {!participant.isAudioOn && <MicOff className="w-4 h-4 text-red-500" />}
-          {!participant.isVideoOn && <VideoOff className="w-4 h-4 text-red-500" />}
+          {!participant.isAudioOn && (
+            <div className="p-1.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+              <MicOff className="w-3.5 h-3.5" />
+            </div>
+          )}
+          {!participant.isVideoOn && (
+            <div className="p-1.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+              <VideoOff className="w-3.5 h-3.5" />
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
@@ -228,8 +245,32 @@ export default function VideoCall() {
     } as any);
     return map;
   });
+  const roomId = params?.roomId || "";
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [meetingId, setMeetingId] = useState<string | null>(null);
+
+  // Fetch initial chat history for the room via HTTP
+  useEffect(() => {
+    if (!roomId) return;
+    fetch(`/api/meetings/room/${encodeURIComponent(roomId)}/messages`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          const formatted: ChatMessage[] = data.map((m: any) => ({
+            id: m._id ? m._id.toString() : Date.now().toString(),
+            socketId: "",
+            userId: m.senderId?.firebaseUid || m.senderId?._id?.toString() || "",
+            sender: m.senderId?.name || "Participant",
+            avatar: m.senderId?.avatar,
+            message: m.content,
+            time: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isLocal: (m.senderId?.firebaseUid === user?.uid || m.senderId?._id === (user as any)?._id)
+          }));
+          setChatMessages(formatted);
+        }
+      })
+      .catch(err => console.error("Error fetching room chat history:", err));
+  }, [roomId, user]);
 
   // UI State
   const [isMicOn, setIsMicOn] = useState(settings.autoJoinAudio);
@@ -261,7 +302,6 @@ export default function VideoCall() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const roomId = params?.roomId || "";
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const peersRef = useRef<Map<string, PeerInstance>>(new Map());
@@ -452,16 +492,20 @@ export default function VideoCall() {
     // 2. Setup Connection Handlers
     const handleConnect = async () => {
       console.log("Socket connected:", newSocket.id);
+      if (!user?.uid || !roomId) return;
+
       try {
-        const token = await auth.currentUser?.getIdToken();
-        if (token) {
-          newSocket.emit("user:online", { firebaseToken: token });
-          console.log("Emitting call:join for room:", roomId);
-          newSocket.emit("call:join", { roomId, userId: user.uid });
+        let token = await auth.currentUser?.getIdToken();
+        if (!token) {
+          token = user.uid;
         }
+        newSocket.emit("user:online", { firebaseToken: token });
       } catch (e) {
         console.error("Error getting token:", e);
       }
+
+      console.log("Emitting call:join for room:", roomId, "userId:", user.uid);
+      newSocket.emit("call:join", { roomId, userId: user.uid });
     };
 
     newSocket.on("connect", handleConnect);
@@ -539,8 +583,18 @@ export default function VideoCall() {
     });
 
     // G: Chat & Media
+    newSocket.on("call:chat-history", (history: ChatMessage[]) => {
+      if (Array.isArray(history) && history.length > 0) {
+        setChatMessages(history.map(m => ({
+          ...m,
+          isLocal: m.userId === user?.uid
+        })));
+        setTimeout(() => chatScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')?.scrollTo({ top: 99999, behavior: 'smooth' }), 100);
+      }
+    });
+
     newSocket.on("call:chat-message", (msg: ChatMessage) => {
-      setChatMessages(prev => [...prev, { ...msg, isLocal: msg.socketId === newSocket.id }]);
+      setChatMessages(prev => [...prev, { ...msg, isLocal: msg.socketId === newSocket.id || msg.userId === user?.uid }]);
       setTimeout(() => chatScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')?.scrollTo({ top: 99999, behavior: 'smooth' }), 100);
     });
 
@@ -1078,9 +1132,9 @@ export default function VideoCall() {
 
   return (
     <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative font-sans">
-      {/* Smart Pulse */}
+      {/* Smart Pulse (Local User Mood Analysis) */}
       <div className="absolute top-24 left-4 z-50 hidden md:block">
-        <SmartPulse sentiment={sentiment} engagement={Math.max(20, volume)} />
+        <SmartPulse sentiment={sentiment} engagement={Math.max(20, volume)} userName={user?.displayName || user?.username || "You"} showLabel={true} />
       </div>
 
       {/* Header */}
@@ -1368,7 +1422,7 @@ export default function VideoCall() {
                   try {
                     if (meetingId) {
                       // 1. Attempt to end the meeting on the server
-                      const token = await auth.currentUser?.getIdToken();
+                      const token = (await auth.currentUser?.getIdToken()) || user?.uid;
                       if (token) {
                         await fetch(`/api/meetings/${meetingId}/status`, {
                           method: "PATCH",

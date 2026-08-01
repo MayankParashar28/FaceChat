@@ -6,7 +6,7 @@ export interface UserSettings {
   backgroundBlur: boolean;
   emotionDetection: boolean;
   videoQuality: "sd" | "hd" | "full-hd";
-  audioQuality: "high",
+  audioQuality: "standard" | "high" | "studio";
   audioDeviceId: string;
   videoDeviceId: string;
   audioOutputDeviceId: string;

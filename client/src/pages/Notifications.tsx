@@ -26,11 +26,31 @@ export default function Notifications() {
     const queryClient = useQueryClient();
     const [, setLocation] = useLocation();
 
+    const getToken = async (): Promise<string | null> => {
+        if (auth.currentUser) {
+            try {
+                const tok = await auth.currentUser.getIdToken();
+                if (tok) return tok;
+            } catch (e) {}
+        }
+        if (user?.uid) return user.uid;
+        if (typeof window !== "undefined") {
+            const rawMock = localStorage.getItem("facechat_mock_user");
+            if (rawMock) {
+                try {
+                    const parsed = JSON.parse(rawMock);
+                    if (parsed?.uid) return parsed.uid;
+                } catch (e) {}
+            }
+        }
+        return null;
+    };
+
     const { data: notifications = [], isLoading } = useQuery<Notification[]>({
         queryKey: ["notifications"],
         queryFn: async () => {
-            if (!auth.currentUser) return [];
-            const token = await auth.currentUser.getIdToken();
+            const token = await getToken();
+            if (!token) return [];
             const res = await fetch("/api/notifications", {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -43,10 +63,10 @@ export default function Notifications() {
 
     const markReadMutation = useMutation({
         mutationFn: async (id: string) => {
-            const token = await auth.currentUser?.getIdToken();
+            const token = await getToken();
             await fetch(`/api/notifications/${id}/read`, {
                 method: "PUT",
-                headers: { Authorization: `Bearer ${token}` }
+                headers: token ? { Authorization: `Bearer ${token}` } : {}
             });
         },
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] })
@@ -54,10 +74,10 @@ export default function Notifications() {
 
     const markAllReadMutation = useMutation({
         mutationFn: async () => {
-            const token = await auth.currentUser?.getIdToken();
+            const token = await getToken();
             await fetch(`/api/notifications/read-all`, {
                 method: "PUT",
-                headers: { Authorization: `Bearer ${token}` }
+                headers: token ? { Authorization: `Bearer ${token}` } : {}
             });
         },
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] })
@@ -65,10 +85,10 @@ export default function Notifications() {
 
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
-            const token = await auth.currentUser?.getIdToken();
+            const token = await getToken();
             await fetch(`/api/notifications/${id}`, {
                 method: "DELETE",
-                headers: { Authorization: `Bearer ${token}` }
+                headers: token ? { Authorization: `Bearer ${token}` } : {}
             });
         },
         onSuccess: () => {
