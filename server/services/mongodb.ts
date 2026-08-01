@@ -207,6 +207,44 @@ export class MongoDBService {
     }
   }
 
+  async getUserByEmail(email: string, includePassword = false): Promise<IUser | null> {
+    try {
+      const cleanEmail = email.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const query = User.findOne({
+        $or: [
+          { email: email.trim().toLowerCase() },
+          { email: { $regex: new RegExp(`^${cleanEmail}$`, 'i') } }
+        ]
+      });
+      if (includePassword) {
+        query.select('+password');
+      }
+      return await query.exec();
+    } catch (error) {
+      console.error('Error getting user by email:', error);
+      throw error;
+    }
+  }
+
+  async getUserByUsername(username: string, includePassword = false): Promise<IUser | null> {
+    try {
+      const cleanUsername = username.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const query = User.findOne({
+        $or: [
+          { username: username.trim().toLowerCase() },
+          { username: { $regex: new RegExp(`^${cleanUsername}$`, 'i') } }
+        ]
+      });
+      if (includePassword) {
+        query.select('+password');
+      }
+      return await query.exec();
+    } catch (error) {
+      console.error('Error getting user by username:', error);
+      throw error;
+    }
+  }
+
   async updateUser(userId: string, updateData: Partial<IUser>): Promise<IUser | null> {
     try {
       return await User.findByIdAndUpdate(userId, updateData, { new: true });
@@ -485,7 +523,8 @@ export class MongoDBService {
 
   // Chat operations
   async createChatMessage(messageData: {
-    meetingId: string;
+    meetingId?: string;
+    roomId?: string;
     senderId: string;
     content: string;
     messageType?: 'text' | 'image' | 'file' | 'system';
@@ -493,22 +532,34 @@ export class MongoDBService {
     try {
       const message = new ChatMessage(messageData);
       await message.save();
-      return await message.populate('senderId', 'name email avatar');
+      return await message.populate('senderId', 'name email avatar username firebaseUid');
     } catch (error) {
       console.error('Error creating chat message:', error);
       throw error;
     }
   }
 
-  async getMeetingMessages(meetingId: string, limit: number = 50): Promise<IChatMessage[]> {
+  async getMeetingMessages(meetingIdOrRoomId: string, limit: number = 100): Promise<IChatMessage[]> {
     try {
-      return await ChatMessage.find({ meetingId })
-        .populate('senderId', 'name email avatar')
-        .sort({ timestamp: -1 })
+      let query: any = {};
+      if (mongoose.Types.ObjectId.isValid(meetingIdOrRoomId)) {
+        query = { $or: [{ meetingId: meetingIdOrRoomId }, { roomId: meetingIdOrRoomId }] };
+      } else {
+        const meeting = await this.getMeetingByRoomId(meetingIdOrRoomId);
+        if (meeting) {
+          query = { $or: [{ meetingId: meeting._id }, { roomId: meetingIdOrRoomId }] };
+        } else {
+          query = { roomId: meetingIdOrRoomId };
+        }
+      }
+
+      return await ChatMessage.find(query)
+        .populate('senderId', 'name email avatar username firebaseUid')
+        .sort({ timestamp: 1 })
         .limit(limit);
     } catch (error) {
       console.error('Error getting meeting messages:', error);
-      throw error;
+      return [];
     }
   }
 
@@ -768,7 +819,7 @@ export class MongoDBService {
   }
 
   // Conversation operations
-  async getUserConversations(userId: string): Promise<any[]> {
+  async getUserConversations(userId: string, onlineUserIds?: Set<string>): Promise<any[]> {
     try {
       console.log("Getting conversations for MongoDB user ID:", userId);
 
@@ -777,57 +828,79 @@ export class MongoDBService {
         isDeleted: false
       })
         .populate('participants', 'username name email avatar firebaseUid')
-        .populate('lastMessage')
+        .populate({
+          path: 'lastMessage',
+          populate: {
+            path: 'senderId',
+            select: '_id username name'
+          }
+        })
         .populate('createdBy', 'username name')
         .sort({ updatedAt: -1 })
         .limit(50);
 
       console.log("Found raw conversations:", conversations.length);
+      const convIds = conversations.map(c => c._id);
 
-      // Transform to include last message details
-      const formattedConversations = await Promise.all(
-        conversations.map(async (conv) => {
-          const otherParticipants = conv.participants.filter(
-            (p: any) => p._id.toString() !== userId
-          );
-
-          const lastMessage = conv.lastMessage
-            ? await Message.findById(conv.lastMessage).populate('senderId', 'username name')
-            : null;
-
-          return {
-            id: conv._id.toString(),
-            name: conv.name,
-            isGroup: conv.isGroup,
-            participants: conv.participants.map((p: any) => ({
-              id: p._id.toString(),
-              firebaseUid: p.firebaseUid,
-              name: p.name,
-              username: p.username,
-              avatar: p.avatar,
-              online: false // This will be set by WebSocket
-            })),
-            lastMessage: lastMessage && typeof lastMessage.senderId !== 'string' && 'name' in lastMessage.senderId ? {
-              id: lastMessage._id.toString(),
-              conversationId: conv._id.toString(),
-              senderId: (lastMessage.senderId as any)._id.toString(),
-              content: lastMessage.content,
-              isPinned: lastMessage.isPinned,
-              createdAt: lastMessage.createdAt,
-              sender: {
-                id: (lastMessage.senderId as any)._id.toString(),
-                name: (lastMessage.senderId as any).name,
-                username: (lastMessage.senderId as any).username
+      // Single aggregate query to get unread counts for all conversations in one batch
+      let unreadMap = new Map<string, number>();
+      if (convIds.length > 0 && mongoose.Types.ObjectId.isValid(userId)) {
+        try {
+          const unreadCounts = await Message.aggregate([
+            {
+              $match: {
+                conversationId: { $in: convIds },
+                senderId: { $ne: new mongoose.Types.ObjectId(userId) },
+                isRead: false
               }
-            } : undefined,
-            unreadCount: await Message.countDocuments({
-              conversationId: conv._id,
-              senderId: { $ne: userId },
-              isRead: false
-            })
-          };
-        })
-      );
+            },
+            {
+              $group: {
+                _id: "$conversationId",
+                count: { $sum: 1 }
+              }
+            }
+          ]);
+          unreadCounts.forEach(u => unreadMap.set(u._id.toString(), u.count));
+        } catch (e) {}
+      }
+
+      // Format conversations synchronously in memory
+      const formattedConversations = conversations.map((conv) => {
+        const lastMessage: any = conv.lastMessage;
+        const convIdStr = conv._id.toString();
+        const hasValidSender = lastMessage && typeof lastMessage === 'object' && lastMessage.senderId;
+
+        return {
+          id: convIdStr,
+          name: conv.name,
+          isGroup: conv.isGroup,
+          participants: conv.participants.map((p: any) => ({
+            id: p._id.toString(),
+            firebaseUid: p.firebaseUid,
+            name: p.name,
+            username: p.username,
+            avatar: p.avatar,
+            online: onlineUserIds
+              ? (onlineUserIds.has(p._id.toString()) || (p.firebaseUid ? onlineUserIds.has(p.firebaseUid) : false))
+              : false
+          })),
+          lastMessage: hasValidSender ? {
+            id: lastMessage._id.toString(),
+            conversationId: convIdStr,
+            senderId: lastMessage.senderId._id ? lastMessage.senderId._id.toString() : lastMessage.senderId.toString(),
+            content: lastMessage.content,
+            isPinned: lastMessage.isPinned,
+            createdAt: lastMessage.createdAt,
+            sender: {
+              id: lastMessage.senderId._id ? lastMessage.senderId._id.toString() : lastMessage.senderId.toString(),
+              name: lastMessage.senderId.name || 'User',
+              username: lastMessage.senderId.username || 'user'
+            }
+          } : undefined,
+          unreadCount: unreadMap.get(convIdStr) || 0
+        };
+      });
 
       console.log("Formatted conversations:", formattedConversations.length);
       return formattedConversations;
@@ -949,17 +1022,23 @@ export class MongoDBService {
 
   async searchUsersByUsername(query: string, limit: number = 10): Promise<IUser[]> {
     try {
+      const cleanQuery = query.trim();
+      const regex = new RegExp(cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       const users = await User.find({
-        username: { $regex: query.toLowerCase(), $options: 'i' },
+        $or: [
+          { username: regex },
+          { name: regex },
+          { email: regex }
+        ],
         isDeleted: { $ne: true }
       })
-        .select('username name avatar email')
+        .select('username name avatar email firebaseUid')
         .limit(limit);
 
       return users;
     } catch (error) {
       console.error('Error searching users:', error);
-      throw error;
+      return [];
     }
   }
 }

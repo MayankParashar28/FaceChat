@@ -5,12 +5,20 @@ import { mongoService } from "../services/mongodb";
 
 const router = Router();
 
-// Create a new meeting
+// Validate meeting room by ID
 router.get("/validate/:roomId", async (req, res) => {
     try {
         const { roomId } = req.params;
-        const meeting = await mongoService.getMeetingByRoomId(roomId);
-        res.json({ exists: !!meeting, meeting });
+        const cleanRoomId = (roomId || "").trim();
+        const meeting = await mongoService.getMeetingByRoomId(cleanRoomId);
+
+        // A room is valid if it already exists in DB OR has a valid room code format (>= 3 chars)
+        const isValidFormat = cleanRoomId.length >= 3;
+        res.json({
+            exists: !!meeting || isValidFormat,
+            isExistingMeeting: !!meeting,
+            meeting
+        });
     } catch (error) {
         console.error("Error validating room:", error);
         res.status(500).json({ error: "Validation failed" });
@@ -138,6 +146,17 @@ router.get("/:id/messages", authenticate, async (req, res) => {
         res.json(messages);
     } catch (error) {
         console.error("Error fetching messages:", error);
+        res.status(500).json({ error: "Failed to fetch messages" });
+    }
+});
+
+// Get meeting messages by roomId
+router.get("/room/:roomId/messages", async (req, res) => {
+    try {
+        const messages = await mongoService.getMeetingMessages(req.params.roomId);
+        res.json(messages);
+    } catch (error) {
+        console.error("Error fetching room messages:", error);
         res.status(500).json({ error: "Failed to fetch messages" });
     }
 });

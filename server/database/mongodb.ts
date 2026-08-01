@@ -61,11 +61,20 @@ export async function testMongoConnection(): Promise<boolean> {
 
 export async function mongoHealthCheck() {
   const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-  const state = mongoose.connection.readyState;
+  let state = mongoose.connection.readyState;
+
+  if (state !== 1 && state !== 2) {
+    try {
+      await mongoose.connect(MONGODB_URI, options);
+      state = mongoose.connection.readyState;
+    } catch (err) {
+      // Reconnect failed, state remains disconnected
+    }
+  }
 
   return {
     status: state === 1 ? 'healthy' : 'unhealthy',
-    state: states[state],
+    state: states[state] || 'unknown',
     database: 'mongodb',
   };
 }

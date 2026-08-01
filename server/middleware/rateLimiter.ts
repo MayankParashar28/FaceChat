@@ -85,7 +85,7 @@ export function rateLimiter(options: RateLimitOptions) {
  */
 export const authRateLimiter = rateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per 15 minutes
+  max: 100, // 100 attempts per 15 minutes
   message: "Too many authentication attempts. Please try again later.",
   keyGenerator: (req) => {
     // Rate limit by IP only for auth endpoints

@@ -44,23 +44,35 @@ async function throwIfResNotOk(res: Response) {
  */
 async function getAuthHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const user = auth.currentUser;
-  if (!user) {
-    return {};
+  if (user) {
+    try {
+      const token = forceRefresh
+        ? await user.getIdToken(true)
+        : await user.getIdToken();
+      return {
+        Authorization: `Bearer ${token}`,
+      };
+    } catch (error) {
+      console.error("Failed to get auth token:", error);
+    }
   }
 
-  try {
-    // Force refresh if requested, otherwise get token (will auto-refresh if expired)
-    const token = forceRefresh
-      ? await user.getIdToken(true)
-      : await user.getIdToken();
-    return {
-      Authorization: `Bearer ${token}`,
-    };
-  } catch (error) {
-    console.error("Failed to get auth token:", error);
-    // If token refresh fails, user might need to re-authenticate
-    return {};
+  // Fallback to local user token in localStorage
+  if (typeof window !== "undefined") {
+    const rawMock = localStorage.getItem("facechat_mock_user");
+    if (rawMock) {
+      try {
+        const parsed = JSON.parse(rawMock);
+        if (parsed?.uid) {
+          return {
+            Authorization: `Bearer ${parsed.uid}`,
+          };
+        }
+      } catch (e) {}
+    }
   }
+
+  return {};
 }
 
 /**
