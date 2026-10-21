@@ -56,7 +56,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/invites", inviteRoutes);
 
   io.on("connection", (socket) => {
-    logger.info("Client connected:", socket.id);
+    logger.debug("Client connected:", socket.id);
 
     socket.on("user:online", async (data: { firebaseToken: string }) => {
       try {
@@ -466,21 +466,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       "message:pin",
       async ({ messageId, isPinned }: { messageId: string; isPinned: boolean }) => {
         try {
-          // For now, just emit the pin update without database persistence
+          // Persist the pin state so it survives reloads.
+          const updated = await Message.findByIdAndUpdate(messageId, { isPinned }, { new: true });
+          if (!updated) {
+            socket.emit("message:error", { error: "Message not found" });
+            return;
+          }
           io.emit("message:pinned", { messageId, isPinned });
         } catch (error) {
           logger.error("Error pinning message:", error);
+          socket.emit("message:error", { error: "Failed to pin message" });
         }
       }
     );
 
     // Video call signaling handlers
     socket.on("call:join", async ({ roomId, userId }: { roomId: string; userId: string }) => {
-      logger.info(`=== CALL:JOIN EVENT RECEIVED ===`);
-      logger.info(`   Socket ID: ${socket.id}`);
-      logger.info(`   User ID: ${userId}`);
-      logger.info(`   Room ID: ${roomId}`);
-      logger.info(`   Timestamp: ${new Date().toISOString()}`);
+      logger.debug(`=== CALL:JOIN EVENT RECEIVED ===`);
+      logger.debug(`   Socket ID: ${socket.id}`);
+      logger.debug(`   User ID: ${userId}`);
+      logger.debug(`   Room ID: ${roomId}`);
+      logger.debug(`   Timestamp: ${new Date().toISOString()}`);
 
       if (!roomId || !userId) {
         logger.error(`❌ Missing required fields: roomId=${roomId}, userId=${userId}`);
@@ -488,11 +494,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       socket.join(`call:${roomId}`);
-      logger.info(`   Socket joined room: call:${roomId}`);
+      logger.debug(`   Socket joined room: call:${roomId}`);
 
       // Check for duplicate user in the room
-      logger.info(`🔍 checking duplicate for room ${roomId}, User: ${userId}`);
-      logger.info(
+      logger.debug(`🔍 checking duplicate for room ${roomId}, User: ${userId}`);
+      logger.debug(
         `   Current roomParticipants:`,
         roomParticipants.has(roomId) ? Array.from(roomParticipants.get(roomId)!) : "Empty"
       );
@@ -502,7 +508,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const existingSocketId of existingSocketIds) {
           // Find userId for existing socket using robust map
           const existingUserId = socketUserMap.get(existingSocketId);
-          logger.info(`   Checking socket ${existingSocketId}: Maps to User ${existingUserId}`);
+          logger.debug(`   Checking socket ${existingSocketId}: Maps to User ${existingUserId}`);
 
           if (existingUserId === userId) {
             logger.warn(
@@ -536,7 +542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (dbUser) {
           userName = dbUser.name;
           userAvatar = dbUser.avatar;
-          logger.info(`Found user in DB: ${dbUser.name}, ID: ${dbUser._id}`);
+          logger.debug(`Found user in DB: ${dbUser.name}, ID: ${dbUser._id}`);
         } else {
           logger.warn(`User ${userId} not found in MongoDB database`);
         }
@@ -545,7 +551,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Auto-create meeting if this is the first user joining
-      logger.info(
+      logger.debug(
         `Meeting creation check - isFirstUser: ${isFirstUser}, dbUser exists: ${!!dbUser}, roomId: ${roomId}`
       );
 
@@ -559,20 +565,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
         } else {
           try {
-            logger.info(`🔍 Checking for existing meeting with roomId: ${roomId}`);
+            logger.debug(`🔍 Checking for existing meeting with roomId: ${roomId}`);
             // Check if meeting already exists for this room
             const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
-            logger.info(
+            logger.debug(
               `   Existing meeting check result: ${existingMeeting ? `Found (${existingMeeting._id})` : "Not found"}`
             );
 
             if (!existingMeeting) {
               // Create a new meeting
-              logger.info(`📝 Creating new meeting for room: ${roomId}`);
-              logger.info(`   Host ID: ${dbUser._id} (${typeof dbUser._id})`);
-              logger.info(`   Host ID string: ${dbUser._id.toString()}`);
-              logger.info(`   Participants: [${dbUser._id.toString()}]`);
-              logger.info(`   Room ID: ${roomId}`);
+              logger.debug(`📝 Creating new meeting for room: ${roomId}`);
+              logger.debug(`   Host ID: ${dbUser._id} (${typeof dbUser._id})`);
+              logger.debug(`   Host ID string: ${dbUser._id.toString()}`);
+              logger.debug(`   Participants: [${dbUser._id.toString()}]`);
+              logger.debug(`   Room ID: ${roomId}`);
 
               const meetingData = {
                 title: `Call with ${userName || "Participants"}`,
@@ -584,21 +590,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 status: "scheduled" as const, // Start as scheduled, active only when 2nd user joins
               };
 
-              logger.info(`   Meeting data prepared:`, meetingData);
+              logger.debug(`   Meeting data prepared:`, meetingData);
 
               const newMeeting = await mongoService.createMeeting(meetingData);
-              logger.info(`✅ Successfully created meeting: ${newMeeting._id} for room: ${roomId}`);
-              logger.info(`   Meeting saved with ID: ${newMeeting._id}`);
+              logger.debug(
+                `✅ Successfully created meeting: ${newMeeting._id} for room: ${roomId}`
+              );
+              logger.debug(`   Meeting saved with ID: ${newMeeting._id}`);
 
               // Verify it was actually saved
               const verifyMeeting = await mongoService.getMeetingByRoomId(roomId);
               if (verifyMeeting) {
-                logger.info(`✅ Verification: Meeting found in DB: ${verifyMeeting._id}`);
+                logger.debug(`✅ Verification: Meeting found in DB: ${verifyMeeting._id}`);
               } else {
                 logger.error(`❌ Verification FAILED: Meeting not found in DB after creation!`);
               }
             } else {
-              logger.info(
+              logger.debug(
                 `ℹ️ Meeting already exists for room: ${roomId}, ID: ${existingMeeting._id}`
               );
 
@@ -633,7 +641,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
                 // ACTIVATE if scheduled and now 2 people
                 else if (existingMeeting.status === "scheduled" && currentParticipantCount === 2) {
-                  logger.info(`🚀 Activating meeting (refresh case) ${roomId}`);
+                  logger.debug(`🚀 Activating meeting (refresh case) ${roomId}`);
                   const newStartTime = new Date();
                   await mongoService.updateMeeting(existingMeeting._id.toString(), {
                     status: "active",
@@ -715,7 +723,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
               // logic: if status is 'scheduled' and we now have 2 people, ACTIVATE
               else if (existingMeeting.status === "scheduled" && currentParticipantCount === 2) {
-                logger.info(`🚀 Activating scheduled meeting ${roomId} - 2nd participant joined`);
+                logger.debug(`🚀 Activating scheduled meeting ${roomId} - 2nd participant joined`);
                 const newStartTime = new Date();
                 await mongoService.updateMeeting(existingMeeting._id.toString(), {
                   status: "active",
@@ -817,7 +825,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     const handleUserLeave = async (roomId: string, socketId: string) => {
-      logger.info(`Handling user leave for room: ${roomId}, socket: ${socketId}`);
+      logger.debug(`Handling user leave for room: ${roomId}, socket: ${socketId}`);
 
       const wasLastUser = roomParticipants.has(roomId) && roomParticipants.get(roomId)!.size <= 1;
 
@@ -921,7 +929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 reactions: existingMeeting.analytics?.reactions,
               },
             });
-            logger.info(
+            logger.debug(
               `Marked meeting as ended for room: ${roomId}, duration: ${durationMinutes} minutes, participants: ${finalParticipantCount}`
             );
           }
@@ -954,7 +962,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
 
     socket.on("call:leave", async ({ roomId }: { roomId: string }) => {
-      logger.info(`User leaving call room: ${roomId}`);
+      logger.debug(`User leaving call room: ${roomId}`);
       socket.leave(`call:${roomId}`);
       await handleUserLeave(roomId, socket.id);
     });
@@ -1031,12 +1039,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!audioData || audioData.length < 1000) return;
 
           // Console log every chunk for debugging
-          logger.info(`🎤 Received audio chunk from ${userId} (${audioData.length} bytes)`);
+          logger.debug(`🎤 Received audio chunk from ${userId} (${audioData.length} bytes)`);
 
           const result = await transcriptionService.transcribe(audioData, "audio.webm");
 
           if (result.text && result.text.trim().length > 0) {
-            logger.info(`🎤 Transcription result (${roomId}): "${result.text}"`);
+            logger.debug(`🎤 Transcription result (${roomId}): "${result.text}"`);
 
             // Fetch user name for display
             let speakerName = "Speaker";
@@ -1080,7 +1088,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         emotion: string;
         percentage: number;
       }) => {
-        logger.info(
+        logger.debug(
           `[SERVER] call:emotion received from ${socket.id} for room ${roomId}: ${emotion}`
         );
 
@@ -1090,7 +1098,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           emotion,
           percentage,
         });
-        logger.info(`[SERVER] Broadcasted emotion to room call:${roomId}`);
+        logger.debug(`[SERVER] Broadcasted emotion to room call:${roomId}`);
 
         try {
           const meeting = await mongoService.getMeetingByRoomId(roomId);
@@ -1120,11 +1128,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       "call:chat-message",
       async ({ roomId, message, userId }: { roomId: string; message: string; userId: string }) => {
         try {
-          logger.info("=== SERVER: Received chat message ===");
-          logger.info("Room ID:", roomId);
-          logger.info("Message:", message);
-          logger.info("User ID:", userId);
-          logger.info("Socket ID:", socket.id);
+          logger.debug("=== SERVER: Received chat message ===");
+          logger.debug("Room ID:", roomId);
+          logger.debug("Message:", message);
+          logger.debug("User ID:", userId);
+          logger.debug("Socket ID:", socket.id);
 
           if (!roomId || !message || !userId) {
             logger.error("Missing required fields:", { roomId, message, userId });
@@ -1134,14 +1142,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Verify socket is in the room
           const roomName = `call:${roomId}`;
           const socketRooms = Array.from(socket.rooms);
-          logger.info("Socket rooms:", socketRooms);
-          logger.info("Target room name:", roomName);
-          logger.info("Is socket in room?", socketRooms.includes(roomName));
+          logger.debug("Socket rooms:", socketRooms);
+          logger.debug("Target room name:", roomName);
+          logger.debug("Is socket in room?", socketRooms.includes(roomName));
 
           if (!socketRooms.includes(roomName)) {
             logger.warn(`Socket ${socket.id} not in room ${roomName}, joining now`);
             socket.join(roomName);
-            logger.info("Socket joined room, new rooms:", Array.from(socket.rooms));
+            logger.debug("Socket joined room, new rooms:", Array.from(socket.rooms));
           }
 
           // Get user data for the sender
@@ -1167,13 +1175,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             time: new Date().toISOString(),
           };
 
-          logger.info("=== SERVER: Broadcasting chat message ===");
-          logger.info("Room name:", roomName);
-          logger.info("Message data:", JSON.stringify(messageData, null, 2));
-          logger.info("Socket rooms:", Array.from(socket.rooms));
+          logger.debug("=== SERVER: Broadcasting chat message ===");
+          logger.debug("Room name:", roomName);
+          logger.debug("Message data:", JSON.stringify(messageData, null, 2));
+          logger.debug("Socket rooms:", Array.from(socket.rooms));
 
           // Broadcast message to all participants in the room (including sender)
-          logger.info("Broadcasting to room:", roomName);
+          logger.debug("Broadcasting to room:", roomName);
           io.to(roomName).emit("call:chat-message", messageData);
 
           // Persist message to MongoDB Atlas
@@ -1191,13 +1199,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 senderId: dbUser._id.toString(),
                 content: message.trim(),
               });
-              logger.info(`✅ Saved chat message to DB for room: ${roomId}`);
+              logger.debug(`✅ Saved chat message to DB for room: ${roomId}`);
             }
           } catch (dbErr) {
             logger.error("Error persisting chat message to DB:", dbErr);
           }
 
-          logger.info("=== SERVER: Message broadcast complete ===");
+          logger.debug("=== SERVER: Message broadcast complete ===");
         } catch (error) {
           logger.error("Error handling chat message:", error);
         }
@@ -1218,7 +1226,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     );
 
     socket.on("disconnect", async () => {
-      logger.info("Client disconnected:", socket.id);
+      logger.debug("Client disconnected:", socket.id);
 
       // Remove from all call rooms
       for (const [roomId, participants] of Array.from(roomParticipants.entries())) {
