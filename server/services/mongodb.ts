@@ -1,6 +1,21 @@
-import { User, Meeting, ChatMessage, IUser, IMeeting, IChatMessage, Conversation, Message, IConversation, IMessage, ActivityLog, IActivityLog } from '../models';
-import mongoose, { Types } from 'mongoose';
-import { hashPassword, validatePasswordStrength } from '../utils/passwordHash';
+import { logger } from "../utils/logger";
+import {
+  User,
+  Meeting,
+  ChatMessage,
+  IUser,
+  IMeeting,
+  IChatMessage,
+  Conversation,
+  Message,
+  IConversation,
+  IMessage,
+  ActivityLog,
+  IActivityLog,
+  Connection,
+} from "../models";
+import mongoose, { Types } from "mongoose";
+import { hashPassword, validatePasswordStrength } from "../utils/passwordHash";
 
 export class MongoDBService {
   private buildDefaultAvatarUrl(seed: string): string {
@@ -23,7 +38,10 @@ export class MongoDBService {
     isEmailVerified?: boolean;
   }): Promise<IUser> {
     try {
-      console.log("Creating new user in MongoDB:", { ...userData, password: userData.password ? '***' : undefined });
+      logger.info("Creating new user in MongoDB:", {
+        ...userData,
+        password: userData.password ? "***" : undefined,
+      });
 
       // Hash password if provided
       let hashedPassword: string | undefined;
@@ -36,9 +54,10 @@ export class MongoDBService {
         hashedPassword = await hashPassword(userData.password);
       }
 
-      const avatarUrl = userData.avatar && userData.avatar.trim().length > 0
-        ? userData.avatar
-        : this.buildDefaultAvatarUrl(userData.username || userData.firebaseUid);
+      const avatarUrl =
+        userData.avatar && userData.avatar.trim().length > 0
+          ? userData.avatar
+          : this.buildDefaultAvatarUrl(userData.username || userData.firebaseUid);
 
       const userDataToSave = {
         ...userData,
@@ -49,14 +68,13 @@ export class MongoDBService {
 
       const user = new User(userDataToSave);
       await user.save();
-      console.log("User saved successfully:", { _id: user._id, username: user.username });
+      logger.info("User saved successfully:", { _id: user._id, username: user.username });
       return user;
     } catch (error) {
-      console.error('Error creating user:', error);
+      logger.error("Error creating user:", error);
       throw error;
     }
   }
-
 
   async logUserActivity(
     userId: string,
@@ -71,12 +89,12 @@ export class MongoDBService {
         action,
         metadata,
         ipAddress,
-        userAgent
+        userAgent,
       });
       await log.save();
       return log;
     } catch (error) {
-      console.error('Error logging user activity:', error);
+      logger.error("Error logging user activity:", error);
       // Don't throw logic errors for logging failure to avoid breaking main flows
       throw error;
     }
@@ -113,13 +131,16 @@ export class MongoDBService {
     onboarding?: any;
   }): Promise<IUser> {
     try {
-      console.log("createOrUpdateUser called with:", { ...userData, password: userData.password ? '***' : undefined });
+      logger.info("createOrUpdateUser called with:", {
+        ...userData,
+        password: userData.password ? "***" : undefined,
+      });
 
       // Try to find existing user first
-      let user = await this.getUserByFirebaseUid(userData.firebaseUid);
+      const user = await this.getUserByFirebaseUid(userData.firebaseUid);
 
       if (user) {
-        console.log("User exists, updating:", user._id);
+        logger.info("User exists, updating:", user._id);
         // Update existing user
         user.email = userData.email;
         user.name = userData.name;
@@ -166,25 +187,27 @@ export class MongoDBService {
         user.lastLogin = new Date();
 
         await user.save();
-        console.log("User updated successfully:", user._id);
+        logger.info("User updated successfully:", user._id);
 
         // Log activity
-        this.logUserActivity(user._id.toString(), 'user_login', { method: 'createOrUpdateUser' });
+        this.logUserActivity(user._id.toString(), "user_login", { method: "createOrUpdateUser" });
 
         return user;
       } else {
-        console.log("User does not exist, creating new user");
+        logger.info("User does not exist, creating new user");
         // Create new user
         const newUser = await this.createUser(userData);
-        console.log("New user created successfully:", newUser._id);
+        logger.info("New user created successfully:", newUser._id);
 
         // Log activity
-        this.logUserActivity(newUser._id.toString(), 'user_register', { method: 'createOrUpdateUser' });
+        this.logUserActivity(newUser._id.toString(), "user_register", {
+          method: "createOrUpdateUser",
+        });
 
         return newUser;
       }
     } catch (error) {
-      console.error('Error creating or updating user:', error);
+      logger.error("Error creating or updating user:", error);
       throw error;
     }
   }
@@ -193,7 +216,7 @@ export class MongoDBService {
     try {
       return await User.findOne({ firebaseUid });
     } catch (error) {
-      console.error('Error getting user by Firebase UID:', error);
+      logger.error("Error getting user by Firebase UID:", error);
       throw error;
     }
   }
@@ -202,7 +225,7 @@ export class MongoDBService {
     try {
       return await User.findById(userId);
     } catch (error) {
-      console.error('Error getting user by ID:', error);
+      logger.error("Error getting user by ID:", error);
       throw error;
     }
   }
@@ -211,7 +234,7 @@ export class MongoDBService {
     try {
       return await User.findByIdAndUpdate(userId, updateData, { new: true });
     } catch (error) {
-      console.error('Error updating user:', error);
+      logger.error("Error updating user:", error);
       throw error;
     }
   }
@@ -221,7 +244,7 @@ export class MongoDBService {
       const user = await User.findOne({ username: username.toLowerCase() });
       return !!user;
     } catch (error) {
-      console.error('Error checking username:', error);
+      logger.error("Error checking username:", error);
       return false;
     }
   }
@@ -229,12 +252,12 @@ export class MongoDBService {
   async generateUsernameSuggestions(baseUsername: string): Promise<string[]> {
     try {
       const suggestions: string[] = [];
-      const cleanUsername = baseUsername.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      const cleanUsername = baseUsername.toLowerCase().replace(/[^a-z0-9_]/g, "");
 
       // Ensure minimum length
       let username = cleanUsername;
       if (username.length < 3) {
-        username = username + 'user';
+        username = username + "user";
       }
 
       // Ensure maximum length
@@ -266,7 +289,7 @@ export class MongoDBService {
 
       return suggestions;
     } catch (error) {
-      console.error('Error generating username suggestions:', error);
+      logger.error("Error generating username suggestions:", error);
       return [];
     }
   }
@@ -279,31 +302,32 @@ export class MongoDBService {
     participants: string[];
     startTime: Date;
     roomId: string;
-    meetingType?: 'video' | 'audio' | 'screen-share';
+    meetingType?: "video" | "audio" | "screen-share";
     settings?: any;
-    status?: 'scheduled' | 'active' | 'ended';
+    status?: "scheduled" | "active" | "ended";
   }): Promise<IMeeting> {
     try {
       // Check MongoDB connection
       if (mongoose.connection.readyState !== 1) {
-        throw new Error('MongoDB is not connected. ReadyState: ' + mongoose.connection.readyState);
+        throw new Error("MongoDB is not connected. ReadyState: " + mongoose.connection.readyState);
       }
 
-      console.log('Creating meeting with data:', {
+      logger.info("Creating meeting with data:", {
         ...meetingData,
         hostId: meetingData.hostId,
         participants: meetingData.participants,
         startTime: meetingData.startTime,
-        mongooseReadyState: mongoose.connection.readyState
+        mongooseReadyState: mongoose.connection.readyState,
       });
 
       // Convert hostId and participants to ObjectIds if they're strings
-      const hostIdObj = typeof meetingData.hostId === 'string'
-        ? new Types.ObjectId(meetingData.hostId)
-        : meetingData.hostId;
+      const hostIdObj =
+        typeof meetingData.hostId === "string"
+          ? new Types.ObjectId(meetingData.hostId)
+          : meetingData.hostId;
 
-      const participantsObj = meetingData.participants.map(p =>
-        typeof p === 'string' ? new Types.ObjectId(p) : p
+      const participantsObj = meetingData.participants.map((p) =>
+        typeof p === "string" ? new Types.ObjectId(p) : p
       );
 
       // Validate ObjectIds
@@ -312,7 +336,9 @@ export class MongoDBService {
       }
       participantsObj.forEach((p, idx) => {
         if (!Types.ObjectId.isValid(p.toString())) {
-          throw new Error(`Invalid participant ID at index ${idx}: ${meetingData.participants[idx]}`);
+          throw new Error(
+            `Invalid participant ID at index ${idx}: ${meetingData.participants[idx]}`
+          );
         }
       });
 
@@ -324,23 +350,23 @@ export class MongoDBService {
         participants: participantsObj,
         startTime: meetingData.startTime,
         roomId: meetingData.roomId,
-        meetingType: meetingData.meetingType || 'video',
-        status: meetingData.status || 'scheduled', // Default to scheduled, not active
+        meetingType: meetingData.meetingType || "video",
+        status: meetingData.status || "scheduled", // Default to scheduled, not active
         // Explicitly set settings (schema has defaults, but let's be explicit)
         settings: meetingData.settings || {
           allowScreenShare: true,
           allowChat: true,
           allowRecording: false,
-          maxParticipants: 6
+          maxParticipants: 6,
         },
         // Explicitly set analytics with defaults (schema has defaults, but let's be explicit)
         analytics: {
           totalDuration: 0,
           participantCount: participantsObj.length,
           engagementScore: 0,
-          emotionData: []
+          emotionData: [],
         },
-        isDeleted: false
+        isDeleted: false,
       };
 
       // Add optional fields only if provided
@@ -348,7 +374,7 @@ export class MongoDBService {
         meetingDataToSave.description = meetingData.description;
       }
 
-      console.log('Creating Meeting instance with data:', {
+      logger.info("Creating Meeting instance with data:", {
         title: meetingDataToSave.title,
         hostId: meetingDataToSave.hostId.toString(),
         participants: meetingDataToSave.participants.map((p: any) => p.toString()),
@@ -356,7 +382,7 @@ export class MongoDBService {
         status: meetingDataToSave.status,
         meetingType: meetingDataToSave.meetingType,
         hasSettings: !!meetingDataToSave.settings,
-        hasAnalytics: !!meetingDataToSave.analytics
+        hasAnalytics: !!meetingDataToSave.analytics,
       });
 
       const meeting = new Meeting(meetingDataToSave);
@@ -364,33 +390,33 @@ export class MongoDBService {
       // Validate before saving
       const validationError = meeting.validateSync();
       if (validationError) {
-        console.error('❌ Meeting validation error:', validationError);
+        logger.error("❌ Meeting validation error:", validationError);
         throw validationError;
       }
 
-      console.log('Attempting to save meeting to MongoDB...');
+      logger.info("Attempting to save meeting to MongoDB...");
       await meeting.save();
-      console.log('✅ Meeting saved successfully:', meeting._id);
-      console.log('   Meeting details:', {
+      logger.info("✅ Meeting saved successfully:", meeting._id);
+      logger.info("   Meeting details:", {
         _id: meeting._id,
         roomId: meeting.roomId,
         hostId: meeting.hostId,
         participants: meeting.participants,
-        status: meeting.status
+        status: meeting.status,
       });
 
       return meeting;
     } catch (error: any) {
-      console.error('❌ Error creating meeting:', error);
-      console.error('Error details:', {
+      logger.error("❌ Error creating meeting:", error);
+      logger.error("Error details:", {
         message: error.message,
         code: error.code,
         name: error.name,
         meetingData: {
           ...meetingData,
           hostId: meetingData.hostId,
-          participants: meetingData.participants
-        }
+          participants: meetingData.participants,
+        },
       });
       throw error;
     }
@@ -399,10 +425,10 @@ export class MongoDBService {
   async getMeetingById(meetingId: string): Promise<IMeeting | null> {
     try {
       return await Meeting.findById(meetingId)
-        .populate('hostId', 'name email avatar')
-        .populate('participants', 'name email avatar');
+        .populate("hostId", "name email avatar")
+        .populate("participants", "name email avatar");
     } catch (error) {
-      console.error('Error getting meeting by ID:', error);
+      logger.error("Error getting meeting by ID:", error);
       throw error;
     }
   }
@@ -410,10 +436,10 @@ export class MongoDBService {
   async getMeetingByRoomId(roomId: string): Promise<IMeeting | null> {
     try {
       return await Meeting.findOne({ roomId })
-        .populate('hostId', 'name email avatar')
-        .populate('participants', 'name email avatar');
+        .populate("hostId", "name email avatar")
+        .populate("participants", "name email avatar");
     } catch (error) {
-      console.error('Error getting meeting by room ID:', error);
+      logger.error("Error getting meeting by room ID:", error);
       throw error;
     }
   }
@@ -421,29 +447,29 @@ export class MongoDBService {
   async getUserMeetings(userId: string): Promise<IMeeting[]> {
     try {
       return await Meeting.find({
-        $or: [
-          { hostId: userId },
-          { participants: userId }
-        ]
+        $or: [{ hostId: userId }, { participants: userId }],
       })
-        .populate('hostId', 'name email avatar')
-        .populate('participants', 'name email avatar')
+        .populate("hostId", "name email avatar")
+        .populate("participants", "name email avatar")
         .sort({ startTime: -1 });
     } catch (error) {
-      console.error('Error getting user meetings:', error);
+      logger.error("Error getting user meetings:", error);
       throw error;
     }
   }
 
-  async updateMeetingStatus(meetingId: string, status: 'scheduled' | 'active' | 'ended'): Promise<IMeeting | null> {
+  async updateMeetingStatus(
+    meetingId: string,
+    status: "scheduled" | "active" | "ended"
+  ): Promise<IMeeting | null> {
     try {
       const updateData: any = { status };
-      if (status === 'ended') {
+      if (status === "ended") {
         updateData.endTime = new Date();
       }
       return await Meeting.findByIdAndUpdate(meetingId, updateData, { new: true });
     } catch (error) {
-      console.error('Error updating meeting status:', error);
+      logger.error("Error updating meeting status:", error);
       throw error;
     }
   }
@@ -452,7 +478,7 @@ export class MongoDBService {
     try {
       return await Meeting.findByIdAndUpdate(meetingId, updateData, { new: true });
     } catch (error) {
-      console.error('Error updating meeting:', error);
+      logger.error("Error updating meeting:", error);
       throw error;
     }
   }
@@ -465,7 +491,7 @@ export class MongoDBService {
         { new: true }
       );
     } catch (error) {
-      console.error('Error adding participant to meeting:', error);
+      logger.error("Error adding participant to meeting:", error);
       throw error;
     }
   }
@@ -478,7 +504,7 @@ export class MongoDBService {
         { new: true }
       );
     } catch (error) {
-      console.error('Error removing participant from meeting:', error);
+      logger.error("Error removing participant from meeting:", error);
       throw error;
     }
   }
@@ -488,14 +514,14 @@ export class MongoDBService {
     meetingId: string;
     senderId: string;
     content: string;
-    messageType?: 'text' | 'image' | 'file' | 'system';
+    messageType?: "text" | "image" | "file" | "system";
   }): Promise<IChatMessage> {
     try {
       const message = new ChatMessage(messageData);
       await message.save();
-      return await message.populate('senderId', 'name email avatar');
+      return await message.populate("senderId", "name email avatar");
     } catch (error) {
-      console.error('Error creating chat message:', error);
+      logger.error("Error creating chat message:", error);
       throw error;
     }
   }
@@ -503,29 +529,29 @@ export class MongoDBService {
   async getMeetingMessages(meetingId: string, limit: number = 50): Promise<IChatMessage[]> {
     try {
       return await ChatMessage.find({ meetingId })
-        .populate('senderId', 'name email avatar')
+        .populate("senderId", "name email avatar")
         .sort({ timestamp: -1 })
         .limit(limit);
     } catch (error) {
-      console.error('Error getting meeting messages:', error);
+      logger.error("Error getting meeting messages:", error);
       throw error;
     }
   }
 
   async pinMessage(messageId: string, isPinned: boolean): Promise<IChatMessage | null> {
     try {
-      return await ChatMessage.findByIdAndUpdate(
-        messageId,
-        { isPinned },
-        { new: true }
-      );
+      return await ChatMessage.findByIdAndUpdate(messageId, { isPinned }, { new: true });
     } catch (error) {
-      console.error('Error pinning message:', error);
+      logger.error("Error pinning message:", error);
       throw error;
     }
   }
 
-  async addReactionToMessage(messageId: string, userId: string, emoji: string): Promise<IChatMessage | null> {
+  async addReactionToMessage(
+    messageId: string,
+    userId: string,
+    emoji: string
+  ): Promise<IChatMessage | null> {
     try {
       return await ChatMessage.findByIdAndUpdate(
         messageId,
@@ -534,25 +560,28 @@ export class MongoDBService {
             reactions: {
               userId,
               emoji,
-              timestamp: new Date()
-            }
-          }
+              timestamp: new Date(),
+            },
+          },
         },
         { new: true }
       );
     } catch (error) {
-      console.error('Error adding reaction to message:', error);
+      logger.error("Error adding reaction to message:", error);
       throw error;
     }
   }
 
   // Analytics operations
-  async updateMeetingAnalytics(meetingId: string, analyticsData: {
-    totalDuration?: number;
-    participantCount?: number;
-    engagementScore?: number;
-    emotionData?: any[];
-  }): Promise<IMeeting | null> {
+  async updateMeetingAnalytics(
+    meetingId: string,
+    analyticsData: {
+      totalDuration?: number;
+      participantCount?: number;
+      engagementScore?: number;
+      emotionData?: any[];
+    }
+  ): Promise<IMeeting | null> {
     try {
       return await Meeting.findByIdAndUpdate(
         meetingId,
@@ -560,7 +589,7 @@ export class MongoDBService {
         { new: true }
       );
     } catch (error) {
-      console.error('Error updating meeting analytics:', error);
+      logger.error("Error updating meeting analytics:", error);
       throw error;
     }
   }
@@ -576,8 +605,8 @@ export class MongoDBService {
         {
           $match: {
             $or: [{ hostId: oid }, { participants: oid }],
-            status: 'ended'
-          }
+            status: "ended",
+          },
         },
         {
           $addFields: {
@@ -586,105 +615,105 @@ export class MongoDBService {
                 if: {
                   $and: [
                     { $gt: ["$analytics.totalDuration", 0] },
-                    { $ne: ["$analytics.totalDuration", null] }
-                  ]
+                    { $ne: ["$analytics.totalDuration", null] },
+                  ],
                 },
                 then: "$analytics.totalDuration",
                 else: {
                   $divide: [
                     { $subtract: [{ $ifNull: ["$endTime", new Date()] }, "$startTime"] },
-                    1000 * 60 // Convert ms to minutes
-                  ]
-                }
-              }
-            }
-          }
+                    1000 * 60, // Convert ms to minutes
+                  ],
+                },
+              },
+            },
+          },
         },
         {
           $facet: {
             // Total stats
-            "totals": [
+            totals: [
               {
                 $group: {
                   _id: null,
                   totalCalls: { $sum: 1 },
                   totalDuration: { $sum: "$calculatedDuration" },
-                  avgEngagement: { $avg: "$analytics.engagementScore" }
-                }
-              }
+                  avgEngagement: { $avg: "$analytics.engagementScore" },
+                },
+              },
             ],
             // Unique participants
-            "participants": [
+            participants: [
               { $unwind: "$participants" },
               { $match: { participants: { $ne: oid } } }, // Exclude self
               { $group: { _id: "$participants" } },
-              { $count: "count" }
+              { $count: "count" },
             ],
             // Weekly activity (Last 7 days)
-            "weeklyActivity": [
+            weeklyActivity: [
               {
                 $match: {
-                  startTime: { $gte: oneWeekAgo }
-                }
+                  startTime: { $gte: oneWeekAgo },
+                },
               },
               {
                 $project: {
                   dayOfWeek: { $dayOfWeek: "$startTime" }, // 1=Sun, 2=Mon...
-                  duration: "$calculatedDuration"
-                }
+                  duration: "$calculatedDuration",
+                },
               },
               {
                 $group: {
                   _id: "$dayOfWeek",
                   calls: { $sum: 1 },
-                  duration: { $sum: "$duration" }
-                }
-              }
+                  duration: { $sum: "$duration" },
+                },
+              },
             ],
             // Stats from last month for comparison
-            "lastMonthTotals": [
+            lastMonthTotals: [
               {
                 $match: {
-                  startTime: { $gte: oneMonthAgo, $lt: now }
-                }
+                  startTime: { $gte: oneMonthAgo, $lt: now },
+                },
               },
               {
                 $group: {
                   _id: null,
                   totalCalls: { $sum: 1 },
                   totalDuration: { $sum: "$calculatedDuration" },
-                }
-              }
+                },
+              },
             ],
             // Emotion aggregation
-            "emotions": [
+            emotions: [
               { $unwind: "$analytics.emotionData" },
               {
                 $group: {
                   _id: "$analytics.emotionData.emotion",
-                  count: { $sum: { $ifNull: ["$analytics.emotionData.count", 1] } }
-                }
-              }
+                  count: { $sum: { $ifNull: ["$analytics.emotionData.count", 1] } },
+                },
+              },
             ],
             // Reactions aggregation
-            "reactions": [
+            reactions: [
               {
                 $project: {
-                  reactionsArr: { $objectToArray: { $ifNull: ["$analytics.reactions", {}] } }
-                }
+                  reactionsArr: { $objectToArray: { $ifNull: ["$analytics.reactions", {}] } },
+                },
               },
               { $unwind: "$reactionsArr" },
               {
                 $group: {
                   _id: "$reactionsArr.k",
-                  count: { $sum: "$reactionsArr.v" }
-                }
+                  count: { $sum: "$reactionsArr.v" },
+                },
               },
               { $sort: { count: -1 } },
-              { $limit: 10 }
-            ]
-          }
-        }
+              { $limit: 10 },
+            ],
+          },
+        },
       ];
 
       const results = await Meeting.aggregate(pipeline as any);
@@ -696,11 +725,14 @@ export class MongoDBService {
         // Mongo dayOfWeek: 1=Sun, 7=Sat. Index 0=Sun.
         // So day index directly maps to Mongo dayOfWeek - 1? No.
         // Mongo: Sun=1. Map Index: 0. So MongoID = Index + 1.
-        const dayStats = data.weeklyActivity.find((d: any) => d._id === (index + 1)) || { calls: 0, duration: 0 };
+        const dayStats = data.weeklyActivity.find((d: any) => d._id === index + 1) || {
+          calls: 0,
+          duration: 0,
+        };
         return {
           name: day,
           calls: dayStats.calls,
-          duration: dayStats.duration
+          duration: dayStats.duration,
         };
       });
 
@@ -712,7 +744,7 @@ export class MongoDBService {
       const totalEmotions = data.emotions.reduce((acc: number, curr: any) => acc + curr.count, 0);
       const emotionData = data.emotions.map((e: any) => ({
         name: e._id || "Unknown",
-        value: totalEmotions > 0 ? Math.round((e.count / totalEmotions) * 100) : 0
+        value: totalEmotions > 0 ? Math.round((e.count / totalEmotions) * 100) : 0,
       }));
 
       // Calculate trends (naive)
@@ -721,7 +753,7 @@ export class MongoDBService {
       // Format reactions
       const topReactions = (data.reactions || []).map((r: any) => ({
         emoji: r._id,
-        count: r.count
+        count: r.count,
       }));
 
       return {
@@ -730,24 +762,29 @@ export class MongoDBService {
         uniqueParticipants: data.participants[0]?.count || 0,
         avgSentiment: "Positive", // Placeholder until sentiment analysis is better
         activityData: activityDataMonFirst,
-        emotionData: emotionData.length > 0 ? emotionData : [
-          { name: "Happy", value: 30 },
-          { name: "Neutral", value: 50 },
-          { name: "Surprised", value: 20 }
-        ],
-        topReactions
+        emotionData:
+          emotionData.length > 0
+            ? emotionData
+            : [
+                { name: "Happy", value: 30 },
+                { name: "Neutral", value: 50 },
+                { name: "Surprised", value: 20 },
+              ],
+        topReactions,
       };
-
     } catch (error) {
-      console.error('Error calculating analytics:', error);
+      logger.error("Error calculating analytics:", error);
       throw error;
     }
   }
 
-  async addRecordingToMeeting(meetingId: string, recordingData: {
-    url: string;
-    duration: number;
-  }): Promise<IMeeting | null> {
+  async addRecordingToMeeting(
+    meetingId: string,
+    recordingData: {
+      url: string;
+      duration: number;
+    }
+  ): Promise<IMeeting | null> {
     try {
       return await Meeting.findByIdAndUpdate(
         meetingId,
@@ -755,14 +792,14 @@ export class MongoDBService {
           $push: {
             recordings: {
               ...recordingData,
-              createdAt: new Date()
-            }
-          }
+              createdAt: new Date(),
+            },
+          },
         },
         { new: true }
       );
     } catch (error) {
-      console.error('Error adding recording to meeting:', error);
+      logger.error("Error adding recording to meeting:", error);
       throw error;
     }
   }
@@ -770,19 +807,19 @@ export class MongoDBService {
   // Conversation operations
   async getUserConversations(userId: string): Promise<any[]> {
     try {
-      console.log("Getting conversations for MongoDB user ID:", userId);
+      logger.info("Getting conversations for MongoDB user ID:", userId);
 
       const conversations = await Conversation.find({
         participants: userId,
-        isDeleted: false
+        isDeleted: false,
       })
-        .populate('participants', 'username name email avatar firebaseUid')
-        .populate('lastMessage')
-        .populate('createdBy', 'username name')
+        .populate("participants", "username name email avatar firebaseUid")
+        .populate("lastMessage")
+        .populate("createdBy", "username name")
         .sort({ updatedAt: -1 })
         .limit(50);
 
-      console.log("Found raw conversations:", conversations.length);
+      logger.info("Found raw conversations:", conversations.length);
 
       // Transform to include last message details
       const formattedConversations = await Promise.all(
@@ -792,7 +829,7 @@ export class MongoDBService {
           );
 
           const lastMessage = conv.lastMessage
-            ? await Message.findById(conv.lastMessage).populate('senderId', 'username name')
+            ? await Message.findById(conv.lastMessage).populate("senderId", "username name")
             : null;
 
           return {
@@ -805,61 +842,75 @@ export class MongoDBService {
               name: p.name,
               username: p.username,
               avatar: p.avatar,
-              online: false // This will be set by WebSocket
+              online: false, // This will be set by WebSocket
             })),
-            lastMessage: lastMessage && typeof lastMessage.senderId !== 'string' && 'name' in lastMessage.senderId ? {
-              id: lastMessage._id.toString(),
-              conversationId: conv._id.toString(),
-              senderId: (lastMessage.senderId as any)._id.toString(),
-              content: lastMessage.content,
-              isPinned: lastMessage.isPinned,
-              createdAt: lastMessage.createdAt,
-              sender: {
-                id: (lastMessage.senderId as any)._id.toString(),
-                name: (lastMessage.senderId as any).name,
-                username: (lastMessage.senderId as any).username
-              }
-            } : undefined,
+            lastMessage:
+              lastMessage &&
+              typeof lastMessage.senderId !== "string" &&
+              "name" in lastMessage.senderId
+                ? {
+                    id: lastMessage._id.toString(),
+                    conversationId: conv._id.toString(),
+                    senderId: (lastMessage.senderId as any)._id.toString(),
+                    content: lastMessage.content,
+                    isPinned: lastMessage.isPinned,
+                    createdAt: lastMessage.createdAt,
+                    sender: {
+                      id: (lastMessage.senderId as any)._id.toString(),
+                      name: (lastMessage.senderId as any).name,
+                      username: (lastMessage.senderId as any).username,
+                    },
+                  }
+                : undefined,
             unreadCount: await Message.countDocuments({
               conversationId: conv._id,
               senderId: { $ne: userId },
-              isRead: false
-            })
+              isRead: false,
+            }),
           };
         })
       );
 
-      console.log("Formatted conversations:", formattedConversations.length);
+      logger.info("Formatted conversations:", formattedConversations.length);
       return formattedConversations;
     } catch (error) {
-      console.error('Error getting user conversations:', error);
+      logger.error("Error getting user conversations:", error);
       throw error;
     }
   }
 
-  async createConversation(participants: string[], createdBy: string, name?: string): Promise<IConversation> {
+  async createConversation(
+    participants: string[],
+    createdBy: string,
+    name?: string
+  ): Promise<IConversation> {
     try {
       // Convert string IDs to ObjectId instances
-      const participantObjectIds = participants.map(p => new mongoose.Types.ObjectId(p));
+      const participantObjectIds = participants.map((p) => new mongoose.Types.ObjectId(p));
       const createdByObjectId = new mongoose.Types.ObjectId(createdBy);
 
       const conversation = new Conversation({
         participants: participantObjectIds,
         createdBy: createdByObjectId,
         name,
-        isGroup: participants.length > 2
+        isGroup: participants.length > 2,
       });
       await conversation.save();
       return conversation;
     } catch (error) {
-      console.error('Error creating conversation:', error);
+      logger.error("Error creating conversation:", error);
       throw error;
     }
   }
 
-  async getConversationMessages(conversationId: string, viewerId?: string, limit: number = 50, beforeDate?: Date): Promise<any[]> {
+  async getConversationMessages(
+    conversationId: string,
+    viewerId?: string,
+    limit: number = 50,
+    beforeDate?: Date
+  ): Promise<any[]> {
     try {
-      console.log("Getting messages for conversation:", conversationId, "beforeDate:", beforeDate);
+      logger.info("Getting messages for conversation:", conversationId, "beforeDate:", beforeDate);
 
       const query: any = { conversationId };
 
@@ -869,24 +920,28 @@ export class MongoDBService {
       }
 
       const messages = await Message.find(query)
-        .populate('senderId', 'username name avatar')
+        .populate("senderId", "username name avatar")
         .sort({ createdAt: -1 })
         .limit(limit);
 
-      console.log("Found messages:", messages.length);
+      logger.info("Found messages:", messages.length);
 
       if (!messages || messages.length === 0) {
-        console.log("No messages found, returning empty array");
+        logger.info("No messages found, returning empty array");
         return [];
       }
 
-      const formattedMessages = messages.reverse().map(msg => {
-        const senderId = typeof msg.senderId === 'string' ? msg.senderId : (msg.senderId as any)._id.toString();
-        const sender = typeof msg.senderId === 'string' || !('name' in msg.senderId) ? null : {
-          id: (msg.senderId as any)._id.toString(),
-          name: (msg.senderId as any).name,
-          username: (msg.senderId as any).username
-        };
+      const formattedMessages = messages.reverse().map((msg) => {
+        const senderId =
+          typeof msg.senderId === "string" ? msg.senderId : (msg.senderId as any)._id.toString();
+        const sender =
+          typeof msg.senderId === "string" || !("name" in msg.senderId)
+            ? null
+            : {
+                id: (msg.senderId as any)._id.toString(),
+                name: (msg.senderId as any).name,
+                username: (msg.senderId as any).username,
+              };
 
         // Determine status: only show status for messages sent by the viewer
         let status: "sent" | "delivered" | "seen" | undefined;
@@ -905,15 +960,15 @@ export class MongoDBService {
           content: msg.content,
           isPinned: msg.isPinned,
           createdAt: msg.createdAt,
-          sender: sender || { id: senderId, name: 'Unknown', username: 'unknown' },
-          status
+          sender: sender || { id: senderId, name: "Unknown", username: "unknown" },
+          status,
         };
       });
 
-      console.log("Formatted messages:", formattedMessages.length);
+      logger.info("Formatted messages:", formattedMessages.length);
       return formattedMessages;
     } catch (error) {
-      console.error('Error getting conversation messages:', error);
+      logger.error("Error getting conversation messages:", error);
       // Return empty array instead of throwing to prevent client errors
       return [];
     }
@@ -923,42 +978,62 @@ export class MongoDBService {
     conversationId: string;
     senderId: string;
     content: string;
-    messageType?: 'text' | 'image' | 'file' | 'system';
+    messageType?: "text" | "image" | "file" | "system";
   }): Promise<IMessage> {
     try {
       const message = new Message({
         conversationId: new mongoose.Types.ObjectId(messageData.conversationId),
         senderId: new mongoose.Types.ObjectId(messageData.senderId),
         content: messageData.content,
-        messageType: messageData.messageType
+        messageType: messageData.messageType,
       });
       await message.save();
 
       // Update conversation's last message
       await Conversation.findByIdAndUpdate(messageData.conversationId, {
         lastMessage: message._id,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
 
       return message;
     } catch (error) {
-      console.error('Error creating message:', error);
+      logger.error("Error creating message:", error);
       throw error;
+    }
+  }
+
+  /**
+   * FaceLink gate: returns true only when the two users have an ACTIVE mutual
+   * connection. A `blocked` connection (or no connection at all) returns false,
+   * so blocking a user also stops messaging. Accepts MongoDB user ids.
+   */
+  async areConnected(userIdA: string, userIdB: string): Promise<boolean> {
+    try {
+      const connection = await Connection.findOne({
+        participants: {
+          $all: [new mongoose.Types.ObjectId(userIdA), new mongoose.Types.ObjectId(userIdB)],
+        },
+        status: "active",
+      });
+      return !!connection;
+    } catch (error) {
+      logger.error("Error checking connection status:", error);
+      return false;
     }
   }
 
   async searchUsersByUsername(query: string, limit: number = 10): Promise<IUser[]> {
     try {
       const users = await User.find({
-        username: { $regex: query.toLowerCase(), $options: 'i' },
-        isDeleted: { $ne: true }
+        username: { $regex: query.toLowerCase(), $options: "i" },
+        isDeleted: { $ne: true },
       })
-        .select('username name avatar email')
+        .select("username name avatar email")
         .limit(limit);
 
       return users;
     } catch (error) {
-      console.error('Error searching users:', error);
+      logger.error("Error searching users:", error);
       throw error;
     }
   }

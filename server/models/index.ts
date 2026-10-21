@@ -61,7 +61,7 @@ const UserSchema = new Schema<IUser>(
       type: String,
       required: true,
       unique: true,
-      match: /.+\@.+\..+/,
+      match: /.+@.+\..+/,
       lowercase: true,
       trim: true,
     },
@@ -154,7 +154,7 @@ const UserSchema = new Schema<IUser>(
     onboarding: {
       hasCompleted: { type: Boolean, default: false },
       completedStep: { type: Number, default: 0 },
-    }
+    },
   },
   { timestamps: true }
 );
@@ -278,14 +278,14 @@ const MeetingSchema = new Schema<IMeeting>(
       reactions: {
         type: Map,
         of: Number,
-        default: {}
+        default: {},
       },
       emotionData: [
         {
           emotion: { type: String },
           percentage: { type: Number },
           timestamp: { type: Date, default: Date.now },
-          count: { type: Number, default: 1 }
+          count: { type: Number, default: 1 },
         },
       ],
     },
@@ -381,9 +381,7 @@ const ConversationSchema = new Schema<IConversation>(
   {
     name: { type: String, trim: true },
     isGroup: { type: Boolean, default: false },
-    participants: [
-      { type: Schema.Types.ObjectId, ref: "User", required: true },
-    ],
+    participants: [{ type: Schema.Types.ObjectId, ref: "User", required: true }],
     lastMessage: { type: Schema.Types.ObjectId, ref: "Message" },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     isDeleted: { type: Boolean, default: false },
@@ -472,9 +470,7 @@ export interface IConnection extends Document {
 
 const ConnectionSchema = new Schema<IConnection>(
   {
-    participants: [
-      { type: Schema.Types.ObjectId, ref: "User", required: true },
-    ],
+    participants: [{ type: Schema.Types.ObjectId, ref: "User", required: true }],
     status: {
       type: String,
       enum: ["active", "blocked"],
@@ -487,27 +483,19 @@ const ConnectionSchema = new Schema<IConnection>(
 
 ConnectionSchema.index({ participants: 1 });
 
-
 export const User = mongoose.model<IUser>("User", UserSchema);
 export const Meeting = mongoose.model<IMeeting>("Meeting", MeetingSchema);
-export const ChatMessage = mongoose.model<IChatMessage>(
-  "ChatMessage",
-  ChatMessageSchema
-);
-export const Conversation = mongoose.model<IConversation>(
-  "Conversation",
-  ConversationSchema
-);
+export const ChatMessage = mongoose.model<IChatMessage>("ChatMessage", ChatMessageSchema);
+export const Conversation = mongoose.model<IConversation>("Conversation", ConversationSchema);
 export const Message = mongoose.model<IMessage>("Message", MessageSchema);
 export const ActivityLog = mongoose.model<IActivityLog>("ActivityLog", ActivityLogSchema);
 export const Discovery = mongoose.model<IDiscovery>("Discovery", DiscoverySchema);
 export const Connection = mongoose.model<IConnection>("Connection", ConnectionSchema);
 
 // Export OTP model (for email verification)
-export { OTP } from './otp';
-export type { IOTP } from './otp';
-export { Notification } from './notification';
-export type { INotification } from './notification';
-export { Invite } from './invite';
-export type { IInvite } from './invite';
-
+export { OTP } from "./otp";
+export type { IOTP } from "./otp";
+export { Notification } from "./notification";
+export type { INotification } from "./notification";
+export { Invite } from "./invite";
+export type { IInvite } from "./invite";
