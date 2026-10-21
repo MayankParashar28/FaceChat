@@ -37,14 +37,20 @@ export function validatePassword(password: string): PasswordValidationResult {
     errors.push("Password must contain at least one number");
   }
 
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
     errors.push("Password must contain at least one special character (!@#$%^&*...)");
   }
 
   // Calculate strength
   let strength: "weak" | "medium" | "strong" = "weak";
   if (errors.length === 0) {
-    if (password.length >= 12 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    if (
+      password.length >= 12 &&
+      /[A-Z]/.test(password) &&
+      /[a-z]/.test(password) &&
+      /[0-9]/.test(password) &&
+      /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)
+    ) {
       strength = "strong";
     } else {
       strength = "medium";
@@ -73,4 +79,3 @@ export function getPasswordStrengthColor(strength: "weak" | "medium" | "strong")
       return "text-muted-foreground";
   }
 }
-

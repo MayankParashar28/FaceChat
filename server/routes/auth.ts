@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import { Router } from "express";
 import { authenticate } from "../middleware/auth";
 import { authRateLimiter } from "../middleware/rateLimiter";
@@ -147,109 +148,109 @@ router.post("/reset-password", authRateLimiter, async (req, res) => {
 
 // Send OTP for email verification
 router.post("/send-otp", authRateLimiter, authenticate, async (req, res) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ error: "Authentication required" });
-        }
-
-        const { email } = req.body;
-        const userEmail = email || req.user.email;
-
-        if (!userEmail) {
-            return res.status(400).json({ error: "Email is required" });
-        }
-
-        // Verify the email matches the authenticated user
-        if (userEmail.toLowerCase() !== req.user.email?.toLowerCase()) {
-            return res.status(403).json({ error: "Email does not match authenticated user" });
-        }
-
-        // Create and send OTP
-        await createOTP(userEmail, "email_verification");
-
-        res.json({
-            success: true,
-            message: "Verification code sent to your email",
-            // In development, return the OTP in the response (remove in production)
-            ...(process.env.NODE_ENV === "development" && {
-                otp: "Check console for OTP (development only)"
-            })
-        });
-    } catch (error: any) {
-        console.error("Error sending OTP:", error);
-        res.status(500).json({ error: error.message || "Failed to send verification code" });
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
     }
+
+    const { email } = req.body;
+    const userEmail = email || req.user.email;
+
+    if (!userEmail) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Verify the email matches the authenticated user
+    if (userEmail.toLowerCase() !== req.user.email?.toLowerCase()) {
+      return res.status(403).json({ error: "Email does not match authenticated user" });
+    }
+
+    // Create and send OTP
+    await createOTP(userEmail, "email_verification");
+
+    res.json({
+      success: true,
+      message: "Verification code sent to your email",
+      // In development, return the OTP in the response (remove in production)
+      ...(process.env.NODE_ENV === "development" && {
+        otp: "Check console for OTP (development only)",
+      }),
+    });
+  } catch (error: any) {
+    logger.error("Error sending OTP:", error);
+    res.status(500).json({ error: error.message || "Failed to send verification code" });
+  }
 });
 
 // Verify OTP
 router.post("/verify-otp", authRateLimiter, authenticate, async (req, res) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ error: "Authentication required" });
-        }
-
-        const { email, otp } = req.body;
-
-        if (!email || !otp) {
-            return res.status(400).json({ error: "Email and OTP are required" });
-        }
-
-        // Verify the email matches the authenticated user
-        if (email.toLowerCase() !== req.user.email?.toLowerCase()) {
-            return res.status(403).json({ error: "Email does not match authenticated user" });
-        }
-
-        // Verify OTP
-        const verified = await verifyOTP(email, otp, "email_verification");
-
-        if (verified) {
-            res.json({
-                verified: true,
-                message: "Email verified successfully"
-            });
-        } else {
-            res.status(400).json({ error: "Invalid verification code" });
-        }
-    } catch (error: any) {
-        console.error("Error verifying OTP:", error);
-        res.status(400).json({ error: error.message || "Verification failed" });
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
     }
+
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ error: "Email and OTP are required" });
+    }
+
+    // Verify the email matches the authenticated user
+    if (email.toLowerCase() !== req.user.email?.toLowerCase()) {
+      return res.status(403).json({ error: "Email does not match authenticated user" });
+    }
+
+    // Verify OTP
+    const verified = await verifyOTP(email, otp, "email_verification");
+
+    if (verified) {
+      res.json({
+        verified: true,
+        message: "Email verified successfully",
+      });
+    } else {
+      res.status(400).json({ error: "Invalid verification code" });
+    }
+  } catch (error: any) {
+    logger.error("Error verifying OTP:", error);
+    res.status(400).json({ error: error.message || "Verification failed" });
+  }
 });
 
 // Resend OTP
 router.post("/resend-otp", authRateLimiter, authenticate, async (req, res) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ error: "Authentication required" });
-        }
-
-        const { email } = req.body;
-        const userEmail = email || req.user.email;
-
-        if (!userEmail) {
-            return res.status(400).json({ error: "Email is required" });
-        }
-
-        // Verify the email matches the authenticated user
-        if (userEmail.toLowerCase() !== req.user.email?.toLowerCase()) {
-            return res.status(403).json({ error: "Email does not match authenticated user" });
-        }
-
-        // Create and send new OTP
-        await createOTP(userEmail, "email_verification");
-
-        res.json({
-            success: true,
-            message: "New verification code sent to your email",
-            // In development, return the OTP in the response (remove in production)
-            ...(process.env.NODE_ENV === "development" && {
-                otp: "Check console for OTP (development only)"
-            })
-        });
-    } catch (error: any) {
-        console.error("Error resending OTP:", error);
-        res.status(500).json({ error: error.message || "Failed to resend verification code" });
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
     }
+
+    const { email } = req.body;
+    const userEmail = email || req.user.email;
+
+    if (!userEmail) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Verify the email matches the authenticated user
+    if (userEmail.toLowerCase() !== req.user.email?.toLowerCase()) {
+      return res.status(403).json({ error: "Email does not match authenticated user" });
+    }
+
+    // Create and send new OTP
+    await createOTP(userEmail, "email_verification");
+
+    res.json({
+      success: true,
+      message: "New verification code sent to your email",
+      // In development, return the OTP in the response (remove in production)
+      ...(process.env.NODE_ENV === "development" && {
+        otp: "Check console for OTP (development only)",
+      }),
+    });
+  } catch (error: any) {
+    logger.error("Error resending OTP:", error);
+    res.status(500).json({ error: error.message || "Failed to resend verification code" });
+  }
 });
 
 // Phone verification via Twilio Verify - send code
@@ -280,7 +281,7 @@ router.post("/resend-otp", authRateLimiter, authenticate, async (req, res) => {
 
     res.json({ success: true, message: "Verification code sent via SMS." });
   } catch (error: any) {
-    console.error("Error sending phone verification code:", error);
+    logger.error("Error sending phone verification code:", error);
     res.status(500).json({ error: error.message || "Failed to send phone verification code." });
   }
 }); */
@@ -336,7 +337,7 @@ router.post("/resend-otp", authRateLimiter, authenticate, async (req, res) => {
       } : undefined,
     });
   } catch (error: any) {
-    console.error("Error verifying phone code:", error);
+    logger.error("Error verifying phone code:", error);
     res.status(500).json({ error: error.message || "Failed to verify phone number." });
   }
 }); */

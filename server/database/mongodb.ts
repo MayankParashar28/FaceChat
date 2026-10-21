@@ -1,6 +1,7 @@
-import mongoose, { ConnectOptions } from 'mongoose';
+import { logger } from "../utils/logger";
+import mongoose, { ConnectOptions } from "mongoose";
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/facecallai';
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/facecallai";
 
 const options: ConnectOptions = {
   maxPoolSize: 10,
@@ -10,30 +11,30 @@ const options: ConnectOptions = {
 };
 
 // Event listeners
-mongoose.connection.on('connected', () => console.log('✅ MongoDB connected'));
-mongoose.connection.on('error', (err) => console.error('❌ MongoDB error:', err));
-mongoose.connection.on('disconnected', () => console.log('⚠️ MongoDB disconnected'));
+mongoose.connection.on("connected", () => logger.info("✅ MongoDB connected"));
+mongoose.connection.on("error", (err) => logger.error("❌ MongoDB error:", err));
+mongoose.connection.on("disconnected", () => logger.info("⚠️ MongoDB disconnected"));
 
 // Graceful shutdown
 const gracefulShutdown = async (signal: string) => {
-  console.log(`\nReceived ${signal}, closing MongoDB connection...`);
+  logger.info(`\nReceived ${signal}, closing MongoDB connection...`);
   await mongoose.connection.close();
-  console.log('MongoDB connection closed gracefully');
+  logger.info("MongoDB connection closed gracefully");
   process.exit(0);
 };
 
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 export async function connectToMongoDB(retries = 5, delay = 3000): Promise<void> {
   while (retries) {
     try {
       await mongoose.connect(MONGODB_URI, options);
-      console.log('✅ MongoDB connection established');
+      logger.info("✅ MongoDB connection established");
       return;
     } catch (error) {
       retries -= 1;
-      console.error(`❌ Failed to connect. Retries left: ${retries}`);
+      logger.error(`❌ Failed to connect. Retries left: ${retries}`);
       if (!retries) throw error;
       await new Promise((res) => setTimeout(res, delay));
     }
@@ -48,19 +49,19 @@ export async function testMongoConnection(): Promise<boolean> {
     }
 
     const db = mongoose.connection.db;
-    if (!db) throw new Error('MongoDB connection not ready yet');
+    if (!db) throw new Error("MongoDB connection not ready yet");
 
     await db.admin().ping();
-    console.log('✅ MongoDB connection test successful');
+    logger.info("✅ MongoDB connection test successful");
     return true;
   } catch (error) {
-    console.error('❌ MongoDB connection test failed:', error);
+    logger.error("❌ MongoDB connection test failed:", error);
     return false;
   }
 }
 
 export async function mongoHealthCheck() {
-  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const states = ["disconnected", "connected", "connecting", "disconnecting"];
   let state = mongoose.connection.readyState;
 
   if (state !== 1 && state !== 2) {
@@ -73,9 +74,9 @@ export async function mongoHealthCheck() {
   }
 
   return {
-    status: state === 1 ? 'healthy' : 'unhealthy',
-    state: states[state] || 'unknown',
-    database: 'mongodb',
+    status: state === 1 ? "healthy" : "unhealthy",
+    state: states[state] || "unknown",
+    database: "mongodb",
   };
 }
 

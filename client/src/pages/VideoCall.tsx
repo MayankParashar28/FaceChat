@@ -1,11 +1,34 @@
-
 import { useState, useEffect, useRef, useMemo, useCallback, memo, forwardRef } from "react";
 import { useLocation, useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, Users, Sparkles, Copy, Check, Send, X, Music, Info, Captions, Smile, Settings, LogOut, LayoutGrid, Maximize2, Pin, PinOff } from "lucide-react";
+import {
+  PhoneOff,
+  Mic,
+  MicOff,
+  Video as VideoIcon,
+  VideoOff,
+  MonitorUp,
+  MessageSquare,
+  Users,
+  Sparkles,
+  Copy,
+  Check,
+  Send,
+  X,
+  Music,
+  Info,
+  Captions,
+  Smile,
+  Settings,
+  LogOut,
+  LayoutGrid,
+  Maximize2,
+  Pin,
+  PinOff,
+} from "lucide-react";
 import { VoiceWave } from "@/components/VoiceWave";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -24,11 +47,23 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { VoiceEffectsOverlay } from "@/components/VoiceEffectsOverlay";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import SimplePeer, { Instance as PeerInstance } from "simple-peer";
 
-// Polyfill for simple-peer in browser environment if needed, 
+// Polyfill for simple-peer in browser environment if needed,
 // though vite-plugin-node-polyfills should handle most of it.
 import process from "process";
 window.process = process;
@@ -43,11 +78,10 @@ type Participant = {
   isAudioOn: boolean;
   stream?: MediaStream;
   peer?: PeerInstance;
-  status?: 'connecting' | 'connected' | 'failed';
+  status?: "connecting" | "connected" | "failed";
   emotion?: "Happy" | "Neutral" | "Sad" | "Surprised" | "Angry";
   engagement?: number;
 };
-
 
 type ChatMessage = {
   id: string;
@@ -61,59 +95,73 @@ type ChatMessage = {
 };
 
 // Local Video Component
-const LocalVideo = memo(({ stream, isVideoOn, videoRef, volume }: { stream: MediaStream | null; isVideoOn: boolean; videoRef: React.RefObject<HTMLVideoElement>; volume: number }) => {
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [stream, videoRef, isVideoOn]);
+const LocalVideo = memo(
+  ({
+    stream,
+    isVideoOn,
+    videoRef,
+    volume,
+  }: {
+    stream: MediaStream | null;
+    isVideoOn: boolean;
+    videoRef: React.RefObject<HTMLVideoElement>;
+    volume: number;
+  }) => {
+    useEffect(() => {
+      if (videoRef.current && stream) {
+        videoRef.current.srcObject = stream;
+      }
+    }, [stream, videoRef, isVideoOn]);
 
-  return (
-    <>
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className="w-full h-full object-cover rounded-[2rem] transition-opacity duration-300 opacity-100"
-      />
-      {isVideoOn && (
-        <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
-          <VoiceWave volume={volume} isSpeaking={volume > 10} />
-        </div>
-      )}
-    </>
-  );
-});
+    return (
+      <>
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="w-full h-full object-cover rounded-[2rem] transition-opacity duration-300 opacity-100"
+        />
+        {isVideoOn && (
+          <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
+            <VoiceWave volume={volume} isSpeaking={volume > 10} />
+          </div>
+        )}
+      </>
+    );
+  }
+);
 
 // Remote Video Component
-const RemoteVideo = memo(({ stream, isVideoOn }: { stream: MediaStream | undefined; isVideoOn: boolean }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const { volume, isSpeaking } = useAudioAnalysis(stream || null);
+const RemoteVideo = memo(
+  ({ stream, isVideoOn }: { stream: MediaStream | undefined; isVideoOn: boolean }) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const { volume, isSpeaking } = useAudioAnalysis(stream || null);
 
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(e => console.error("[RemoteVideo] Play error:", e));
-    }
-  }, [stream]);
+    useEffect(() => {
+      if (videoRef.current && stream) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch((e) => console.error("[RemoteVideo] Play error:", e));
+      }
+    }, [stream]);
 
-  return (
-    <>
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        className="w-full h-full object-cover rounded-[2rem] transition-opacity duration-300 opacity-100"
-      />
-      {isVideoOn && (
-        <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
-          <VoiceWave volume={volume} isSpeaking={isSpeaking} />
-        </div>
-      )}
-    </>
-  );
-});
+    return (
+      <>
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className="w-full h-full object-cover rounded-[2rem] transition-opacity duration-300 opacity-100"
+        />
+        {isVideoOn && (
+          <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
+            <VoiceWave volume={volume} isSpeaking={isSpeaking} />
+          </div>
+        )}
+      </>
+    );
+  }
+);
 
 // Remote Participant Video Wrapper
 
@@ -125,96 +173,108 @@ type RemoteParticipantVideoProps = {
   className?: string;
 };
 
-const RemoteParticipantVideo = memo(forwardRef<HTMLDivElement, RemoteParticipantVideoProps>(({ participant, onPin, isPinned, isSpotlightMode, className }, ref) => {
-  const { volume } = useAudioAnalysis(participant.stream || null);
-  const localVideoRef = useRef<HTMLVideoElement>(null);
+const RemoteParticipantVideo = memo(
+  forwardRef<HTMLDivElement, RemoteParticipantVideoProps>(
+    ({ participant, onPin, isPinned, isSpotlightMode, className }, ref) => {
+      const { volume } = useAudioAnalysis(participant.stream || null);
+      const localVideoRef = useRef<HTMLVideoElement>(null);
 
-  // Default to aspect-video if no class provided (backward compatibility)
-  // If className is provided (e.g. for full screen), we don't force aspect-video.
-  const baseClasses = className ? className : "w-full aspect-video";
+      // Default to aspect-video if no class provided (backward compatibility)
+      // If className is provided (e.g. for full screen), we don't force aspect-video.
+      const baseClasses = className ? className : "w-full aspect-video";
 
-  return (
-    <motion.div
-      ref={ref}
-      layout
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.9 }}
-      className={`relative ${baseClasses} bg-black/50 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-2xl group transition-all duration-300 ${participant.isAudioOn && (volume > 20 && !participant.isLocal) ? 'border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]' : 'border border-white/10'}`}
-    >
-      {/* Video Element */}
-      {participant.isLocal ? (
-        <LocalVideo stream={participant.stream || null} isVideoOn={participant.isVideoOn} videoRef={localVideoRef} volume={volume} />
-      ) : (
-        <RemoteVideo stream={participant.stream} isVideoOn={participant.isVideoOn} />
-      )}
-
-      {/* Smart Pulse Indicator (Remote Only) */}
-      {!participant.isLocal && participant.emotion && (
-        <div className="absolute top-4 left-4 z-50 transform scale-75 md:scale-90">
-          <SmartPulse
-            sentiment={participant.emotion}
-            engagement={participant.engagement || 0}
-            userName={participant.name}
-            showLabel={true}
-          />
-        </div>
-      )}
-
-      {/* Status Indicator */}
-      {!participant.isLocal && participant.status === 'connecting' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
-          <div className="text-white text-sm font-light animate-pulse">Connecting...</div>
-        </div>
-      )}
-
-      {/* Fallback Avatar */}
-      {!participant.isVideoOn && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/5">
-          <Avatar className="h-24 w-24 border-4 border-white/10">
-            <AvatarImage src={participant.avatar} />
-            <AvatarFallback className="bg-primary text-white text-2xl">{getInitials(participant.name)}</AvatarFallback>
-          </Avatar>
-        </div>
-      )}
-
-      {/* Overlay Info */}
-      <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center z-30 pointer-events-none">
-        <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-white font-medium text-xs md:text-sm shadow-md">
-          <span>{participant.name} {participant.isLocal && "(You)"}</span>
-          {participant.emotion && (
-            <span className="text-[10px] text-primary bg-primary/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">
-              {participant.emotion}
-            </span>
+      return (
+        <motion.div
+          ref={ref}
+          layout
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.9 }}
+          className={`relative ${baseClasses} bg-black/50 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-2xl group transition-all duration-300 ${participant.isAudioOn && volume > 20 && !participant.isLocal ? "border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]" : "border border-white/10"}`}
+        >
+          {/* Video Element */}
+          {participant.isLocal ? (
+            <LocalVideo
+              stream={participant.stream || null}
+              isVideoOn={participant.isVideoOn}
+              videoRef={localVideoRef}
+              volume={volume}
+            />
+          ) : (
+            <RemoteVideo stream={participant.stream} isVideoOn={participant.isVideoOn} />
           )}
-        </div>
-        <div className="flex gap-1.5 pointer-events-auto">
-          {onPin && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? 'bg-blue-500/20 text-blue-400' : 'bg-black/50 text-white hover:bg-white/20'}`}
-              onClick={() => onPin(participant.socketId)}
-            >
-              {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
-            </Button>
-          )}
-          {!participant.isAudioOn && (
-            <div className="p-1.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
-              <MicOff className="w-3.5 h-3.5" />
+
+          {/* Smart Pulse Indicator (Remote Only) */}
+          {!participant.isLocal && participant.emotion && (
+            <div className="absolute top-4 left-4 z-50 transform scale-75 md:scale-90">
+              <SmartPulse
+                sentiment={participant.emotion}
+                engagement={participant.engagement || 0}
+                userName={participant.name}
+                showLabel={true}
+              />
             </div>
           )}
+
+          {/* Status Indicator */}
+          {!participant.isLocal && participant.status === "connecting" && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
+              <div className="text-white text-sm font-light animate-pulse">Connecting...</div>
+            </div>
+          )}
+
+          {/* Fallback Avatar */}
           {!participant.isVideoOn && (
-            <div className="p-1.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
-              <VideoOff className="w-3.5 h-3.5" />
+            <div className="absolute inset-0 flex items-center justify-center bg-white/5">
+              <Avatar className="h-24 w-24 border-4 border-white/10">
+                <AvatarImage src={participant.avatar} />
+                <AvatarFallback className="bg-primary text-white text-2xl">
+                  {getInitials(participant.name)}
+                </AvatarFallback>
+              </Avatar>
             </div>
           )}
-        </div>
-      </div>
-    </motion.div>
-  );
-}));
 
+          {/* Overlay Info */}
+          <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center z-30 pointer-events-none">
+            <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-white font-medium text-xs md:text-sm shadow-md">
+              <span>
+                {participant.name} {participant.isLocal && "(You)"}
+              </span>
+              {participant.emotion && (
+                <span className="text-[10px] text-primary bg-primary/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">
+                  {participant.emotion}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-1.5 pointer-events-auto">
+              {onPin && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? "bg-blue-500/20 text-blue-400" : "bg-black/50 text-white hover:bg-white/20"}`}
+                  onClick={() => onPin(participant.socketId)}
+                >
+                  {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                </Button>
+              )}
+              {!participant.isAudioOn && (
+                <div className="p-1.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+                  <MicOff className="w-3.5 h-3.5" />
+                </div>
+              )}
+              {!participant.isVideoOn && (
+                <div className="p-1.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+                  <VideoOff className="w-3.5 h-3.5" />
+                </div>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      );
+    }
+  )
+);
 
 export default function VideoCall() {
   const [, params] = useRoute("/call/:roomId");
@@ -240,8 +300,8 @@ export default function VideoCall() {
       isVideoOn: settings.autoJoinVideo,
       isAudioOn: settings.autoJoinAudio,
       stream: undefined, // Stream is loading
-      status: 'connecting',
-      isLoading: true // Custom flag for UI
+      status: "connecting",
+      isLoading: true, // Custom flag for UI
     } as any);
     return map;
   });
@@ -253,8 +313,8 @@ export default function VideoCall() {
   useEffect(() => {
     if (!roomId) return;
     fetch(`/api/meetings/room/${encodeURIComponent(roomId)}/messages`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
           const formatted: ChatMessage[] = data.map((m: any) => ({
             id: m._id ? m._id.toString() : Date.now().toString(),
@@ -263,13 +323,16 @@ export default function VideoCall() {
             sender: m.senderId?.name || "Participant",
             avatar: m.senderId?.avatar,
             message: m.content,
-            time: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            isLocal: (m.senderId?.firebaseUid === user?.uid || m.senderId?._id === (user as any)?._id)
+            time: m.timestamp
+              ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+              : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            isLocal:
+              m.senderId?.firebaseUid === user?.uid || m.senderId?._id === (user as any)?._id,
           }));
           setChatMessages(formatted);
         }
       })
-      .catch(err => console.error("Error fetching room chat history:", err));
+      .catch((err) => console.error("Error fetching room chat history:", err));
   }, [roomId, user]);
 
   // UI State
@@ -290,8 +353,14 @@ export default function VideoCall() {
   const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number }[]>([]);
 
   // Captions State
-  const { isListening, transcript, startRecognition, stopRecognition, resetTranscript } = useSpeechRecognition();
-  const [captions, setCaptions] = useState<{ userId: string; userName?: string; text: string; timestamp: number } | null>(null);
+  const { isListening, transcript, startRecognition, stopRecognition, resetTranscript } =
+    useSpeechRecognition();
+  const [captions, setCaptions] = useState<{
+    userId: string;
+    userName?: string;
+    text: string;
+    timestamp: number;
+  } | null>(null);
 
   useEffect(() => {
     if (captions) console.log("Caption Received:", captions);
@@ -317,7 +386,10 @@ export default function VideoCall() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [pinnedSocketId, setPinnedSocketId] = useState<string | null>(null);
   const sentiment = expression; // Simplified for now
-  const lastSentEmotionRef = useRef<{ emotion: string; timestamp: number }>({ emotion: "", timestamp: 0 });
+  const lastSentEmotionRef = useRef<{ emotion: string; timestamp: number }>({
+    emotion: "",
+    timestamp: 0,
+  });
   const callStartTimeRef = useRef<number | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -354,19 +426,25 @@ export default function VideoCall() {
           } else {
             // We already have senders, try to replace tracks
             const senders = pc.getSenders();
-            const videoSender = senders.find((s: any) => s.track?.kind === 'video');
-            const audioSender = senders.find((s: any) => s.track?.kind === 'audio');
+            const videoSender = senders.find((s: any) => s.track?.kind === "video");
+            const audioSender = senders.find((s: any) => s.track?.kind === "audio");
 
             const newVideoTrack = localStream.getVideoTracks()[0];
             const newAudioTrack = localStream.getAudioTracks()[0];
 
-            if (videoSender && newVideoTrack) videoSender.replaceTrack(newVideoTrack).catch((e: any) => console.log("Replace video track error", e));
-            if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack).catch((e: any) => console.log("Replace audio track error", e));
+            if (videoSender && newVideoTrack)
+              videoSender
+                .replaceTrack(newVideoTrack)
+                .catch((e: any) => console.log("Replace video track error", e));
+            if (audioSender && newAudioTrack)
+              audioSender
+                .replaceTrack(newAudioTrack)
+                .catch((e: any) => console.log("Replace audio track error", e));
           }
         } else {
           // Fallback/Safety if API mismatch, just try adding if it seems empty (risky but better than crashing)
           // But actually, if getSenders calls failed, we might be in a weird state.
-          // Safe default: use addStream if we think we haven't added it. 
+          // Safe default: use addStream if we think we haven't added it.
           // Better: checking _senderTracks on simple-peer internals if possible, but let's stick to standard PC checks.
           // For now, if no PC or no getSenders (unlikely on modern browser), we skip to avoid error.
           console.warn("Could not check peer connection state for stream.");
@@ -374,7 +452,6 @@ export default function VideoCall() {
       });
     }
   }, [localStream]);
-
 
   // Debug Face Detection - Removed
   // useEffect(() => { ... }, []);
@@ -404,10 +481,10 @@ export default function VideoCall() {
         if (!audioTrack || !audioTrack.enabled) return;
 
         const mediaStream = new MediaStream([audioTrack]);
-        let mimeType = 'audio/webm;codecs=opus';
+        let mimeType = "audio/webm;codecs=opus";
         if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'audio/webm';
-          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = '';
+          mimeType = "audio/webm";
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "";
         }
 
         const recorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
@@ -429,9 +506,8 @@ export default function VideoCall() {
         recorder.start();
         // Stop after 1.5 seconds to reduce lag (3s was too slow)
         setTimeout(() => {
-          if (recorder.state === 'recording') recorder.stop();
+          if (recorder.state === "recording") recorder.stop();
         }, 1500);
-
       } catch (error) {
         console.error("Error in audio loop:", error);
       }
@@ -448,11 +524,12 @@ export default function VideoCall() {
       if (audioStreamRecorderRef.current && audioStreamRecorderRef.current.state !== "inactive") {
         try {
           audioStreamRecorderRef.current.stop();
-        } catch (e) { }
+        } catch {
+          /* recorder already stopped */
+        }
       }
     };
   }, [isMicOn, socket, roomId, localStream, settings.autoJoinAudio]);
-
 
   useEffect(() => {
     if (!socket) return;
@@ -461,7 +538,7 @@ export default function VideoCall() {
       setCaptions(data);
       // Auto-clear after 3 seconds
       setTimeout(() => {
-        setCaptions(prev => (prev?.timestamp === data.timestamp ? null : prev));
+        setCaptions((prev) => (prev?.timestamp === data.timestamp ? null : prev));
       }, 3000);
     };
 
@@ -479,11 +556,11 @@ export default function VideoCall() {
 
     // 1. Initialize Socket
     const newSocket = io(window.location.origin, {
-      transports: ['websocket', 'polling'],
+      transports: ["websocket", "polling"],
       reconnection: true,
       auth: {
-        firebaseToken: "pending" // Will be sent in user:online
-      }
+        firebaseToken: "pending", // Will be sent in user:online
+      },
     });
 
     setSocket(newSocket);
@@ -524,22 +601,32 @@ export default function VideoCall() {
     });
 
     // B: Existing participants (We join)
-    newSocket.on("call:existing-users", ({ participants: existingUsers, startTime }: { participants: any[], startTime?: string }) => {
-      console.log("Existing users received:", existingUsers.length);
+    newSocket.on(
+      "call:existing-users",
+      ({ participants: existingUsers, startTime }: { participants: any[]; startTime?: string }) => {
+        console.log("Existing users received:", existingUsers.length);
 
-      if (startTime) {
-        console.log("Syncing timer with server time:", startTime);
-        callStartTimeRef.current = new Date(startTime).getTime();
-        setCallDuration(0); // Trigger update
-      } else {
-        callStartTimeRef.current = null;
-        setCallDuration(0);
+        if (startTime) {
+          console.log("Syncing timer with server time:", startTime);
+          callStartTimeRef.current = new Date(startTime).getTime();
+          setCallDuration(0); // Trigger update
+        } else {
+          callStartTimeRef.current = null;
+          setCallDuration(0);
+        }
+
+        existingUsers.forEach((user) => {
+          createPeer(
+            user.socketId,
+            user.userId,
+            user.userName,
+            user.userAvatar,
+            true,
+            localStreamRef.current
+          );
+        });
       }
-
-      existingUsers.forEach((user) => {
-        createPeer(user.socketId, user.userId, user.userName, user.userAvatar, true, localStreamRef.current);
-      });
-    });
+    );
 
     // C: New user joined (We are existing)
     newSocket.on("call:user-joined", ({ socketId, userId, userName, userAvatar }) => {
@@ -575,7 +662,7 @@ export default function VideoCall() {
       const peer = peersRef.current.get(socketId);
       if (peer) peer.destroy();
       peersRef.current.delete(socketId);
-      setParticipants(prev => {
+      setParticipants((prev) => {
         const newMap = new Map(prev);
         newMap.delete(socketId);
         return newMap;
@@ -585,21 +672,38 @@ export default function VideoCall() {
     // G: Chat & Media
     newSocket.on("call:chat-history", (history: ChatMessage[]) => {
       if (Array.isArray(history) && history.length > 0) {
-        setChatMessages(history.map(m => ({
-          ...m,
-          isLocal: m.userId === user?.uid
-        })));
-        setTimeout(() => chatScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')?.scrollTo({ top: 99999, behavior: 'smooth' }), 100);
+        setChatMessages(
+          history.map((m) => ({
+            ...m,
+            isLocal: m.userId === user?.uid,
+          }))
+        );
+        setTimeout(
+          () =>
+            chatScrollRef.current
+              ?.querySelector("[data-radix-scroll-area-viewport]")
+              ?.scrollTo({ top: 99999, behavior: "smooth" }),
+          100
+        );
       }
     });
 
     newSocket.on("call:chat-message", (msg: ChatMessage) => {
-      setChatMessages(prev => [...prev, { ...msg, isLocal: msg.socketId === newSocket.id || msg.userId === user?.uid }]);
-      setTimeout(() => chatScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')?.scrollTo({ top: 99999, behavior: 'smooth' }), 100);
+      setChatMessages((prev) => [
+        ...prev,
+        { ...msg, isLocal: msg.socketId === newSocket.id || msg.userId === user?.uid },
+      ]);
+      setTimeout(
+        () =>
+          chatScrollRef.current
+            ?.querySelector("[data-radix-scroll-area-viewport]")
+            ?.scrollTo({ top: 99999, behavior: "smooth" }),
+        100
+      );
     });
 
     newSocket.on("call:media-toggled", ({ socketId, mediaType, enabled }) => {
-      setParticipants(prev => {
+      setParticipants((prev) => {
         const newMap = new Map(prev);
         const p = newMap.get(socketId);
         if (p) {
@@ -615,19 +719,22 @@ export default function VideoCall() {
     newSocket.on("call:reaction", ({ socketId, emoji }) => {
       const id = Date.now().toString() + Math.random();
       const x = Math.random() * 80 + 10;
-      setReactions(prev => [...prev, { id, emoji, x }]);
-      setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
+      setReactions((prev) => [...prev, { id, emoji, x }]);
+      setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2000);
     });
 
     // Captions
     newSocket.on("call:caption", (data) => {
       setCaptions(data);
-      setTimeout(() => setCaptions(prev => (prev?.timestamp === data.timestamp ? null : prev)), 3000);
+      setTimeout(
+        () => setCaptions((prev) => (prev?.timestamp === data.timestamp ? null : prev)),
+        3000
+      );
     });
 
     newSocket.on("call:emotion", ({ socketId, emotion, percentage }) => {
       console.log(`[DEBUG] Received emotion from ${socketId}: ${emotion} (${percentage}%)`);
-      setParticipants(prev => {
+      setParticipants((prev) => {
         const p = prev.get(socketId);
         // Debug
         if (!p) console.warn(`[DEBUG] Participant ${socketId} not found in map`);
@@ -647,7 +754,7 @@ export default function VideoCall() {
     return () => {
       console.log("Cleaning up socket");
       newSocket.disconnect();
-      peersRef.current.forEach(p => p.destroy());
+      peersRef.current.forEach((p) => p.destroy());
       peersRef.current.clear();
       peersRef.current.clear();
     };
@@ -679,7 +786,7 @@ export default function VideoCall() {
         socket.emit("call:emotion", {
           roomId,
           emotion: currentSentiment,
-          percentage: Math.round(currentConfidence * 100)
+          percentage: Math.round(currentConfidence * 100),
         });
         lastSentEmotionRef.current = { emotion: currentSentiment, timestamp: now };
       }
@@ -696,31 +803,33 @@ export default function VideoCall() {
     const initMedia = async () => {
       try {
         const qualityConstraints = {
-          "sd": { width: { ideal: 640 }, height: { ideal: 480 } },
-          "hd": { width: { ideal: 1280 }, height: { ideal: 720 } },
-          "full-hd": { width: { ideal: 1920 }, height: { ideal: 1080 } }
+          sd: { width: { ideal: 640 }, height: { ideal: 480 } },
+          hd: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          "full-hd": { width: { ideal: 1920 }, height: { ideal: 1080 } },
         };
 
-        const selectedQuality = qualityConstraints[settings.videoQuality as keyof typeof qualityConstraints] || qualityConstraints["sd"];
+        const selectedQuality =
+          qualityConstraints[settings.videoQuality as keyof typeof qualityConstraints] ||
+          qualityConstraints["sd"];
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             ...selectedQuality,
             frameRate: { max: 30 },
             facingMode: settings.videoDeviceId ? undefined : "user",
-            deviceId: settings.videoDeviceId ? { exact: settings.videoDeviceId } : undefined
+            deviceId: settings.videoDeviceId ? { exact: settings.videoDeviceId } : undefined,
           },
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-            deviceId: settings.audioDeviceId ? { exact: settings.audioDeviceId } : undefined
-          }
+            deviceId: settings.audioDeviceId ? { exact: settings.audioDeviceId } : undefined,
+          },
         });
 
         // Apply initial settings
-        stream.getAudioTracks().forEach(t => t.enabled = settings.autoJoinAudio);
-        stream.getVideoTracks().forEach(t => t.enabled = settings.autoJoinVideo);
+        stream.getAudioTracks().forEach((t) => (t.enabled = settings.autoJoinAudio));
+        stream.getVideoTracks().forEach((t) => (t.enabled = settings.autoJoinVideo));
 
         setLocalStream(stream);
         if (localVideoRef.current) {
@@ -728,7 +837,7 @@ export default function VideoCall() {
         }
 
         // Add local participant
-        setParticipants(prev => {
+        setParticipants((prev) => {
           const newMap = new Map(prev);
           newMap.set("local", {
             socketId: "local",
@@ -738,17 +847,16 @@ export default function VideoCall() {
             isLocal: true,
             isVideoOn: settings.autoJoinVideo,
             isAudioOn: settings.autoJoinAudio,
-            stream: stream
+            stream: stream,
           });
           return newMap;
         });
-
       } catch (err) {
         console.error("Error accessing media devices:", err);
         toast({
           title: "Media Error",
           description: "Could not access camera/microphone.",
-          variant: "destructive"
+          variant: "destructive",
         });
       }
     };
@@ -757,14 +865,26 @@ export default function VideoCall() {
 
     return () => {
       // Cleanup local stream on unmount
-      localStream?.getTracks().forEach(track => track.stop());
+      localStream?.getTracks().forEach((track) => track.stop());
     };
-  }, [settings.videoQuality, settings.audioQuality, settings.videoDeviceId, settings.audioDeviceId]); // Re-run when devices change
+  }, [
+    settings.videoQuality,
+    settings.audioQuality,
+    settings.videoDeviceId,
+    settings.audioDeviceId,
+  ]); // Re-run when devices change
 
   // Old effect removed in favor of consolidated one
 
   // --- Helper: Create Peer ---
-  function createPeer(targetSocketId: string, userId: string, name: string, avatar: string, initiator: boolean, stream: MediaStream | null) {
+  function createPeer(
+    targetSocketId: string,
+    userId: string,
+    name: string,
+    avatar: string,
+    initiator: boolean,
+    stream: MediaStream | null
+  ) {
     // Avoid duplicate peers
     if (peersRef.current.has(targetSocketId)) return;
 
@@ -774,26 +894,26 @@ export default function VideoCall() {
       stream: stream || undefined,
       config: {
         iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-        ]
-      }
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+          { urls: "stun:stun3.l.google.com:19302" },
+          { urls: "stun:stun4.l.google.com:19302" },
+        ],
+      },
     });
 
     peer.on("signal", (signal) => {
       socketRef.current?.emit("call:signal", {
         targetSocketId,
         signal,
-        roomId // Server needs room ID to verify or route? Usually just targetId is enough for direct routing, but server implementation varies.
+        roomId, // Server needs room ID to verify or route? Usually just targetId is enough for direct routing, but server implementation varies.
       });
     });
 
     peer.on("stream", (remoteStream) => {
       console.log("Received stream from:", targetSocketId);
-      setParticipants(prev => {
+      setParticipants((prev) => {
         const newMap = new Map(prev);
         // Update or create participant
         const existing = newMap.get(targetSocketId);
@@ -807,7 +927,7 @@ export default function VideoCall() {
           isAudioOn: true,
           stream: remoteStream,
           peer,
-          status: 'connected'
+          status: "connected",
         });
         return newMap;
       });
@@ -824,7 +944,7 @@ export default function VideoCall() {
     peersRef.current.set(targetSocketId, peer);
 
     // Add placeholder participant until stream arrives
-    setParticipants(prev => {
+    setParticipants((prev) => {
       const newMap = new Map(prev);
       if (!newMap.has(targetSocketId)) {
         newMap.set(targetSocketId, {
@@ -837,7 +957,7 @@ export default function VideoCall() {
           isAudioOn: true,
           stream: undefined, // Waiting for stream
           peer,
-          status: 'connecting'
+          status: "connecting",
         });
       }
       return newMap;
@@ -848,11 +968,11 @@ export default function VideoCall() {
   const toggleMic = () => {
     if (!localStream) return;
     const enabled = !isMicOn;
-    localStream.getAudioTracks().forEach(t => t.enabled = enabled);
+    localStream.getAudioTracks().forEach((t) => (t.enabled = enabled));
     setIsMicOn(enabled);
 
     // Update local participant state
-    setParticipants(prev => {
+    setParticipants((prev) => {
       const newMap = new Map(prev);
       const p = newMap.get("local");
       if (p) {
@@ -867,11 +987,11 @@ export default function VideoCall() {
   const toggleVideo = () => {
     if (!localStream) return;
     const enabled = !isVideoOn;
-    localStream.getVideoTracks().forEach(t => t.enabled = enabled);
+    localStream.getVideoTracks().forEach((t) => (t.enabled = enabled));
     setIsVideoOn(enabled);
 
     // Update local participant state in map so UI reflects change
-    setParticipants(prev => {
+    setParticipants((prev) => {
       const newMap = new Map(prev);
       const p = newMap.get("local");
       if (p) {
@@ -886,14 +1006,14 @@ export default function VideoCall() {
   const toggleScreenShare = async () => {
     if (isScreenSharing) {
       // Stop screen share
-      screenStreamRef.current?.getTracks().forEach(t => t.stop());
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
       screenStreamRef.current = null;
 
       // Revert to camera
       if (localStream) {
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) {
-          peersRef.current.forEach(peer => {
+          peersRef.current.forEach((peer) => {
             const sender = peer.streams[0]?.getVideoTracks()[0]; // Replaces current track
             // SimplePeer replaceTrack is complex, easier to just remove/add stream or replace track if supported
             // For simple-peer, replaceTrack is usually handled by:
@@ -903,7 +1023,7 @@ export default function VideoCall() {
           });
 
           // Update local participant
-          setParticipants(prev => {
+          setParticipants((prev) => {
             const newMap = new Map(prev);
             const local = newMap.get("local");
             if (local) newMap.set("local", { ...local, stream: localStream });
@@ -922,7 +1042,7 @@ export default function VideoCall() {
 
         if (localStream) {
           const cameraTrack = localStream.getVideoTracks()[0];
-          peersRef.current.forEach(peer => {
+          peersRef.current.forEach((peer) => {
             // Replace camera track with screen track
             // Note: simple-peer wrapper for RTCPeerConnection.replaceTrack
             const sender = peer.streams[0]?.getVideoTracks()[0]; // Current track being sent
@@ -935,7 +1055,7 @@ export default function VideoCall() {
           });
 
           // Update local view to show screen share
-          setParticipants(prev => {
+          setParticipants((prev) => {
             const newMap = new Map(prev);
             const local = newMap.get("local");
             if (local) newMap.set("local", { ...local, stream: screenStream });
@@ -969,7 +1089,7 @@ export default function VideoCall() {
       userId: user?.uid,
       sender: user?.displayName || "User",
       avatar: user?.photoURL || "",
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     });
     setMessage("");
   };
@@ -978,7 +1098,7 @@ export default function VideoCall() {
     try {
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: { mediaSource: "screen" } as any,
-        audio: true
+        audio: true,
       });
 
       // Combine screen audio with local microphone audio
@@ -986,14 +1106,14 @@ export default function VideoCall() {
       const destination = audioContext.createMediaStreamDestination();
 
       // Add screen audio
-      screenStream.getAudioTracks().forEach(track => {
+      screenStream.getAudioTracks().forEach((track) => {
         const source = audioContext.createMediaStreamSource(new MediaStream([track]));
         source.connect(destination);
       });
 
       // Add local microphone audio if available
       if (localStream && localStream.getAudioTracks().length > 0) {
-        localStream.getAudioTracks().forEach(track => {
+        localStream.getAudioTracks().forEach((track) => {
           const source = audioContext.createMediaStreamSource(new MediaStream([track]));
           source.connect(destination);
         });
@@ -1002,7 +1122,7 @@ export default function VideoCall() {
       // Create a new stream with screen video and combined audio
       const combinedStream = new MediaStream([
         ...screenStream.getVideoTracks(),
-        ...destination.stream.getAudioTracks()
+        ...destination.stream.getAudioTracks(),
       ]);
 
       const recorder = new MediaRecorder(combinedStream);
@@ -1022,8 +1142,8 @@ export default function VideoCall() {
         URL.revokeObjectURL(url);
         recordedChunksRef.current = [];
         setIsRecording(false);
-        combinedStream.getTracks().forEach(t => t.stop()); // Stop all tracks from the combined stream
-        screenStream.getTracks().forEach(t => t.stop()); // Ensure original screen stream tracks are stopped
+        combinedStream.getTracks().forEach((t) => t.stop()); // Stop all tracks from the combined stream
+        screenStream.getTracks().forEach((t) => t.stop()); // Ensure original screen stream tracks are stopped
       };
 
       recorder.start();
@@ -1036,13 +1156,12 @@ export default function VideoCall() {
           mediaRecorderRef.current.stop();
         }
       };
-
     } catch (err) {
       console.error("Recording failed", err);
       toast({
         title: "Recording Error",
         description: "Failed to start recording. Make sure you grant screen and audio permissions.",
-        variant: "destructive"
+        variant: "destructive",
       });
     }
   };
@@ -1057,15 +1176,17 @@ export default function VideoCall() {
     socket?.emit("call:reaction", { roomId, emoji });
     const id = Date.now().toString() + Math.random();
     const x = Math.random() * 80 + 10;
-    setReactions(prev => [...prev, { id, emoji, x }]);
+    setReactions((prev) => [...prev, { id, emoji, x }]);
     setTimeout(() => {
-      setReactions(prev => prev.filter(r => r.id !== id));
+      setReactions((prev) => prev.filter((r) => r.id !== id));
     }, 2000);
   };
 
   const toggleMusic = () => {
     if (!audioRef.current) {
-      audioRef.current = new Audio("https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3");
+      audioRef.current = new Audio(
+        "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3"
+      );
       audioRef.current.loop = true;
       audioRef.current.volume = 0.2; // Low volume background
     }
@@ -1073,7 +1194,7 @@ export default function VideoCall() {
     if (isMusicPlaying) {
       audioRef.current.pause();
     } else {
-      audioRef.current.play().catch(e => console.error("Audio play failed", e));
+      audioRef.current.play().catch((e) => console.error("Audio play failed", e));
     }
     setIsMusicPlaying(!isMusicPlaying);
   };
@@ -1094,27 +1215,30 @@ export default function VideoCall() {
   const formatDuration = (s: number) => {
     const min = Math.floor(s / 60);
     const sec = s % 60;
-    return `${min}:${sec.toString().padStart(2, '0')} `;
+    return `${min}:${sec.toString().padStart(2, "0")} `;
   };
 
   // --- Render ---
   const participantsList = Array.from(participants.values());
-  const localParticipant = participantsList.find(p => p.isLocal);
-  const otherParticipants = participantsList.filter(p => !p.isLocal);
+  const localParticipant = participantsList.find((p) => p.isLocal);
+  const otherParticipants = participantsList.filter((p) => !p.isLocal);
   const hasMultipleParticipants = participantsList.length > 1;
 
   // Dynamic Grid / Layout Logic
   const getGridClass = () => {
     // Both Mobile & Desktop: If Multiple, Local is floating. Grid only holds Remotes.
     // Effective Count = Remotes Count.
-    const effectiveCount = hasMultipleParticipants ? participantsList.length - 1 : participantsList.length;
+    const effectiveCount = hasMultipleParticipants
+      ? participantsList.length - 1
+      : participantsList.length;
 
     if (pinnedSocketId) return "flex-col md:flex-row";
 
     // Mobile Base (Grid)
     let mobileClass = "";
     if (effectiveCount === 1) mobileClass = "grid grid-cols-1 grid-rows-1";
-    else if (effectiveCount === 2) mobileClass = "grid grid-cols-1 grid-rows-2"; // Stack 2 vertical on mobile
+    else if (effectiveCount === 2)
+      mobileClass = "grid grid-cols-1 grid-rows-2"; // Stack 2 vertical on mobile
     else if (effectiveCount <= 4) mobileClass = "grid grid-cols-2 grid-rows-2";
     else mobileClass = "grid grid-cols-2 auto-rows-fr"; // 3+ columns flow
 
@@ -1129,12 +1253,16 @@ export default function VideoCall() {
     return `${mobileClass} ${desktopClass} w-full h-full`;
   };
 
-
   return (
     <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative font-sans">
       {/* Smart Pulse (Local User Mood Analysis) */}
       <div className="absolute top-24 left-4 z-50 hidden md:block">
-        <SmartPulse sentiment={sentiment} engagement={Math.max(20, volume)} userName={user?.displayName || user?.username || "You"} showLabel={true} />
+        <SmartPulse
+          sentiment={sentiment}
+          engagement={Math.max(20, volume)}
+          userName={user?.displayName || user?.username || "You"}
+          showLabel={true}
+        />
       </div>
 
       {/* Header */}
@@ -1142,18 +1270,33 @@ export default function VideoCall() {
         <div className="pointer-events-auto bg-black/40 backdrop-blur-md px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-3 md:gap-6 text-white border border-white/10 items-center shadow-2xl transition-all hover:bg-black/50 overflow-hidden max-w-full">
           <div className="flex items-center gap-2 md:gap-3 shrink-0">
             <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
-            <span className="font-semibold tracking-wide text-sm md:text-lg truncate max-w-[100px] md:max-w-none">{roomId}</span>
+            <span className="font-semibold tracking-wide text-sm md:text-lg truncate max-w-[100px] md:max-w-none">
+              {roomId}
+            </span>
           </div>
           <div className="h-4 md:h-5 w-px bg-white/20 shrink-0" />
-          <span className="font-mono text-xs md:text-base opacity-90 shrink-0">{formatDuration(callDuration)}</span>
+          <span className="font-mono text-xs md:text-base opacity-90 shrink-0">
+            {formatDuration(callDuration)}
+          </span>
           <div className="hidden md:block h-5 w-px bg-white/20 shrink-0" />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 md:h-9 md:w-9 rounded-full hover:bg-white/10 transition-colors shrink-0" onClick={copyInviteLink}>
-                {copied ? <Check className="w-4 h-4 md:w-5 md:h-5 text-green-400" /> : <Copy className="w-4 h-4 md:w-5 md:h-5 text-white/90" />}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 md:h-9 md:w-9 rounded-full hover:bg-white/10 transition-colors shrink-0"
+                onClick={copyInviteLink}
+              >
+                {copied ? (
+                  <Check className="w-4 h-4 md:w-5 md:h-5 text-green-400" />
+                ) : (
+                  <Copy className="w-4 h-4 md:w-5 md:h-5 text-white/90" />
+                )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent><p>Copy Link</p></TooltipContent>
+            <TooltipContent>
+              <p>Copy Link</p>
+            </TooltipContent>
           </Tooltip>
         </div>
       </div>
@@ -1162,52 +1305,47 @@ export default function VideoCall() {
       <div className={`w-full h-full relative overflow-hidden bg-black ${getGridClass()}`}>
         <AnimatePresence mode="popLayout">
           {/* Default Grid Mode */}
-          {!pinnedSocketId && participantsList.map((p) => {
-            // WhatsApp Style Logic
-            const isLocal = p.isLocal;
-            const isAlone = participantsList.length === 1;
-            const isOneOnOne = participantsList.length === 2;
-            const isGroup = participantsList.length > 2;
+          {!pinnedSocketId &&
+            participantsList.map((p) => {
+              // WhatsApp Style Logic
+              const isLocal = p.isLocal;
+              const isAlone = participantsList.length === 1;
+              const isOneOnOne = participantsList.length === 2;
+              const isGroup = participantsList.length > 2;
 
-            // Class Construction
-            let containerClass = "overflow-hidden transition-all duration-500 "; // No base position
+              // Class Construction
+              let containerClass = "overflow-hidden transition-all duration-500 "; // No base position
 
-            if (isLocal && !isAlone) {
-              // Local & Others present: Floating PIP (bottom-right)
-              // Stacked higher on mobile to avoid controls
-              containerClass += "fixed bottom-24 right-4 w-28 md:bottom-8 md:right-8 md:w-64 aspect-[3/4] md:aspect-video z-[60] rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/50 object-cover";
-            }
-            else if (isAlone) {
-              // Alone: Local User is Full Screen
-              containerClass += "col-span-full row-span-full w-full h-full z-0";
-            }
-            else if (isOneOnOne && !isLocal) {
-              // One-on-One Remote: Full Screen
-              containerClass += "col-span-full row-span-full w-full h-full z-0";
-            }
-            else if (p.isLocal) {
-              // Fallback for local
-              return null;
-            }
-            else {
-              // Group Remote or Fallback: Grid Cell
-              containerClass += "relative w-full h-full bg-zinc-900";
-            }
+              if (isLocal && !isAlone) {
+                // Local & Others present: Floating PIP (bottom-right)
+                // Stacked higher on mobile to avoid controls
+                containerClass +=
+                  "fixed bottom-24 right-4 w-28 md:bottom-8 md:right-8 md:w-64 aspect-[3/4] md:aspect-video z-[60] rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/50 object-cover";
+              } else if (isAlone) {
+                // Alone: Local User is Full Screen
+                containerClass += "col-span-full row-span-full w-full h-full z-0";
+              } else if (isOneOnOne && !isLocal) {
+                // One-on-One Remote: Full Screen
+                containerClass += "col-span-full row-span-full w-full h-full z-0";
+              } else if (p.isLocal) {
+                // Fallback for local
+                return null;
+              } else {
+                // Group Remote or Fallback: Grid Cell
+                containerClass += "relative w-full h-full bg-zinc-900";
+              }
 
-            return (
-              <div
-                key={p.socketId}
-                className={containerClass}
-              >
-                <RemoteParticipantVideo
-                  participant={p}
-                  onPin={setPinnedSocketId}
-                  isPinned={false}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            );
-          })}
+              return (
+                <div key={p.socketId} className={containerClass}>
+                  <RemoteParticipantVideo
+                    participant={p}
+                    onPin={setPinnedSocketId}
+                    isPinned={false}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              );
+            })}
 
           {/* Pinned Mode */}
           {pinnedSocketId && (
@@ -1215,7 +1353,7 @@ export default function VideoCall() {
               {/* Spotlight (Pinned User) */}
               <div className="flex-1 w-full h-full min-h-0 flex items-center justify-center">
                 {(() => {
-                  const pinnedUser = participantsList.find(p => p.socketId === pinnedSocketId);
+                  const pinnedUser = participantsList.find((p) => p.socketId === pinnedSocketId);
                   if (!pinnedUser) return null;
                   return (
                     <div className="w-full h-full relative aspect-video max-h-[80vh]">
@@ -1232,21 +1370,25 @@ export default function VideoCall() {
 
               {/* Filmstrip (Others) */}
               <div className="h-32 md:h-full md:w-64 flex md:flex-col gap-4 overflow-auto p-2">
-                {participantsList.filter(p => p.socketId !== pinnedSocketId).map(p => (
-                  <div key={p.socketId} className="min-w-[160px] md:min-w-0 md:w-full aspect-video relative shrink-0">
-                    <RemoteParticipantVideo
-                      participant={p}
-                      onPin={setPinnedSocketId}
-                      isPinned={false}
-                    />
-                  </div>
-                ))}
+                {participantsList
+                  .filter((p) => p.socketId !== pinnedSocketId)
+                  .map((p) => (
+                    <div
+                      key={p.socketId}
+                      className="min-w-[160px] md:min-w-0 md:w-full aspect-video relative shrink-0"
+                    >
+                      <RemoteParticipantVideo
+                        participant={p}
+                        onPin={setPinnedSocketId}
+                        isPinned={false}
+                      />
+                    </div>
+                  ))}
               </div>
             </>
           )}
-
         </AnimatePresence>
-      </div >
+      </div>
 
       {/* Captions Overlay Moved to Bottom - duplicate removed */}
 
@@ -1261,7 +1403,11 @@ export default function VideoCall() {
                 className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
                 onClick={toggleMic}
               >
-                {isMicOn ? <Mic className="w-4 h-4 md:w-5 md:h-5" /> : <MicOff className="w-4 h-4 md:w-5 md:h-5" />}
+                {isMicOn ? (
+                  <Mic className="w-4 h-4 md:w-5 md:h-5" />
+                ) : (
+                  <MicOff className="w-4 h-4 md:w-5 md:h-5" />
+                )}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -1277,7 +1423,11 @@ export default function VideoCall() {
                 className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
                 onClick={toggleVideo}
               >
-                {isVideoOn ? <VideoIcon className="w-4 h-4 md:w-5 md:h-5" /> : <VideoOff className="w-4 h-4 md:w-5 md:h-5" />}
+                {isVideoOn ? (
+                  <VideoIcon className="w-4 h-4 md:w-5 md:h-5" />
+                ) : (
+                  <VideoOff className="w-4 h-4 md:w-5 md:h-5" />
+                )}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -1290,7 +1440,7 @@ export default function VideoCall() {
               <Button
                 variant={isScreenSharing ? "secondary" : "ghost"}
                 size="icon"
-                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? 'bg-blue-500 text-white' : ''}`}
+                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? "bg-blue-500 text-white" : ""}`}
                 onClick={toggleScreenShare}
               >
                 <MonitorUp className="w-4 h-4 md:w-5 md:h-5" />
@@ -1300,8 +1450,6 @@ export default function VideoCall() {
               <p>{isScreenSharing ? "Stop Sharing" : "Share Screen"}</p>
             </TooltipContent>
           </Tooltip>
-
-
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1368,8 +1516,11 @@ export default function VideoCall() {
                           // Show locally
                           const id = Date.now().toString() + Math.random();
                           const x = Math.random() * 80 + 10;
-                          setReactions(prev => [...prev, { id, emoji, x }]);
-                          setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
+                          setReactions((prev) => [...prev, { id, emoji, x }]);
+                          setTimeout(
+                            () => setReactions((prev) => prev.filter((r) => r.id !== id)),
+                            2000
+                          );
                           setShowReactionsMenu(false);
                         }
                       }}
@@ -1428,9 +1579,9 @@ export default function VideoCall() {
                           method: "PATCH",
                           headers: {
                             "Content-Type": "application/json",
-                            Authorization: `Bearer ${token}`
+                            Authorization: `Bearer ${token}`,
                           },
-                          body: JSON.stringify({ status: "ended" })
+                          body: JSON.stringify({ status: "ended" }),
                         });
                       }
                       // 2. Redirect to summary
@@ -1445,9 +1596,10 @@ export default function VideoCall() {
                   }
                 }}
               >
-                <PhoneOff className="mr-2 w-4 h-4 md:w-5 md:h-5" /> <span className="hidden md:inline">End</span>
-              </Button >
-            </TooltipTrigger >
+                <PhoneOff className="mr-2 w-4 h-4 md:w-5 md:h-5" />{" "}
+                <span className="hidden md:inline">End</span>
+              </Button>
+            </TooltipTrigger>
             <TooltipContent>
               <p>End Call & View Summary</p>
             </TooltipContent>
@@ -1456,169 +1608,226 @@ export default function VideoCall() {
       </div>
 
       {/* Right Side Vertical Reaction Bar */}
-      <div className={`absolute right-12 top-1/2 -translate-y-1/2 z-40 hidden md:flex flex-col gap-3 p-3 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl transition-all duration-300 ${isSidebarOpen ? 'translate-x-32 opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}>
-        {
-          ["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
-            <button
-              key={emoji}
-              onClick={() => {
-                if (socket && roomId) {
-                  socket.emit("call:reaction", { roomId, emoji });
-                  // Show locally
-                  const id = Date.now().toString() + Math.random();
-                  const x = Math.random() * 80 + 10;
-                  setReactions(prev => [...prev, { id, emoji, x }]);
-                  setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2000);
-                }
-              }}
-              className="p-2 hover:bg-white/20 rounded-full text-2xl transition-transform hover:scale-125 active:scale-95"
-            >
-              {emoji}
-            </button>
-          ))
-        }
+      <div
+        className={`absolute right-12 top-1/2 -translate-y-1/2 z-40 hidden md:flex flex-col gap-3 p-3 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl transition-all duration-300 ${isSidebarOpen ? "translate-x-32 opacity-0 pointer-events-none" : "translate-x-0 opacity-100"}`}
+      >
+        {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
+          <button
+            key={emoji}
+            onClick={() => {
+              if (socket && roomId) {
+                socket.emit("call:reaction", { roomId, emoji });
+                // Show locally
+                const id = Date.now().toString() + Math.random();
+                const x = Math.random() * 80 + 10;
+                setReactions((prev) => [...prev, { id, emoji, x }]);
+                setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2000);
+              }
+            }}
+            className="p-2 hover:bg-white/20 rounded-full text-2xl transition-transform hover:scale-125 active:scale-95"
+          >
+            {emoji}
+          </button>
+        ))}
       </div>
 
       {/* Sidebar (Chat & Participants) */}
-      {
-        isSidebarOpen && (
-          <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-black/95 md:bg-black/90 backdrop-blur-xl md:rounded-3xl border-l md:border border-white/10 flex flex-col z-[70] shadow-2xl overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center">
-              <h3 className="text-white font-medium">
-                {activeTab === "chat" ? "Group Chat" : "Participants"}
-              </h3>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-white/50 hover:text-white" onClick={() => setIsSidebarOpen(false)}>
-                <X className="w-4 h-4" />
-              </Button>
+      {isSidebarOpen && (
+        <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-black/95 md:bg-black/90 backdrop-blur-xl md:rounded-3xl border-l md:border border-white/10 flex flex-col z-[70] shadow-2xl overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
+          <div className="p-4 border-b border-white/10 flex justify-between items-center">
+            <h3 className="text-white font-medium">
+              {activeTab === "chat" ? "Group Chat" : "Participants"}
+            </h3>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-white/50 hover:text-white"
+              onClick={() => setIsSidebarOpen(false)}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="flex-1 flex flex-col min-h-0"
+          >
+            <div className="px-4 pt-2">
+              <TabsList className="w-full bg-white/5">
+                <TabsTrigger value="chat" className="flex-1">
+                  Chat
+                </TabsTrigger>
+                <TabsTrigger value="participants" className="flex-1">
+                  People ({participants.size})
+                </TabsTrigger>
+                <TabsTrigger value="info" className="flex-1">
+                  Info
+                </TabsTrigger>
+              </TabsList>
             </div>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-              <div className="px-4 pt-2">
-                <TabsList className="w-full bg-white/5">
-                  <TabsTrigger value="chat" className="flex-1">Chat</TabsTrigger>
-                  <TabsTrigger value="participants" className="flex-1">People ({participants.size})</TabsTrigger>
-                  <TabsTrigger value="info" className="flex-1">Info</TabsTrigger>
-                </TabsList>
+            <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0">
+              <div className="flex-1 p-4 overflow-y-auto space-y-4" ref={chatScrollRef}>
+                {chatMessages.length === 0 && (
+                  <div className="text-center text-white/30 text-sm mt-10">
+                    No messages yet. Start the conversation!
+                  </div>
+                )}
+                {chatMessages.map((m) => (
+                  <div key={m.id} className={`flex gap-3 ${m.isLocal ? "flex-row-reverse" : ""}`}>
+                    {!m.isLocal && (
+                      <Avatar className="h-8 w-8 border border-white/10">
+                        <AvatarImage src={m.avatar} />
+                        <AvatarFallback className="text-[10px] bg-indigo-500 text-white">
+                          {getInitials(m.sender)}
+                        </AvatarFallback>
+                      </Avatar>
+                    )}
+
+                    <div
+                      className={`flex flex-col max-w-[75%] ${m.isLocal ? "items-end" : "items-start"}`}
+                    >
+                      <div
+                        className={`flex items-baseline gap-2 mb-1 ${m.isLocal ? "flex-row-reverse" : ""}`}
+                      >
+                        <span className="text-xs text-white/70 font-medium">
+                          {m.isLocal ? "You" : m.sender}
+                        </span>
+                        <span className="text-[10px] text-white/40">{m.time}</span>
+                      </div>
+                      <div
+                        className={`p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                          m.isLocal
+                            ? "bg-blue-600 text-white rounded-tr-sm"
+                            : "bg-white/10 text-white border border-white/10 rounded-tl-sm"
+                        }`}
+                      >
+                        {m.message}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
 
-              <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0">
-                <div className="flex-1 p-4 overflow-y-auto space-y-4" ref={chatScrollRef}>
-                  {chatMessages.length === 0 && (
-                    <div className="text-center text-white/30 text-sm mt-10">No messages yet. Start the conversation!</div>
-                  )}
-                  {chatMessages.map(m => (
-                    <div key={m.id} className={`flex gap-3 ${m.isLocal ? 'flex-row-reverse' : ''}`}>
-                      {!m.isLocal && (
-                        <Avatar className="h-8 w-8 border border-white/10">
-                          <AvatarImage src={m.avatar} />
-                          <AvatarFallback className="text-[10px] bg-indigo-500 text-white">{getInitials(m.sender)}</AvatarFallback>
-                        </Avatar>
+              <form
+                onSubmit={sendMessage}
+                className="p-3 border-t border-white/10 flex gap-2 items-center bg-black/50"
+              >
+                <Input
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  className="bg-white/5 border-white/10 text-white rounded-xl focus:border-blue-500/50"
+                  placeholder="Type a message..."
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  className="bg-blue-600 hover:bg-blue-700 rounded-xl"
+                  disabled={!message.trim()}
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="participants" className="flex-1 overflow-y-auto p-2 mt-0">
+              <div className="space-y-1">
+                {Array.from(participants.values()).map((p) => (
+                  <div
+                    key={p.socketId}
+                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors"
+                  >
+                    <Avatar className="h-10 w-10 border border-white/10">
+                      <AvatarImage src={p.avatar} />
+                      <AvatarFallback className="bg-primary text-white">
+                        {getInitials(p.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-white truncate">
+                          {p.name} {p.isLocal && "(You)"}
+                        </span>
+                      </div>
+                      <span className="text-xs text-white/40 capitalize">
+                        {p.isLocal ? "Host" : "Participant"}
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      {!p.isAudioOn ? (
+                        <div className="p-2 rounded-full bg-red-500/20 text-red-400">
+                          <MicOff className="w-3 h-3" />
+                        </div>
+                      ) : (
+                        <div className="p-2 rounded-full bg-green-500/20 text-green-400">
+                          <Mic className="w-3 h-3" />
+                        </div>
                       )}
-
-                      <div className={`flex flex-col max-w-[75%] ${m.isLocal ? 'items-end' : 'items-start'}`}>
-                        <div className={`flex items-baseline gap-2 mb-1 ${m.isLocal ? 'flex-row-reverse' : ''}`}>
-                          <span className="text-xs text-white/70 font-medium">{m.isLocal ? 'You' : m.sender}</span>
-                          <span className="text-[10px] text-white/40">{m.time}</span>
+                      {!p.isVideoOn ? (
+                        <div className="p-2 rounded-full bg-red-500/20 text-red-400">
+                          <VideoOff className="w-3 h-3" />
                         </div>
-                        <div className={`p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${m.isLocal
-                          ? 'bg-blue-600 text-white rounded-tr-sm'
-                          : 'bg-white/10 text-white border border-white/10 rounded-tl-sm'
-                          }`}>
-                          {m.message}
+                      ) : (
+                        <div className="p-2 rounded-full bg-green-500/20 text-green-400">
+                          <VideoIcon className="w-3 h-3" />
                         </div>
-                      </div>
+                      )}
                     </div>
-                  ))}
-                </div>
-
-                <form onSubmit={sendMessage} className="p-3 border-t border-white/10 flex gap-2 items-center bg-black/50">
-                  <Input
-                    value={message}
-                    onChange={e => setMessage(e.target.value)}
-                    className="bg-white/5 border-white/10 text-white rounded-xl focus:border-blue-500/50"
-                    placeholder="Type a message..."
-                  />
-                  <Button type="submit" size="icon" className="bg-blue-600 hover:bg-blue-700 rounded-xl" disabled={!message.trim()}>
-                    <Send className="w-4 h-4" />
-                  </Button>
-                </form>
-              </TabsContent>
-
-              <TabsContent value="participants" className="flex-1 overflow-y-auto p-2 mt-0">
-                <div className="space-y-1">
-                  {Array.from(participants.values()).map((p) => (
-                    <div key={p.socketId} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors">
-                      <Avatar className="h-10 w-10 border border-white/10">
-                        <AvatarImage src={p.avatar} />
-                        <AvatarFallback className="bg-primary text-white">{getInitials(p.name)}</AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-white truncate">{p.name} {p.isLocal && "(You)"}</span>
-                        </div>
-                        <span className="text-xs text-white/40 capitalize">{p.isLocal ? "Host" : "Participant"}</span>
-                      </div>
-                      <div className="flex gap-1">
-                        {!p.isAudioOn ? (
-                          <div className="p-2 rounded-full bg-red-500/20 text-red-400">
-                            <MicOff className="w-3 h-3" />
-                          </div>
-                        ) : (
-                          <div className="p-2 rounded-full bg-green-500/20 text-green-400">
-                            <Mic className="w-3 h-3" />
-                          </div>
-                        )}
-                        {!p.isVideoOn ? (
-                          <div className="p-2 rounded-full bg-red-500/20 text-red-400">
-                            <VideoOff className="w-3 h-3" />
-                          </div>
-                        ) : (
-                          <div className="p-2 rounded-full bg-green-500/20 text-green-400">
-                            <VideoIcon className="w-3 h-3" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </TabsContent>
-              <TabsContent value="info" className="flex-1 p-4 space-y-6 mt-0">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-semibold text-white/50 uppercase tracking-wider">Room Details</h4>
-                    <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-4">
-                      <div>
-                        <label className="text-xs text-white/40 mb-1.5 block">Room ID</label>
-                        <div className="flex items-center gap-2 bg-black/20 p-2 rounded-lg border border-white/5">
-                          <code className="text-sm font-mono text-white flex-1 truncate">{roomId}</code>
-                          <Button variant="ghost" size="icon" className="h-6 w-6 text-white/50 hover:text-white" onClick={copyInviteLink}>
-                            <Copy className="w-3 h-3" />
-                          </Button>
-                        </div>
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+            <TabsContent value="info" className="flex-1 p-4 space-y-6 mt-0">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-white/50 uppercase tracking-wider">
+                    Room Details
+                  </h4>
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-4">
+                    <div>
+                      <label className="text-xs text-white/40 mb-1.5 block">Room ID</label>
+                      <div className="flex items-center gap-2 bg-black/20 p-2 rounded-lg border border-white/5">
+                        <code className="text-sm font-mono text-white flex-1 truncate">
+                          {roomId}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-white/50 hover:text-white"
+                          onClick={copyInviteLink}
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-semibold text-white/50 uppercase tracking-wider">Invite</h4>
-                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                      <Button className="w-full bg-primary hover:bg-primary/90" onClick={copyInviteLink}>
-                        <Copy className="w-4 h-4 mr-2" />
-                        Copy Invitation Link
-                      </Button>
-                    </div>
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-white/50 uppercase tracking-wider">
+                    Invite
+                  </h4>
+                  <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                    <Button
+                      className="w-full bg-primary hover:bg-primary/90"
+                      onClick={copyInviteLink}
+                    >
+                      <Copy className="w-4 h-4 mr-2" />
+                      Copy Invitation Link
+                    </Button>
                   </div>
                 </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-        )
-      }
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      )}
 
       {/* Helper Components */}
       {/* Debug UI Removed */}
       <AnimatePresence>
-        {reactions.map(r => (
+        {reactions.map((r) => (
           <motion.div
             key={r.id}
             initial={{ opacity: 0, y: 0, scale: 0.5, filter: "blur(0px)" }}
@@ -1626,7 +1835,7 @@ export default function VideoCall() {
               opacity: [0, 1, 1, 0],
               y: -300,
               scale: [0.5, 1.5, 2],
-              filter: ["blur(0px)", "blur(2px)", "blur(8px)"]
+              filter: ["blur(0px)", "blur(2px)", "blur(8px)"],
             }}
             exit={{ opacity: 0 }}
             transition={{ duration: 2.5, ease: "easeOut" }}
@@ -1639,8 +1848,6 @@ export default function VideoCall() {
           </motion.div>
         ))}
       </AnimatePresence>
-
-
 
       {/* Voice Reactive Effects Overlay */}
       <VoiceEffectsOverlay transcript={transcript} isEnabled={true} />
@@ -1676,7 +1883,6 @@ export default function VideoCall() {
             <DialogTitle>Call Settings</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-
             {/* Camera Selection */}
             <div className="space-y-2">
               <Label>Camera</Label>
@@ -1688,7 +1894,7 @@ export default function VideoCall() {
                   <SelectValue placeholder="Select Camera" />
                 </SelectTrigger>
                 <SelectContent className="bg-zinc-900 border-white/10 text-white">
-                  {videoDevices.map(device => (
+                  {videoDevices.map((device) => (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
                       {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
                     </SelectItem>
@@ -1708,7 +1914,7 @@ export default function VideoCall() {
                   <SelectValue placeholder="Select Microphone" />
                 </SelectTrigger>
                 <SelectContent className="bg-zinc-900 border-white/10 text-white">
-                  {audioInputDevices.map(device => (
+                  {audioInputDevices.map((device) => (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
                       {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
                     </SelectItem>
@@ -1729,7 +1935,7 @@ export default function VideoCall() {
                     <SelectValue placeholder="Select Speaker" />
                   </SelectTrigger>
                   <SelectContent className="bg-zinc-900 border-white/10 text-white">
-                    {audioOutputDevices.map(device => (
+                    {audioOutputDevices.map((device) => (
                       <SelectItem key={device.deviceId} value={device.deviceId}>
                         {device.label || `Speaker ${device.deviceId.slice(0, 5)}...`}
                       </SelectItem>
@@ -1738,10 +1944,9 @@ export default function VideoCall() {
                 </Select>
               </div>
             )}
-
           </div>
         </DialogContent>
       </Dialog>
-    </div >
+    </div>
   );
 }

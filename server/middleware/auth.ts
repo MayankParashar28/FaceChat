@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger";
 import type { Request, Response, NextFunction } from "express";
 import mongoose from "mongoose";
 import { verifyFirebaseToken } from "../firebase/admin";
@@ -22,11 +23,7 @@ declare global {
  * Authentication middleware that verifies Firebase ID token
  * and attaches user information to the request object
  */
-export async function authenticate(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
+export async function authenticate(req: Request, res: Response, next: NextFunction) {
   try {
     // Get token from Authorization header or firebaseToken in body
     const authHeader = req.headers.authorization;
@@ -78,7 +75,7 @@ export async function authenticate(
         uid = token;
         name = token.startsWith("mock-") ? token.replace("mock-", "") : token;
         email = `${name.toLowerCase()}@demo.local`;
-        
+
         try {
           dbUser = await mongoService.createOrUpdateUser({
             firebaseUid: uid,
@@ -102,7 +99,7 @@ export async function authenticate(
 
     next();
   } catch (error: any) {
-    console.error("Authentication error:", error);
+    logger.error("Authentication error:", error);
     next();
   }
 }
@@ -111,11 +108,7 @@ export async function authenticate(
  * Optional authentication - doesn't fail if no token is provided
  * Useful for routes that work with or without auth
  */
-export async function optionalAuthenticate(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
+export async function optionalAuthenticate(req: Request, res: Response, next: NextFunction) {
   try {
     const authHeader = req.headers.authorization;
     let token: string | undefined;
@@ -148,7 +141,7 @@ export async function optionalAuthenticate(
         }
       } catch (error) {
         // Invalid token, but continue without auth
-        console.log("Optional auth: Invalid token provided, continuing without auth");
+        logger.info("Optional auth: Invalid token provided, continuing without auth");
       }
     }
 
@@ -163,18 +156,14 @@ export async function optionalAuthenticate(
  * Authorization middleware - ensures user owns the resource
  * Must be used after authenticate middleware
  */
-export function requireOwnership(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
+export function requireOwnership(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(401).json({ error: "Authentication required" });
   }
 
   // Check if userId in params/query matches authenticated user
   const requestedUserId = req.params.userId || req.query.userId;
-  
+
   if (requestedUserId && requestedUserId !== req.user.uid) {
     // Also check if it's a MongoDB ID and matches the user
     if (req.user.dbUser && requestedUserId !== req.user.dbUser._id.toString()) {

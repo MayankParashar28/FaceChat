@@ -10,7 +10,7 @@ export interface UserSettings {
   audioDeviceId: string;
   videoDeviceId: string;
   audioOutputDeviceId: string;
-};
+}
 
 const DEFAULT_SETTINGS: UserSettings = {
   autoJoinAudio: false,
@@ -87,4 +87,3 @@ export function useSettings() {
     resetSettings,
   };
 }
-

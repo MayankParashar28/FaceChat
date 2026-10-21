@@ -7,10 +7,37 @@ import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Video, Settings, LogOut, LayoutDashboard, MessageSquare, User, Search, Send, Paperclip, Smile, MoreVertical, Phone, VideoIcon, Pin, Check, CheckCheck, Image as ImageIcon, ArrowLeft, Lock, Unlock } from "lucide-react";
+import {
+  Video,
+  Settings,
+  LogOut,
+  LayoutDashboard,
+  MessageSquare,
+  User,
+  Search,
+  Send,
+  Paperclip,
+  Smile,
+  MoreVertical,
+  Phone,
+  VideoIcon,
+  Pin,
+  Check,
+  CheckCheck,
+  Image as ImageIcon,
+  ArrowLeft,
+  Lock,
+  Unlock,
+} from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
@@ -58,7 +85,7 @@ type SearchedUser = {
   username: string;
   email: string;
   avatar?: string;
-  connectionStatus?: 'connected' | 'discovered' | 'none';
+  connectionStatus?: "connected" | "discovered" | "none";
 };
 
 export default function Chats() {
@@ -103,7 +130,6 @@ export default function Chats() {
     userRef.current = user;
   }, [user]);
 
-
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((user) => {
       setFirebaseUser(user);
@@ -146,12 +172,12 @@ export default function Chats() {
       if (!res.ok) throw new Error("Failed to fetch conversations");
       return res.json();
     },
-    enabled: !!user?.uid
+    enabled: !!user?.uid,
   });
 
   useEffect(() => {
     const newSocket = io(window.location.origin, {
-      transports: ['websocket', 'polling']
+      transports: ["websocket", "polling"],
     });
 
     newSocket.on("connect", async () => {
@@ -182,16 +208,16 @@ export default function Chats() {
         ...newMessage,
         createdAt: new Date(newMessage.createdAt),
         status: initialStatus,
-        isOptimistic: false // Real message from server
+        isOptimistic: false, // Real message from server
       };
 
       if (activeChatId === newMessage.conversationId) {
-        setMessages(prev => {
+        setMessages((prev) => {
           // First, check if this message already exists (by ID) - avoid duplicates
-          const existingById = prev.find(m => m.id === normalizedMessage.id && !m.isOptimistic);
+          const existingById = prev.find((m) => m.id === normalizedMessage.id && !m.isOptimistic);
           if (existingById) {
             // Message already exists, just update it (in case status changed)
-            return prev.map(m => m.id === normalizedMessage.id ? normalizedMessage : m);
+            return prev.map((m) => (m.id === normalizedMessage.id ? normalizedMessage : m));
           }
 
           // Ch(prevent double appearanceck if this message is currently being replaced e)
@@ -201,7 +227,8 @@ export default function Chats() {
 
           // Check if this is a confirmation of an optimistic message
           // For messages from current user, match by content and recent timestamp
-          const isFromCurrentUser = normalizedMessage.senderId === currentUser?.uid ||
+          const isFromCurrentUser =
+            normalizedMessage.senderId === currentUser?.uid ||
             (normalizedMessage.sender as any)?.firebaseUid === currentUser?.uid ||
             normalizedMessage.sender?.id === currentUser?.uid;
 
@@ -210,10 +237,12 @@ export default function Chats() {
             // Match by content (exact match) and recent timestamp
             const contentToMatch = normalizedMessage.content.trim();
             const optimisticIndex = prev.findIndex(
-              m => m.isOptimistic &&
+              (m) =>
+                m.isOptimistic &&
                 m.senderId === currentUser?.uid &&
                 m.content.trim() === contentToMatch &&
-                Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) < 30000 // Within 30 seconds
+                Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) <
+                  30000 // Within 30 seconds
             );
 
             if (optimisticIndex !== -1) {
@@ -229,28 +258,32 @@ export default function Chats() {
               const finalStatus: "sent" | "delivered" | "seen" = "sent";
 
               // Create new array and replace in place - this ensures atomic update
-              const newMessages = prev.map((m, idx) => {
-                if (idx === optimisticIndex) {
-                  // Replace optimistic with real message, always start with "sent"
-                  return {
-                    ...normalizedMessage,
-                    status: finalStatus,
-                    isOptimistic: false // Ensure it's marked as real
-                  };
-                }
-                // Also remove any other optimistic messages with same content (safety)
-                if (m.isOptimistic &&
-                  m.senderId === currentUser?.uid &&
-                  m.content.trim() === contentToMatch &&
-                  idx !== optimisticIndex) {
-                  return null; // Mark for removal
-                }
-                return m;
-              }).filter(Boolean) as Message[];
+              const newMessages = prev
+                .map((m, idx) => {
+                  if (idx === optimisticIndex) {
+                    // Replace optimistic with real message, always start with "sent"
+                    return {
+                      ...normalizedMessage,
+                      status: finalStatus,
+                      isOptimistic: false, // Ensure it's marked as real
+                    };
+                  }
+                  // Also remove any other optimistic messages with same content (safety)
+                  if (
+                    m.isOptimistic &&
+                    m.senderId === currentUser?.uid &&
+                    m.content.trim() === contentToMatch &&
+                    idx !== optimisticIndex
+                  ) {
+                    return null; // Mark for removal
+                  }
+                  return m;
+                })
+                .filter(Boolean) as Message[];
 
               // Remove from pending messages
               if (optimisticMsg.tempId) {
-                setPendingMessages(prevPending => {
+                setPendingMessages((prevPending) => {
                   const newPending = new Map(prevPending);
                   newPending.delete(optimisticMsg.tempId!);
                   return newPending;
@@ -271,12 +304,14 @@ export default function Chats() {
           }
 
           // Check for duplicates
-          const duplicateExists = prev.find(m =>
-            m.id === normalizedMessage.id ||
-            (!m.isOptimistic &&
-              m.content.trim() === normalizedMessage.content.trim() &&
-              m.senderId === normalizedMessage.senderId &&
-              Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) < 3000)
+          const duplicateExists = prev.find(
+            (m) =>
+              m.id === normalizedMessage.id ||
+              (!m.isOptimistic &&
+                m.content.trim() === normalizedMessage.content.trim() &&
+                m.senderId === normalizedMessage.senderId &&
+                Math.abs(new Date(m.createdAt).getTime() - normalizedMessage.createdAt.getTime()) <
+                  3000)
           );
 
           if (duplicateExists) return prev;
@@ -287,14 +322,18 @@ export default function Chats() {
 
         // Only scroll if it's a new message from another user (WhatsApp behavior)
         // Don't scroll for our own messages - they're already visible
-        if (newMessage.senderId !== currentUser?.uid &&
-          (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid) {
+        if (
+          newMessage.senderId !== currentUser?.uid &&
+          (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid
+        ) {
           setTimeout(() => scrollToBottom(), 100);
         }
 
         // If message is from another user and we're viewing the chat, mark as seen
-        if (newMessage.senderId !== currentUser?.uid &&
-          (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid) {
+        if (
+          newMessage.senderId !== currentUser?.uid &&
+          (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid
+        ) {
           setTimeout(() => {
             newSocket.emit("message:seen", { messageId: newMessage.id, userId: currentUser?.uid });
           }, 500);
@@ -305,11 +344,11 @@ export default function Chats() {
     });
 
     newSocket.on("message:status", ({ messageId, status }) => {
-      setMessages(prev => {
+      setMessages((prev) => {
         // Find and update the message by ID
-        const messageIndex = prev.findIndex(m =>
-          (!m.isOptimistic && m.id === messageId) ||
-          (m.isOptimistic && m.tempId === messageId)
+        const messageIndex = prev.findIndex(
+          (m) =>
+            (!m.isOptimistic && m.id === messageId) || (m.isOptimistic && m.tempId === messageId)
         );
 
         if (messageIndex === -1) return prev;
@@ -320,14 +359,16 @@ export default function Chats() {
 
         // Remove duplicates (optimistic + real with same content)
         const seenIds = new Set<string>();
-        return updated.filter(msg => {
+        return updated.filter((msg) => {
           // Remove optimistic if real message with same content exists
           if (msg.isOptimistic) {
-            const hasReal = updated.some(m =>
-              !m.isOptimistic &&
-              m.content.trim() === msg.content.trim() &&
-              m.senderId === msg.senderId &&
-              Math.abs(new Date(m.createdAt).getTime() - new Date(msg.createdAt).getTime()) < 10000
+            const hasReal = updated.some(
+              (m) =>
+                !m.isOptimistic &&
+                m.content.trim() === msg.content.trim() &&
+                m.senderId === msg.senderId &&
+                Math.abs(new Date(m.createdAt).getTime() - new Date(msg.createdAt).getTime()) <
+                  10000
             );
             if (hasReal) return false;
           }
@@ -347,20 +388,20 @@ export default function Chats() {
 
       // If we have a tempId, remove the optimistic message
       if (tempId) {
-        setMessages(prev => prev.filter(msg => msg.tempId !== tempId));
-        setPendingMessages(prev => {
+        setMessages((prev) => prev.filter((msg) => msg.tempId !== tempId));
+        setPendingMessages((prev) => {
           const newMap = new Map(prev);
           newMap.delete(tempId);
           return newMap;
         });
       } else {
         // Remove the most recent optimistic message if no tempId provided
-        setMessages(prev => {
-          const optimisticIndex = prev.findLastIndex(msg => msg.isOptimistic);
+        setMessages((prev) => {
+          const optimisticIndex = prev.findLastIndex((msg) => msg.isOptimistic);
           if (optimisticIndex !== -1) {
             const removed = prev[optimisticIndex];
             if (removed.tempId) {
-              setPendingMessages(prevPending => {
+              setPendingMessages((prevPending) => {
                 const newPending = new Map(prevPending);
                 newPending.delete(removed.tempId!);
                 return newPending;
@@ -378,23 +419,21 @@ export default function Chats() {
 
     newSocket.on("message:pinned", ({ messageId, isPinned }) => {
       const activeChatId = selectedChatRef.current;
-      setMessages(prev => prev.map(msg =>
-        msg.id === messageId ? { ...msg, isPinned } : msg
-      ));
+      setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, isPinned } : msg)));
     });
 
     newSocket.on("user:typing", ({ userId, userName, conversationId }) => {
       // Only show typing indicator for the current conversation
       if (conversationId === selectedChatRef.current) {
-        setTypingUsers(prev => new Set(prev).add(userId));
-        setTypingUserNames(prev => new Map(prev).set(userId, userName || "Someone"));
+        setTypingUsers((prev) => new Set(prev).add(userId));
+        setTypingUserNames((prev) => new Map(prev).set(userId, userName || "Someone"));
         setTimeout(() => {
-          setTypingUsers(prev => {
+          setTypingUsers((prev) => {
             const newSet = new Set(prev);
             newSet.delete(userId);
             return newSet;
           });
-          setTypingUserNames(prev => {
+          setTypingUserNames((prev) => {
             const newMap = new Map(prev);
             newMap.delete(userId);
             return newMap;
@@ -406,12 +445,12 @@ export default function Chats() {
     newSocket.on("user:stopped-typing", ({ userId, conversationId }) => {
       // Only clear typing indicator for the current conversation
       if (conversationId === selectedChatRef.current) {
-        setTypingUsers(prev => {
+        setTypingUsers((prev) => {
           const newSet = new Set(prev);
           newSet.delete(userId);
           return newSet;
         });
-        setTypingUserNames(prev => {
+        setTypingUserNames((prev) => {
           const newMap = new Map(prev);
           newMap.delete(userId);
           return newMap;
@@ -420,7 +459,7 @@ export default function Chats() {
     });
 
     newSocket.on("user:status", ({ userId, online }) => {
-      setOnlineUsers(prev => {
+      setOnlineUsers((prev) => {
         const newSet = new Set(prev);
         if (online) {
           newSet.add(userId);
@@ -432,10 +471,10 @@ export default function Chats() {
     });
 
     newSocket.on("users:online-list", ({ onlineUserIds }: { onlineUserIds: string[] }) => {
-      setOnlineUsers(prev => {
+      setOnlineUsers((prev) => {
         const newSet = new Set(prev);
         if (Array.isArray(onlineUserIds)) {
-          onlineUserIds.forEach(id => newSet.add(id));
+          onlineUserIds.forEach((id) => newSet.add(id));
         }
         return newSet;
       });
@@ -475,23 +514,25 @@ export default function Chats() {
       let isActive = true;
 
       // Get auth token and fetch messages
-      getToken().then(token => {
-        if (!token) throw new Error("Authentication required");
-        return fetch(`/api/conversations/${currentChatId}/messages?limit=30`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          credentials: "include",
-        });
-      }).then(res => {
-        if (!res.ok) throw new Error("Failed to fetch messages");
-        return res.json();
-      })
+      getToken()
+        .then((token) => {
+          if (!token) throw new Error("Authentication required");
+          return fetch(`/api/conversations/${currentChatId}/messages?limit=30`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            credentials: "include",
+          });
+        })
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to fetch messages");
+          return res.json();
+        })
         .then((data: Message[]) => {
           if (!isActive) return;
           // Ensure data is an array before mapping
           const messagesArray = Array.isArray(data) ? data : [];
-          const normalizedMessages = messagesArray.map(msg => {
+          const normalizedMessages = messagesArray.map((msg) => {
             // Determine status for loaded messages
             let messageStatus: "sent" | "delivered" | "seen" | undefined = msg.status;
             if (!messageStatus && msg.senderId === user?.uid) {
@@ -503,14 +544,14 @@ export default function Chats() {
             return {
               ...msg,
               createdAt: new Date(msg.createdAt),
-              status: messageStatus
+              status: messageStatus,
             };
           });
           setMessages(normalizedMessages);
           setHasMoreMessages(messagesArray.length === 30); // If we got 30 messages, there might be more
 
           // Mark all messages from others as seen
-          normalizedMessages.forEach(msg => {
+          normalizedMessages.forEach((msg) => {
             if (msg.senderId !== user?.uid) {
               socket.emit("message:seen", { messageId: msg.id, userId: user.uid });
             }
@@ -521,9 +562,13 @@ export default function Chats() {
           setTimeout(() => {
             const findViewport = () => {
               if (!scrollAreaRef.current) return null;
-              return scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement ||
-                scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
-                (scrollAreaRef.current.firstElementChild as HTMLElement);
+              return (
+                (scrollAreaRef.current.querySelector(
+                  "[data-radix-scroll-area-viewport]"
+                ) as HTMLElement) ||
+                (scrollAreaRef.current.querySelector(".rt-ScrollAreaViewport") as HTMLElement) ||
+                (scrollAreaRef.current.firstElementChild as HTMLElement)
+              );
             };
             const viewport = findViewport();
             if (viewport) {
@@ -532,7 +577,7 @@ export default function Chats() {
             }
           }, 100);
         })
-        .catch(error => {
+        .catch((error) => {
           console.error("Error fetching messages:", error);
           if (isActive) {
             setMessages([]);
@@ -581,10 +626,10 @@ export default function Chats() {
         return;
       }
 
-      const normalizedMessages = messagesArray.map(msg => ({
+      const normalizedMessages = messagesArray.map((msg) => ({
         ...msg,
         createdAt: new Date(msg.createdAt),
-        status: msg.status
+        status: msg.status,
       }));
 
       // Store scroll position before adding messages
@@ -592,9 +637,13 @@ export default function Chats() {
       const findViewport = () => {
         if (!scrollAreaRef.current) return null;
         // Try multiple selectors to find the viewport
-        return scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement ||
-          scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
-          (scrollAreaRef.current.firstElementChild as HTMLElement);
+        return (
+          (scrollAreaRef.current.querySelector(
+            "[data-radix-scroll-area-viewport]"
+          ) as HTMLElement) ||
+          (scrollAreaRef.current.querySelector(".rt-ScrollAreaViewport") as HTMLElement) ||
+          (scrollAreaRef.current.firstElementChild as HTMLElement)
+        );
       };
       const viewport = findViewport();
 
@@ -602,7 +651,7 @@ export default function Chats() {
       const previousScrollTop = viewport?.scrollTop || 0;
 
       // Prepend older messages
-      setMessages(prev => [...normalizedMessages, ...prev]);
+      setMessages((prev) => [...normalizedMessages, ...prev]);
       setHasMoreMessages(messagesArray.length === 30);
 
       // Restore scroll position after messages are rendered
@@ -626,20 +675,22 @@ export default function Chats() {
     if (!selectedChat || messages.length === 0) return;
 
     const cleanupDuplicates = () => {
-      setMessages(prev => {
+      setMessages((prev) => {
         const seenIds = new Set<string>();
-        return prev.filter(msg => {
+        return prev.filter((msg) => {
           // Remove duplicate IDs
           if (seenIds.has(msg.id) && !msg.isOptimistic) return false;
           seenIds.add(msg.id);
 
           // Remove optimistic if real message with same content exists
           if (msg.isOptimistic) {
-            const hasReal = prev.some(m =>
-              !m.isOptimistic &&
-              m.content.trim() === msg.content.trim() &&
-              m.senderId === msg.senderId &&
-              Math.abs(new Date(m.createdAt).getTime() - new Date(msg.createdAt).getTime()) < 15000
+            const hasReal = prev.some(
+              (m) =>
+                !m.isOptimistic &&
+                m.content.trim() === msg.content.trim() &&
+                m.senderId === msg.senderId &&
+                Math.abs(new Date(m.createdAt).getTime() - new Date(msg.createdAt).getTime()) <
+                  15000
             );
             if (hasReal) return false;
           }
@@ -661,9 +712,11 @@ export default function Chats() {
     const findViewport = () => {
       if (!scrollAreaRef.current) return null;
       // Radix ScrollArea has a viewport element - try multiple selectors
-      return scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement ||
-        scrollAreaRef.current.querySelector('.rt-ScrollAreaViewport') as HTMLElement ||
-        (scrollAreaRef.current.firstElementChild as HTMLElement);
+      return (
+        (scrollAreaRef.current.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement) ||
+        (scrollAreaRef.current.querySelector(".rt-ScrollAreaViewport") as HTMLElement) ||
+        (scrollAreaRef.current.firstElementChild as HTMLElement)
+      );
     };
 
     const setupScrollListener = (element: HTMLElement) => {
@@ -674,8 +727,8 @@ export default function Chats() {
         }
       };
 
-      element.addEventListener('scroll', handleScroll);
-      return () => element.removeEventListener('scroll', handleScroll);
+      element.addEventListener("scroll", handleScroll);
+      return () => element.removeEventListener("scroll", handleScroll);
     };
 
     const viewport = findViewport();
@@ -692,8 +745,6 @@ export default function Chats() {
 
     return setupScrollListener(viewport);
   }, [selectedChat, hasMoreMessages, isLoadingOlder, loadOlderMessages]);
-
-
 
   const emojis = ["😊", "😂", "❤️", "👍", "🎉", "🔥", "✨", "👏"];
 
@@ -715,10 +766,12 @@ export default function Chats() {
   // Restore or auto-select valid conversation on initial conversations load
   useEffect(() => {
     if (conversations.length > 0 && !selectedChat) {
-      const savedId = typeof window !== "undefined" ? (
-        new URLSearchParams(window.location.search).get("id") || localStorage.getItem("facechat_selected_chat")
-      ) : null;
-      const validSaved = conversations.find(c => c.id === savedId);
+      const savedId =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("id") ||
+            localStorage.getItem("facechat_selected_chat")
+          : null;
+      const validSaved = conversations.find((c) => c.id === savedId);
       if (validSaved) {
         handleSelectChat(validSaved.id);
       } else if (conversations[0]?.id) {
@@ -744,16 +797,16 @@ export default function Chats() {
         sender: {
           id: user.uid,
           name: user.displayName || user.username || "You",
-          username: user.username || "you"
+          username: user.username || "you",
         },
         status: "sent",
         isOptimistic: true,
-        tempId: tempId
+        tempId: tempId,
       };
 
       // Add optimistic message immediately
-      setMessages(prev => [...prev, optimisticMessage]);
-      setPendingMessages(prev => new Map(prev).set(tempId, optimisticMessage));
+      setMessages((prev) => [...prev, optimisticMessage]);
+      setPendingMessages((prev) => new Map(prev).set(tempId, optimisticMessage));
 
       // Scroll to bottom to show the new message
       setTimeout(() => scrollToBottom(true), 50);
@@ -771,16 +824,16 @@ export default function Chats() {
       socket.emit("message:send", {
         conversationId: selectedChat,
         senderId: user.uid,
-        content: messageContent
+        content: messageContent,
       });
 
       // Set timeout to handle potential errors (if message doesn't arrive within 10 seconds)
       setTimeout(() => {
-        setPendingMessages(prev => {
+        setPendingMessages((prev) => {
           if (prev.has(tempId)) {
             // Message didn't arrive, might have failed
             // Remove optimistic message if it's still pending
-            setMessages(prevMsgs => prevMsgs.filter(msg => msg.tempId !== tempId));
+            setMessages((prevMsgs) => prevMsgs.filter((msg) => msg.tempId !== tempId));
             const newMap = new Map(prev);
             newMap.delete(tempId);
             return newMap;
@@ -814,10 +867,10 @@ export default function Chats() {
 
       // DISCOVERY CHECK
       const discoveryRes = await fetch(`/api/discovery/${userId}`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (!discoveryRes.ok) {
@@ -826,17 +879,18 @@ export default function Chats() {
       } else {
         const discoveryData = await discoveryRes.json();
 
-        if (discoveryData.status === 'discovered' && !discoveryData.messagingUnlocked) {
+        if (discoveryData.status === "discovered" && !discoveryData.messagingUnlocked) {
           // SHOW LOCKED UI - User A has discovered B, but B hasn't discovered A yet.
           toast({
             variant: "destructive",
             title: "🔒 Messaging Locked",
-            description: "You have discovered this user, but they must discover you back to unlock messaging.",
+            description:
+              "You have discovered this user, but they must discover you back to unlock messaging.",
           });
           return; // STOP HERE
         }
 
-        if (discoveryData.status === 'matched') {
+        if (discoveryData.status === "matched") {
           // It's a Match!
           toast({
             title: "🎉 It's a Match!",
@@ -846,20 +900,20 @@ export default function Chats() {
         }
       }
 
-      const res = await fetch('/api/conversations', {
-        method: 'POST',
+      const res = await fetch("/api/conversations", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           participantIds: [user.uid, userId],
-        })
+        }),
       });
 
       if (!res.ok) {
         const error = await res.json();
-        console.error('Failed to create conversation:', error);
+        console.error("Failed to create conversation:", error);
         return;
       }
 
@@ -871,7 +925,7 @@ export default function Chats() {
         name: conversation.name,
         isGroup: conversation.isGroup,
         participants: conversation.participants,
-        unreadCount: 0
+        unreadCount: 0,
       });
 
       // Clear search
@@ -884,7 +938,7 @@ export default function Chats() {
       // Refetch conversations in the background
       refetchConversations();
     } catch (error) {
-      console.error('Error creating conversation:', error);
+      console.error("Error creating conversation:", error);
     }
   };
 
@@ -912,7 +966,7 @@ export default function Chats() {
       socket.emit("typing:start", {
         conversationId: selectedChat,
         userId: user.uid,
-        userName: user.displayName || "You"
+        userName: user.displayName || "You",
       });
 
       if (typingTimeoutRef.current) {
@@ -932,7 +986,7 @@ export default function Chats() {
         setIsSearching(true);
         try {
           const users = await searchUsers(searchQuery);
-          setSearchedUsers(users.filter(u => u.id !== user?.uid)); // Exclude current user
+          setSearchedUsers(users.filter((u) => u.id !== user?.uid)); // Exclude current user
         } catch (error) {
           console.error("Error searching users:", error);
           setSearchedUsers([]);
@@ -948,40 +1002,53 @@ export default function Chats() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery, user?.uid]);
 
-  const filteredConversations = conversations.filter(conv => {
+  const filteredConversations = conversations.filter((conv) => {
     const displayName = conv.isGroup
-      ? (conv.name || "Group Chat")
-      : (conv.participants.find(p => p.firebaseUid !== user?.uid)?.name || "Unknown");
+      ? conv.name || "Group Chat"
+      : conv.participants.find((p) => p.firebaseUid !== user?.uid)?.name || "Unknown";
     return displayName.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   // Use newConversation as fallback if not in conversations list yet
-  const selectedConversation = conversations.find(c => c.id === selectedChat) ||
+  const selectedConversation =
+    conversations.find((c) => c.id === selectedChat) ||
     (newConversation?.id === selectedChat ? newConversation : null);
-  const pinnedMessages = messages.filter(m => m.isPinned);
+  const pinnedMessages = messages.filter((m) => m.isPinned);
 
   // Clear newConversation once it appears in the conversations list
   useEffect(() => {
-    if (newConversation && conversations.find(c => c.id === newConversation.id)) {
+    if (newConversation && conversations.find((c) => c.id === newConversation.id)) {
       setNewConversation(null);
     }
   }, [conversations, newConversation]);
 
   const getConversationName = (conv: Conversation) => {
     if (conv.isGroup) return conv.name || "Group Chat";
-    const otherUser = conv.participants.find(p => p.id !== user?.uid && p.firebaseUid !== user?.uid);
+    const otherUser = conv.participants.find(
+      (p) => p.id !== user?.uid && p.firebaseUid !== user?.uid
+    );
     return otherUser?.name || "Unknown";
   };
 
   const getConversationAvatar = (conv: Conversation) => {
     if (conv.isGroup) return conv.name?.substring(0, 2).toUpperCase() || "GC";
-    const otherUser = conv.participants.find(p => p.id !== user?.uid && p.firebaseUid !== user?.uid);
-    return otherUser?.name.split(' ').map(n => n[0]).join('').toUpperCase() || "??";
+    const otherUser = conv.participants.find(
+      (p) => p.id !== user?.uid && p.firebaseUid !== user?.uid
+    );
+    return (
+      otherUser?.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase() || "??"
+    );
   };
 
   const isUserOnline = (conv: Conversation) => {
     if (conv.isGroup) return false;
-    const otherUser = conv.participants.find(p => p.id !== user?.uid && p.firebaseUid !== user?.uid);
+    const otherUser = conv.participants.find(
+      (p) => p.id !== user?.uid && p.firebaseUid !== user?.uid
+    );
     if (!otherUser) return false;
     return (
       onlineUsers.has(otherUser.id) ||
@@ -993,9 +1060,10 @@ export default function Chats() {
   const isUserTyping = () => {
     if (!selectedConversation) return false;
     const typingParticipant = selectedConversation.participants.find(
-      p => p.id !== user?.uid && p.firebaseUid !== user?.uid && (
-        typingUsers.has(p.id) || (p.firebaseUid && typingUsers.has(p.firebaseUid))
-      )
+      (p) =>
+        p.id !== user?.uid &&
+        p.firebaseUid !== user?.uid &&
+        (typingUsers.has(p.id) || (p.firebaseUid && typingUsers.has(p.firebaseUid)))
     );
     return !!typingParticipant;
   };
@@ -1003,13 +1071,17 @@ export default function Chats() {
   const getTypingUser = () => {
     if (!selectedConversation) return null;
     const typingParticipant = selectedConversation.participants.find(
-      p => p.id !== user?.uid && p.firebaseUid !== user?.uid && (
-        typingUsers.has(p.id) || (p.firebaseUid && typingUsers.has(p.firebaseUid))
-      )
+      (p) =>
+        p.id !== user?.uid &&
+        p.firebaseUid !== user?.uid &&
+        (typingUsers.has(p.id) || (p.firebaseUid && typingUsers.has(p.firebaseUid)))
     );
     if (typingParticipant) {
-      const typingName = typingUserNames.get(typingParticipant.id) ||
-                         (typingParticipant.firebaseUid ? typingUserNames.get(typingParticipant.firebaseUid) : undefined);
+      const typingName =
+        typingUserNames.get(typingParticipant.id) ||
+        (typingParticipant.firebaseUid
+          ? typingUserNames.get(typingParticipant.firebaseUid)
+          : undefined);
       return typingName || typingParticipant.name;
     }
     return null;
@@ -1017,17 +1089,15 @@ export default function Chats() {
 
   const formatTime = (date: Date) => {
     const d = new Date(date);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
   // Resolve current user's participant.id within a conversation (maps Firebase UID -> DB participant id)
   const getCurrentParticipantId = (conv?: Conversation | null) => {
     if (!conv || !user?.uid) return null;
-    const me = conv.participants.find(p => p.firebaseUid === user.uid);
+    const me = conv.participants.find((p) => p.firebaseUid === user.uid);
     return me?.id || null;
   };
-
-
 
   // Determine if a message was sent by the current user
   const isMessageFromMe = (msg: Message, conv?: Conversation | null) => {
@@ -1038,7 +1108,11 @@ export default function Chats() {
     if (!candidates.length) return false;
 
     // Direct match on Firebase UID or participant ID
-    if (candidates.some((id) => id === myFirebaseUid || (myParticipantId ? id === myParticipantId : false))) {
+    if (
+      candidates.some(
+        (id) => id === myFirebaseUid || (myParticipantId ? id === myParticipantId : false)
+      )
+    ) {
       return true;
     }
 
@@ -1056,10 +1130,10 @@ export default function Chats() {
     try {
       const token = await firebaseUser?.getIdToken();
       const res = await fetch(`/api/conversations/${conversationId}`, {
-        method: 'DELETE',
+        method: "DELETE",
         headers: {
-          Authorization: `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (res.ok) {
@@ -1083,11 +1157,11 @@ export default function Chats() {
 
     try {
       const token = await firebaseUser.getIdToken();
-      const res = await fetch(`/api/chat/${selectedChat}/clear`, {
-        method: 'POST',
+      const res = await fetch(`/api/conversations/${selectedChat}/clear`, {
+        method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (res.ok) {
@@ -1113,19 +1187,24 @@ export default function Chats() {
     if (!selectedConversation || !firebaseUser) return;
 
     // Find the other user
-    const otherUser = selectedConversation.participants.find(p => p.firebaseUid !== user?.uid);
+    const otherUser = selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid);
     if (!otherUser) return;
 
-    if (!confirm(`Are you sure you want to block ${otherUser.name}? You will no longer receive messages from them.`)) return;
+    if (
+      !confirm(
+        `Are you sure you want to block ${otherUser.name}? You will no longer receive messages from them.`
+      )
+    )
+      return;
 
     try {
       const token = await firebaseUser.getIdToken();
       // Use the MongoDB ID (otherUser.id) for the block endpoint
       const res = await fetch(`/api/discovery/block/${otherUser.id}`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (res.ok) {
@@ -1162,7 +1241,9 @@ export default function Chats() {
     <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl">
       <div className="flex-1 flex overflow-hidden">
         {/* Chat List */}
-        <div className={`${selectedChat ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-white/10 flex-col bg-white/5 backdrop-blur-sm h-full`}>
+        <div
+          className={`${selectedChat ? "hidden md:flex" : "flex"} w-full md:w-80 border-r border-white/10 flex-col bg-white/5 backdrop-blur-sm h-full`}
+        >
           <div className="p-4 border-b border-white/10">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1180,7 +1261,9 @@ export default function Chats() {
               {/* Show searched users first if search is active */}
               {searchedUsers.length > 0 && (
                 <div className="mb-4">
-                  <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">Search Results</p>
+                  <p className="text-xs font-semibold text-muted-foreground px-3 py-2 uppercase tracking-wider">
+                    Search Results
+                  </p>
                   {searchedUsers.map((searchedUser) => (
                     <div
                       key={searchedUser.id}
@@ -1193,22 +1276,34 @@ export default function Chats() {
                             <AvatarImage src={searchedUser.avatar} alt={searchedUser.name} />
                           )}
                           <AvatarFallback className="bg-primary/10 text-primary">
-                            {searchedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                            {searchedUser.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")
+                              .toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{searchedUser.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">@{searchedUser.username}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          @{searchedUser.username}
+                        </p>
                       </div>
                       <div className="flex flex-col items-end gap-1">
-                        {searchedUser.connectionStatus === 'connected' ? (
-                          <Badge variant="outline" className="text-xs border-green-500/20 bg-green-500/10 text-green-500 gap-1">
+                        {searchedUser.connectionStatus === "connected" ? (
+                          <Badge
+                            variant="outline"
+                            className="text-xs border-green-500/20 bg-green-500/10 text-green-500 gap-1"
+                          >
                             <Unlock className="h-3 w-3" />
                             Match
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-xs border-white/10 bg-white/5 text-muted-foreground gap-1">
+                          <Badge
+                            variant="outline"
+                            className="text-xs border-white/10 bg-white/5 text-muted-foreground gap-1"
+                          >
                             <Lock className="h-3 w-3" />
                             Locked
                           </Badge>
@@ -1238,15 +1333,34 @@ export default function Chats() {
                     <div
                       key={conv.id}
                       onClick={() => handleSelectChat(conv.id)}
-                      className={`group relative flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedChat === conv.id ? 'bg-white/10 border border-white/5 shadow-sm' : 'hover:bg-white/5 border border-transparent'
-                        }`}
+                      className={`group relative flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${
+                        selectedChat === conv.id
+                          ? "bg-white/10 border border-white/5 shadow-sm"
+                          : "hover:bg-white/5 border border-transparent"
+                      }`}
                     >
                       <div className="relative">
                         <Avatar className="h-12 w-12 border border-white/10">
-                          {!conv.isGroup && (conv.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
-                            <AvatarImage src={(conv.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(conv)} />
-                          )}
-                          <AvatarFallback className={conv.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                          {!conv.isGroup &&
+                            conv.participants.find((p) => p.firebaseUid !== user?.uid)?.avatar && (
+                              <AvatarImage
+                                src={
+                                  (
+                                    conv.participants.find(
+                                      (p) => p.firebaseUid !== user?.uid
+                                    ) as any
+                                  ).avatar
+                                }
+                                alt={getConversationName(conv)}
+                              />
+                            )}
+                          <AvatarFallback
+                            className={
+                              conv.isGroup
+                                ? "bg-chart-2/10 text-chart-2"
+                                : "bg-primary/10 text-primary"
+                            }
+                          >
                             {getConversationAvatar(conv)}
                           </AvatarFallback>
                         </Avatar>
@@ -1256,7 +1370,9 @@ export default function Chats() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2 mb-1">
-                          <p className="font-medium text-sm truncate">{getConversationName(conv)}</p>
+                          <p className="font-medium text-sm truncate">
+                            {getConversationName(conv)}
+                          </p>
                           {conv.lastMessage && (
                             <span className="text-xs text-muted-foreground whitespace-nowrap">
                               {formatTime(conv.lastMessage.createdAt)}
@@ -1266,8 +1382,10 @@ export default function Chats() {
                         <p className="text-sm text-muted-foreground truncate">
                           {(() => {
                             if (!conv.lastMessage) return "New Match";
-                            const isMine = conv.lastMessage ? isMessageFromMe(conv.lastMessage, conv) : false;
-                            return `${isMine ? 'You: ' : ''}${conv.lastMessage.content}`;
+                            const isMine = conv.lastMessage
+                              ? isMessageFromMe(conv.lastMessage, conv)
+                              : false;
+                            return `${isMine ? "You: " : ""}${conv.lastMessage.content}`;
                           })()}
                         </p>
                       </div>
@@ -1301,7 +1419,9 @@ export default function Chats() {
 
         {/* Chat Area */}
         {selectedChat && selectedConversation ? (
-          <div className={`${!selectedChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-transparent relative w-full h-full`}>
+          <div
+            className={`${!selectedChat ? "hidden md:flex" : "flex"} flex-1 flex-col bg-transparent relative w-full h-full`}
+          >
             {/* Chat Header */}
             <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10 shrink-0">
               <div className="flex items-center gap-3">
@@ -1315,10 +1435,27 @@ export default function Chats() {
                 </Button>
                 <div className="relative">
                   <Avatar className="h-10 w-10 border border-white/10">
-                    {!selectedConversation.isGroup && (selectedConversation.participants.find(p => p.firebaseUid !== user?.uid)?.avatar) && (
-                      <AvatarImage src={(selectedConversation.participants.find(p => p.firebaseUid !== user?.uid) as any).avatar} alt={getConversationName(selectedConversation)} />
-                    )}
-                    <AvatarFallback className={selectedConversation.isGroup ? "bg-chart-2/10 text-chart-2" : "bg-primary/10 text-primary"}>
+                    {!selectedConversation.isGroup &&
+                      selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid)
+                        ?.avatar && (
+                        <AvatarImage
+                          src={
+                            (
+                              selectedConversation.participants.find(
+                                (p) => p.firebaseUid !== user?.uid
+                              ) as any
+                            ).avatar
+                          }
+                          alt={getConversationName(selectedConversation)}
+                        />
+                      )}
+                    <AvatarFallback
+                      className={
+                        selectedConversation.isGroup
+                          ? "bg-chart-2/10 text-chart-2"
+                          : "bg-primary/10 text-primary"
+                      }
+                    >
                       {getConversationAvatar(selectedConversation)}
                     </AvatarFallback>
                   </Avatar>
@@ -1334,13 +1471,17 @@ export default function Chats() {
                     )}
                   </div>
                   {isUserTyping() ? (
-                    <p className="text-xs text-primary italic animate-pulse">{getTypingUser()} is typing...</p>
+                    <p className="text-xs text-primary italic animate-pulse">
+                      {getTypingUser()} is typing...
+                    </p>
                   ) : !selectedConversation.isGroup && isUserOnline(selectedConversation) ? (
                     <p className="text-xs text-green-500">Online</p>
                   ) : !selectedConversation.isGroup ? (
                     <p className="text-xs text-muted-foreground">Offline</p>
                   ) : selectedConversation.isGroup ? (
-                    <p className="text-xs text-muted-foreground">{selectedConversation.participants.length} members</p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedConversation.participants.length} members
+                    </p>
                   ) : null}
                 </div>
               </div>
@@ -1350,7 +1491,9 @@ export default function Chats() {
                   size="icon"
                   className="hover:bg-white/10"
                   onClick={() => {
-                    const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+                    const roomId =
+                      Math.random().toString(36).substring(2, 10) +
+                      Math.random().toString(36).substring(2, 10);
                     setLocation(`/call/${roomId}`);
                   }}
                 >
@@ -1361,7 +1504,9 @@ export default function Chats() {
                   size="icon"
                   className="hover:bg-white/10"
                   onClick={() => {
-                    const roomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+                    const roomId =
+                      Math.random().toString(36).substring(2, 10) +
+                      Math.random().toString(36).substring(2, 10);
                     setLocation(`/call/${roomId}`);
                   }}
                 >
@@ -1373,12 +1518,18 @@ export default function Chats() {
                       <MoreVertical className="h-5 w-5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48 bg-background/95 backdrop-blur-xl border-white/10">
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-48 bg-background/95 backdrop-blur-xl border-white/10"
+                  >
                     <DropdownMenuItem
                       className="cursor-pointer"
                       onClick={() => {
                         // TODO: Implement navigation to user profile when available
-                        toast({ title: "Profile View", description: "This feature is coming soon!" });
+                        toast({
+                          title: "Profile View",
+                          description: "This feature is coming soon!",
+                        });
                       }}
                     >
                       <User className="w-4 h-4 mr-2" />
@@ -1424,48 +1575,61 @@ export default function Chats() {
                 {messages.map((msg) => {
                   const isMe = isMessageFromMe(msg, selectedConversation);
                   return (
-                    <div
-                      key={msg.id}
-                      className="flex gap-3 group/message"
-                    >
+                    <div key={msg.id} className="flex gap-3 group/message">
                       {!isMe && (
                         <Avatar className="h-8 w-8 border border-white/10">
-                          {(selectedConversation.participants.find(p => p.id === msg.sender.id)?.avatar) && (
-                            <AvatarImage src={(selectedConversation.participants.find(p => p.id === msg.sender.id) as any).avatar} alt={msg.sender.name} />
+                          {selectedConversation.participants.find((p) => p.id === msg.sender.id)
+                            ?.avatar && (
+                            <AvatarImage
+                              src={
+                                (
+                                  selectedConversation.participants.find(
+                                    (p) => p.id === msg.sender.id
+                                  ) as any
+                                ).avatar
+                              }
+                              alt={msg.sender.name}
+                            />
                           )}
                           <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                            {msg.sender.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                            {msg.sender.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")
+                              .toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                       )}
                       <div className="flex flex-col items-start max-w-[70%]">
                         {selectedConversation?.isGroup && (
                           <span className="text-xs font-medium text-muted-foreground mb-1">
-                            {isMe ? 'You' : msg.sender.name}
+                            {isMe ? "You" : msg.sender.name}
                           </span>
                         )}
                         <div className="relative">
-                          <div
-                            className={getMessageBubbleClasses(isMe, msg.isPinned)}
-                          >
+                          <div className={getMessageBubbleClasses(isMe, msg.isPinned)}>
                             <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                               {msg.content}
                             </p>
                             <div
-                              className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${isMe ? 'text-primary/70 dark:text-primary-foreground/80' : 'text-muted-foreground/80'
-                                }`}
+                              className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${
+                                isMe
+                                  ? "text-primary/70 dark:text-primary-foreground/80"
+                                  : "text-muted-foreground/80"
+                              }`}
                             >
                               <span>{formatTime(msg.createdAt)}</span>
                               {isMe && msg.status && (
                                 <span
-                                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${msg.isOptimistic
-                                    ? "bg-muted/50 text-muted-foreground/70 opacity-70"
-                                    : msg.status === "seen"
-                                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                                      : msg.status === "delivered"
-                                        ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
-                                        : "bg-muted text-muted-foreground"
-                                    }`}
+                                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                                    msg.isOptimistic
+                                      ? "bg-muted/50 text-muted-foreground/70 opacity-70"
+                                      : msg.status === "seen"
+                                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                                        : msg.status === "delivered"
+                                          ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
+                                          : "bg-muted text-muted-foreground"
+                                  }`}
                                 >
                                   {msg.status === "seen" && (
                                     <>
@@ -1496,7 +1660,7 @@ export default function Chats() {
                               className="h-6 w-6 hover:bg-white/10"
                               onClick={() => handlePinMessage(msg.id, msg.isPinned)}
                             >
-                              <Pin className={`h-3 w-3 ${msg.isPinned ? 'fill-current' : ''}`} />
+                              <Pin className={`h-3 w-3 ${msg.isPinned ? "fill-current" : ""}`} />
                             </Button>
                           </div>
                         </div>
@@ -1513,8 +1677,14 @@ export default function Chats() {
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className="flex gap-1">
                     <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
-                    <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.2s' }} />
-                    <div className="w-2 h-2 rounded-full bg-current animate-pulse" style={{ animationDelay: '0.4s' }} />
+                    <div
+                      className="w-2 h-2 rounded-full bg-current animate-pulse"
+                      style={{ animationDelay: "0.2s" }}
+                    />
+                    <div
+                      className="w-2 h-2 rounded-full bg-current animate-pulse"
+                      style={{ animationDelay: "0.4s" }}
+                    />
                   </div>
                   <span className="italic">{getTypingUser()} is typing...</span>
                 </div>
@@ -1522,7 +1692,10 @@ export default function Chats() {
             )}
 
             <div className="p-4 border-t border-white/10 bg-white/5 backdrop-blur-sm">
-              <form onSubmit={handleSendMessage} className="relative flex items-end gap-2 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-lg">
+              <form
+                onSubmit={handleSendMessage}
+                className="relative flex items-end gap-2 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-lg"
+              >
                 <div className="flex-1 flex flex-col gap-2">
                   <div className="relative">
                     <Input
@@ -1561,7 +1734,10 @@ export default function Chats() {
                             <Smile className="h-4 w-4" />
                           </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-auto p-2 bg-background/95 backdrop-blur-xl border-white/10" align="end">
+                        <PopoverContent
+                          className="w-auto p-2 bg-background/95 backdrop-blur-xl border-white/10"
+                          align="end"
+                        >
                           <div className="grid grid-cols-4 gap-1">
                             {emojis.map((emoji, i) => (
                               <Button
