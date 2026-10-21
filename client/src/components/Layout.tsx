@@ -44,8 +44,26 @@ export default function Layout({ children }: LayoutProps) {
     const { data: notifications = [] } = useQuery({
         queryKey: ["notifications"],
         queryFn: async () => {
-            if (!auth.currentUser) return [];
-            const token = await auth.currentUser.getIdToken();
+            let token: string | null = null;
+            if (auth.currentUser) {
+                try {
+                    token = await auth.currentUser.getIdToken();
+                } catch (e) {}
+            }
+            if (!token && user?.uid) {
+                token = user.uid;
+            }
+            if (!token && typeof window !== "undefined") {
+                const rawMock = localStorage.getItem("facechat_mock_user");
+                if (rawMock) {
+                    try {
+                        const parsed = JSON.parse(rawMock);
+                        if (parsed?.uid) token = parsed.uid;
+                    } catch (e) {}
+                }
+            }
+            if (!token) return [];
+
             const res = await fetch("/api/notifications", {
                 headers: { Authorization: `Bearer ${token}` }
             });

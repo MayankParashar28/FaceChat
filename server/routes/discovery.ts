@@ -26,21 +26,28 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
     }
     const viewerId = viewer._id.toString();
 
-    // Prevent self-discovery
-    if (viewerId === targetId) {
-      return res.status(400).json({ error: "Cannot discover yourself" });
+    // Check if target exists (by MongoDB ID or Firebase UID)
+    let target = await mongoService.getUserById(targetId).catch(() => null);
+    if (!target) {
+      target = await mongoService.getUserByFirebaseUid(targetId).catch(() => null);
     }
-
-    // Check if target exists
-    const target = await User.findById(targetId);
     if (!target) {
       return res.status(404).json({ error: "Target user not found" });
+    }
+    const resolvedTargetId = target._id.toString();
+
+    // Prevent self-discovery
+    if (viewerId === resolvedTargetId) {
+      return res.status(400).json({ error: "Cannot discover yourself" });
     }
 
     // Check if ALREADY connected
     const existingConnection = await Connection.findOne({
       participants: {
-        $all: [new mongoose.Types.ObjectId(viewerId), new mongoose.Types.ObjectId(targetId)],
+        $all: [
+          new mongoose.Types.ObjectId(viewerId),
+          new mongoose.Types.ObjectId(resolvedTargetId),
+        ],
       },
       status: "active",
     });
@@ -56,20 +63,20 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
     // Check if ALREADY discovered (idempotency)
     const existingDiscovery = await Discovery.findOne({
       viewerId: new mongoose.Types.ObjectId(viewerId),
-      targetId: new mongoose.Types.ObjectId(targetId),
+      targetId: new mongoose.Types.ObjectId(resolvedTargetId),
     });
 
     if (existingDiscovery) {
       // Just return "discovered" status, check for reverse again just in case
       const reverseDiscovery = await Discovery.findOne({
-        viewerId: new mongoose.Types.ObjectId(targetId),
+        viewerId: new mongoose.Types.ObjectId(resolvedTargetId),
         targetId: new mongoose.Types.ObjectId(viewerId),
       });
 
       if (reverseDiscovery) {
         // Create connection if missing
         const newConnection = await Connection.create({
-          participants: [viewerId, targetId],
+          participants: [viewerId, resolvedTargetId],
           status: "active",
         });
 
@@ -83,7 +90,7 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
             relatedId: newConnection._id,
           },
           {
-            userId: targetId,
+            userId: resolvedTargetId,
             type: "match",
             title: "New Match! 🎉",
             message: `You matched with ${viewer.name}!`,
@@ -99,7 +106,7 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
             partner: { id: target._id, name: target.name, avatar: target.avatar },
             connectionId: newConnection._id,
           });
-          io.to(`user:${targetId}`).emit("discovery:match", {
+          io.to(`user:${resolvedTargetId}`).emit("discovery:match", {
             partner: { id: viewer._id, name: viewer.name, avatar: viewer.avatar },
             connectionId: newConnection._id,
           });
@@ -118,19 +125,19 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
     // CREATE NEW DISCOVERY RECORD
     await Discovery.create({
       viewerId: new mongoose.Types.ObjectId(viewerId),
-      targetId: new mongoose.Types.ObjectId(targetId),
+      targetId: new mongoose.Types.ObjectId(resolvedTargetId),
     });
 
     // CHECK FOR MUTUAL (Reverse Discovery)
     const reverseDiscovery = await Discovery.findOne({
-      viewerId: new mongoose.Types.ObjectId(targetId),
+      viewerId: new mongoose.Types.ObjectId(resolvedTargetId),
       targetId: new mongoose.Types.ObjectId(viewerId),
     });
 
     if (reverseDiscovery) {
       // IT'S A MATCH!
       const newConnection = await Connection.create({
-        participants: [viewerId, targetId],
+        participants: [viewerId, resolvedTargetId],
         status: "active",
       });
 
@@ -144,7 +151,7 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
           relatedId: newConnection._id,
         },
         {
-          userId: targetId,
+          userId: resolvedTargetId,
           type: "match",
           title: "New Match! 🎉",
           message: `You matched with ${viewer.name}!`,
@@ -159,7 +166,7 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
           partner: { id: target._id, name: target.name, avatar: target.avatar },
           connectionId: newConnection._id,
         });
-        io.to(`user:${targetId}`).emit("discovery:match", {
+        io.to(`user:${resolvedTargetId}`).emit("discovery:match", {
           partner: { id: viewer._id, name: viewer.name, avatar: viewer.avatar },
           connectionId: newConnection._id,
         });

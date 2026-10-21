@@ -4,22 +4,147 @@ import { authenticate } from "../middleware/auth";
 import { authRateLimiter } from "../middleware/rateLimiter";
 import { createOTP, verifyOTP } from "../services/otpService";
 import { mongoService } from "../services/mongodb";
-
-// Import Twilio only if installed (runtime will fail if env/config missing)
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-// import twilio from "twilio";
+import { comparePassword, hashPassword } from "../utils/passwordHash";
 
 const router = Router();
 
-// Twilio Verify client (for phone number verification)
-// const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-// const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-// const twilioVerifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-// const twilioClient =
-//   twilioAccountSid && twilioAuthToken
-//     ? twilio(twilioAccountSid, twilioAuthToken)
-//     : null;
+// DB Signup endpoint (creates user in MongoDB with hashed password, no confirmation email)
+router.post("/signup", authRateLimiter, async (req, res) => {
+    try {
+        const { email, password, name, username } = req.body;
+
+        if (!email || !password || !name || !username) {
+            return res.status(400).json({ error: "Please fill in all fields (email, password, name, username)" });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const normalizedUsername = username.trim().toLowerCase();
+
+        // Check if user already exists in DB by email or username
+        const existingEmail = await mongoService.getUserByEmail(normalizedEmail);
+        if (existingEmail) {
+            return res.status(400).json({ error: "This email is already registered. Please log in." });
+        }
+
+        const existingUsername = await mongoService.getUserByUsername(normalizedUsername);
+        if (existingUsername) {
+            return res.status(400).json({ error: "Username is already taken. Please choose another one." });
+        }
+
+        // Generate unique firebaseUid for MongoDB lookup
+        const firebaseUid = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+        const user = await mongoService.createUser({
+            firebaseUid,
+            email: normalizedEmail,
+            name: name.trim(),
+            username: normalizedUsername,
+            password,
+            isEmailVerified: true,
+        });
+
+        res.json({
+            success: true,
+            user,
+            firebaseUid: user.firebaseUid,
+            email: user.email,
+            name: user.name,
+            username: user.username,
+            avatar: user.avatar
+        });
+    } catch (error: any) {
+        console.error("DB Signup error:", error);
+        res.status(500).json({ error: error.message || "Signup failed" });
+    }
+});
+
+// DB Login endpoint (validates email/username & password against MongoDB Atlas)
+router.post("/login", authRateLimiter, async (req, res) => {
+    try {
+        const { email, username, password } = req.body;
+        const identifier = (email || username || "").trim().toLowerCase();
+
+        if (!identifier || !password) {
+            return res.status(400).json({ error: "Please enter your email/username and password" });
+        }
+
+        // Search user in DB by email or username, with password included
+        let user = await mongoService.getUserByEmail(identifier, true);
+        if (!user) {
+            user = await mongoService.getUserByUsername(identifier, true);
+        }
+
+        if (!user) {
+            return res.status(404).json({ error: `No account found for "${identifier}". Please check your email/username or switch to Sign Up to create an account.` });
+        }
+
+        if (user.password) {
+            const isMatch = await comparePassword(password, user.password);
+            if (!isMatch) {
+                return res.status(401).json({ error: "Incorrect password. Please double check your password and try again." });
+            }
+        } else {
+            // First-time password set for legacy accounts without a password
+            const hashedPassword = await hashPassword(password);
+            user.password = hashedPassword;
+            await user.save();
+        }
+
+        const userObj = user.toObject();
+        delete userObj.password;
+
+        res.json({
+            success: true,
+            user: userObj,
+            firebaseUid: user.firebaseUid,
+            email: user.email,
+            name: user.name,
+            username: user.username,
+            avatar: user.avatar
+        });
+    } catch (error: any) {
+        console.error("DB Login error:", error);
+        res.status(500).json({ error: error.message || "Login failed" });
+    }
+});
+
+// Direct Password Reset endpoint (updates password in MongoDB Atlas)
+router.post("/reset-password", authRateLimiter, async (req, res) => {
+    try {
+        const { email, username, newPassword } = req.body;
+        const identifier = (email || username || "").trim().toLowerCase();
+
+        if (!identifier || !newPassword) {
+            return res.status(400).json({ error: "Please enter your email/username and new password" });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({ error: "New password must be at least 8 characters long" });
+        }
+
+        // Search user in DB by email or username
+        let user = await mongoService.getUserByEmail(identifier, true);
+        if (!user) {
+            user = await mongoService.getUserByUsername(identifier, true);
+        }
+
+        if (!user) {
+            return res.status(404).json({ error: `No account found for "${identifier}". Please check your details or click Sign Up.` });
+        }
+
+        const hashedPassword = await hashPassword(newPassword);
+        user.password = hashedPassword;
+        await user.save();
+
+        res.json({
+            success: true,
+            message: "Password updated successfully! You can now log in with your new password.",
+        });
+    } catch (error: any) {
+        console.error("Password reset error:", error);
+        res.status(500).json({ error: error.message || "Failed to reset password" });
+    }
+});
 
 // Send OTP for email verification
 router.post("/send-otp", authRateLimiter, authenticate, async (req, res) => {

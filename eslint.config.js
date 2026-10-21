@@ -58,6 +58,8 @@ export default tseslint.config(
       "@typescript-eslint/no-namespace": ["error", { allowDeclarations: true }],
       // Existing @ts-ignore pragmas are intentional; surface as warnings, not errors.
       "@typescript-eslint/ban-ts-comment": "warn",
+      // Intentional empty catch blocks (error swallowing) are allowed.
+      "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },
 

@@ -1,5 +1,6 @@
 import { logger } from "../utils/logger";
 import { Router } from "express";
+import mongoose from "mongoose";
 import { authenticate } from "../middleware/auth";
 import { mongoService } from "../services/mongodb";
 import { Notification } from "../models";
@@ -14,7 +15,10 @@ router.get("/", authenticate, async (req, res) => {
     }
 
     const userId = req.user.uid;
-    const dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(userId));
+    let dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(userId));
+    if (!dbUser && mongoose.Types.ObjectId.isValid(userId)) {
+      dbUser = await mongoService.getUserById(userId);
+    }
     if (!dbUser) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -50,7 +54,10 @@ router.put("/read-all", authenticate, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Auth required" });
 
     const userId = req.user.uid;
-    const dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(userId));
+    let dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(userId));
+    if (!dbUser && mongoose.Types.ObjectId.isValid(userId)) {
+      dbUser = await mongoService.getUserById(userId);
+    }
 
     if (dbUser) {
       await Notification.updateMany({ userId: dbUser._id, isRead: false }, { isRead: true });
