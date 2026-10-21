@@ -35,14 +35,25 @@ export async function searchUsers(query: string, limit: number = 10) {
   const params = new URLSearchParams({ q: query, limit: String(limit) })
 
   // Get auth token
-  const user = auth.currentUser;
   const headers: Record<string, string> = {};
-  if (user) {
+  if (auth.currentUser) {
     try {
-      const token = await user.getIdToken();
+      const token = await auth.currentUser.getIdToken();
       headers.Authorization = `Bearer ${token}`;
     } catch (error) {
       console.error("Failed to get auth token:", error);
+    }
+  }
+
+  if (!headers.Authorization && typeof window !== "undefined") {
+    const rawMock = localStorage.getItem("facechat_mock_user");
+    if (rawMock) {
+      try {
+        const parsed = JSON.parse(rawMock);
+        if (parsed?.uid) {
+          headers.Authorization = `Bearer ${parsed.uid}`;
+        }
+      } catch (e) {}
     }
   }
 

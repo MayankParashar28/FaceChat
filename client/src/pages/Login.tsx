@@ -13,12 +13,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { LogoMark } from "@/components/LogoMark";
 import { validatePassword, getPasswordStrengthColor } from "@/lib/passwordValidation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FaGoogle, FaGithub } from "react-icons/fa";
 import { authenticateWebAuthn, isWebAuthnSupported } from "@/lib/webauthn";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { user, loading, signIn, signUp, checkUsername, getUsernameSuggestions, resetPassword, signInWithGoogle, signInWithGithub } = useAuth();
+  const { user, loading, signIn, signUp, checkUsername, getUsernameSuggestions, resetPassword } = useAuth();
   const [email, setEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
@@ -39,6 +38,7 @@ export default function Login() {
   // Forgot Password State
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
+  const [newResetPassword, setNewResetPassword] = useState("");
   const [resetStatus, setResetStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [resetError, setResetError] = useState("");
 
@@ -182,35 +182,17 @@ export default function Login() {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resetEmail) return;
+    if (!resetEmail || !newResetPassword) return;
 
     setResetStatus("sending");
     setResetError("");
 
     try {
-      await resetPassword(resetEmail);
+      await resetPassword(resetEmail, newResetPassword);
       setResetStatus("sent");
     } catch (error: any) {
       setResetStatus("error");
-      setResetError(error.message);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    try {
-      await signInWithGoogle();
-      setLocation("/dashboard");
-    } catch (error: any) {
-      setError(error.message || "Google login failed");
-    }
-  };
-
-  const handleGithubLogin = async () => {
-    try {
-      await signInWithGithub();
-      setLocation("/dashboard");
-    } catch (error: any) {
-      setError(error.message || "Github login failed");
+      setResetError(error.message || "Failed to reset password");
     }
   };
 
@@ -341,43 +323,15 @@ export default function Login() {
                   {isFaceScanning ? "Scanning Face..." : "Login with Face ID"}
                 </Button>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <Button
-                    variant="outline"
-                    className="h-12 rounded-xl border-2 border-primary/10 hover:bg-primary/5 hover:border-primary/30 transition-all"
-                    onClick={handleGoogleLogin}
-                  >
-                    <FaGoogle className="w-4 h-4 mr-2" />
-                    Google
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="h-12 rounded-xl border-2 border-primary/10 hover:bg-primary/5 hover:border-primary/30 transition-all"
-                    onClick={handleGithubLogin}
-                  >
-                    <FaGithub className="w-4 h-4 mr-2" />
-                    GitHub
-                  </Button>
-                </div>
-
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t border-border" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-4 text-muted-foreground">Or continue with email</span>
-                  </div>
-                </div>
-
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
+                    <Label htmlFor="email">Email or Username</Label>
                     <div className="relative group">
                       <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                       <Input
                         id="email"
-                        type="email"
-                        placeholder="you@example.com"
+                        type="text"
+                        placeholder="Email or Username"
                         className="pl-10 h-12"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
@@ -442,33 +396,6 @@ export default function Login() {
               </TabsContent>
 
               <TabsContent value="signup" className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <Button
-                    variant="outline"
-                    className="h-12 rounded-xl border-2 border-primary/10 hover:bg-primary/5 hover:border-primary/30 transition-all"
-                    onClick={handleGoogleLogin}
-                  >
-                    <FaGoogle className="w-4 h-4 mr-2" />
-                    Google
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="h-12 rounded-xl border-2 border-primary/10 hover:bg-primary/5 hover:border-primary/30 transition-all"
-                    onClick={handleGithubLogin}
-                  >
-                    <FaGithub className="w-4 h-4 mr-2" />
-                    GitHub
-                  </Button>
-                </div>
-
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t border-border" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-4 text-muted-foreground">Or sign up with email</span>
-                  </div>
-                </div>
 
                 <form onSubmit={handleEmailSignup} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
@@ -648,7 +575,7 @@ export default function Login() {
           <DialogHeader>
             <DialogTitle>Reset Password</DialogTitle>
             <DialogDescription>
-              Enter your email address and we'll send you a link to reset your password.
+              Enter your email address or username and your new password below.
             </DialogDescription>
           </DialogHeader>
 
@@ -658,9 +585,9 @@ export default function Login() {
                 <CheckCircle2 className="w-6 h-6 text-green-500" />
               </div>
               <div className="space-y-2">
-                <p className="font-medium">Check your email</p>
+                <p className="font-medium">Password Updated Successfully!</p>
                 <p className="text-sm text-muted-foreground">
-                  We've sent a password reset link to <span className="font-medium text-foreground">{resetEmail}</span>
+                  Your password has been updated. You can now log in with your new password.
                 </p>
               </div>
               <Button
@@ -668,6 +595,7 @@ export default function Login() {
                   setShowForgotPassword(false);
                   setResetStatus("idle");
                   setResetEmail("");
+                  setNewResetPassword("");
                 }}
                 className="w-full"
               >
@@ -677,13 +605,25 @@ export default function Login() {
           ) : (
             <form onSubmit={handleResetPassword} className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="reset-email">Email Address</Label>
+                <Label htmlFor="reset-email">Email or Username</Label>
                 <Input
                   id="reset-email"
-                  type="email"
-                  placeholder="you@example.com"
+                  type="text"
+                  placeholder="you@example.com or username"
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="reset-new-password">New Password</Label>
+                <Input
+                  id="reset-new-password"
+                  type="password"
+                  placeholder="At least 8 characters"
+                  value={newResetPassword}
+                  onChange={(e) => setNewResetPassword(e.target.value)}
                   required
                 />
               </div>
@@ -705,15 +645,15 @@ export default function Login() {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={resetStatus === "sending" || !resetEmail}
+                  disabled={resetStatus === "sending" || !resetEmail || !newResetPassword}
                 >
                   {resetStatus === "sending" ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                      Sending...
+                      Updating...
                     </>
                   ) : (
-                    "Send Reset Link"
+                    "Reset Password"
                   )}
                 </Button>
               </DialogFooter>

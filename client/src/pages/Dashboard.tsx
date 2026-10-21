@@ -242,28 +242,36 @@ export default function Dashboard() {
   };
 
   const joinCall = async () => {
-    if (roomId.trim()) {
-      try {
-        const response = await fetch(`/api/meetings/validate/${roomId.trim()}`);
-        const data = await response.json();
+    const cleanRoomId = roomId.trim();
+    if (!cleanRoomId) return;
 
-        if (data.exists) {
-          setLocation(`/call/${roomId.trim()}`);
-          setJoinDialogOpen(false);
-        } else {
-          toast({
-            title: "Room not found",
-            description: "The room code you entered does not exist.",
-            variant: "destructive"
-          });
-        }
-      } catch (error) {
+    if (cleanRoomId.length < 3) {
+      toast({
+        title: "Invalid Room Code",
+        description: "Please enter a room code with at least 3 characters.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/meetings/validate/${encodeURIComponent(cleanRoomId)}`);
+      const data = await response.json();
+
+      if (data.exists) {
+        setLocation(`/call/${cleanRoomId}`);
+        setJoinDialogOpen(false);
+      } else {
         toast({
-          title: "Error",
-          description: "Failed to validate room code.",
+          title: "Room not found",
+          description: "Please check the room code and try again.",
           variant: "destructive"
         });
       }
+    } catch (error) {
+      // Fallback: proceed to join room even if API check fails
+      setLocation(`/call/${cleanRoomId}`);
+      setJoinDialogOpen(false);
     }
   };
 

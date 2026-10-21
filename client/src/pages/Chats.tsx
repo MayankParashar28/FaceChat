@@ -94,7 +94,15 @@ export default function Chats() {
   const { user, logout } = useAuth();
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [selectedChat, setSelectedChat] = useState<string | null>(null);
+  const [selectedChat, setSelectedChat] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlId = params.get("id");
+      if (urlId) return urlId;
+      return localStorage.getItem("facechat_selected_chat");
+    }
+    return null;
+  });
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -129,12 +137,32 @@ export default function Chats() {
     return () => unsubscribe();
   }, []);
 
+  const getToken = useCallback(async (): Promise<string | null> => {
+    if (firebaseUser) {
+      try {
+        const tok = await firebaseUser.getIdToken();
+        if (tok) return tok;
+      } catch (e) {}
+    }
+    if (user?.uid) return user.uid;
+    if (typeof window !== "undefined") {
+      const rawMock = localStorage.getItem("facechat_mock_user");
+      if (rawMock) {
+        try {
+          const parsed = JSON.parse(rawMock);
+          if (parsed?.uid) return parsed.uid;
+        } catch (e) {}
+      }
+    }
+    return null;
+  }, [firebaseUser, user?.uid]);
+
   const { data: conversations = [], refetch: refetchConversations } = useQuery<Conversation[]>({
     queryKey: ["/api/conversations"],
     queryFn: async () => {
-      if (!firebaseUser) throw new Error("User not authenticated");
+      const token = await getToken();
+      if (!token) throw new Error("User not authenticated");
 
-      const token = await firebaseUser.getIdToken();
       const res = await fetch("/api/conversations", {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -144,7 +172,7 @@ export default function Chats() {
       if (!res.ok) throw new Error("Failed to fetch conversations");
       return res.json();
     },
-    enabled: !!user?.uid && !!firebaseUser,
+    enabled: !!user?.uid,
   });
 
   useEffect(() => {
@@ -154,13 +182,9 @@ export default function Chats() {
 
     newSocket.on("connect", async () => {
       console.log("WebSocket connected");
-      if (firebaseUser) {
-        try {
-          const token = await firebaseUser.getIdToken();
-          newSocket.emit("user:online", { firebaseToken: token });
-        } catch (error) {
-          console.error("Failed to get Firebase token:", error);
-        }
+      const token = await getToken();
+      if (token) {
+        newSocket.emit("user:online", { firebaseToken: token });
       }
     });
 
@@ -435,13 +459,22 @@ export default function Chats() {
     });
 
     newSocket.on("user:status", ({ userId, online }) => {
-      // userId should be firebaseUid
       setOnlineUsers((prev) => {
         const newSet = new Set(prev);
         if (online) {
           newSet.add(userId);
         } else {
           newSet.delete(userId);
+        }
+        return newSet;
+      });
+    });
+
+    newSocket.on("users:online-list", ({ onlineUserIds }: { onlineUserIds: string[] }) => {
+      setOnlineUsers((prev) => {
+        const newSet = new Set(prev);
+        if (Array.isArray(onlineUserIds)) {
+          onlineUserIds.forEach((id) => newSet.add(id));
         }
         return newSet;
       });
@@ -481,9 +514,9 @@ export default function Chats() {
       let isActive = true;
 
       // Get auth token and fetch messages
-      firebaseUser
-        ?.getIdToken()
+      getToken()
         .then((token) => {
+          if (!token) throw new Error("Authentication required");
           return fetch(`/api/conversations/${currentChatId}/messages?limit=30`, {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -572,9 +605,14 @@ export default function Chats() {
     setIsLoadingOlder(true);
 
     try {
+      const token = await getToken();
       const beforeDate = oldestMessage.createdAt.toISOString();
       const res = await fetch(
-        `/api/conversations/${selectedChat}/messages?userId=${user.uid}&beforeDate=${encodeURIComponent(beforeDate)}&limit=30`
+        `/api/conversations/${selectedChat}/messages?beforeDate=${encodeURIComponent(beforeDate)}&limit=30`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: "include",
+        }
       );
 
       if (!res.ok) throw new Error("Failed to fetch older messages");
@@ -716,7 +754,31 @@ export default function Chats() {
     setTypingUserNames(new Map());
     selectedChatRef.current = conversationId;
     setSelectedChat(conversationId);
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem("facechat_selected_chat", conversationId);
+      const url = new URL(window.location.href);
+      url.searchParams.set("id", conversationId);
+      window.history.replaceState({}, "", url.toString());
+    }
   };
+
+  // Restore or auto-select valid conversation on initial conversations load
+  useEffect(() => {
+    if (conversations.length > 0 && !selectedChat) {
+      const savedId =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("id") ||
+            localStorage.getItem("facechat_selected_chat")
+          : null;
+      const validSaved = conversations.find((c) => c.id === savedId);
+      if (validSaved) {
+        handleSelectChat(validSaved.id);
+      } else if (conversations[0]?.id) {
+        handleSelectChat(conversations[0].id);
+      }
+    }
+  }, [conversations, selectedChat]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -797,10 +859,11 @@ export default function Chats() {
   };
 
   const handleStartConversation = async (userId: string) => {
-    if (!user?.uid || !firebaseUser) return;
+    if (!user?.uid) return;
 
     try {
-      const token = await firebaseUser.getIdToken();
+      const token = await getToken();
+      if (!token) return;
 
       // DISCOVERY CHECK
       const discoveryRes = await fetch(`/api/discovery/${userId}`, {
@@ -812,7 +875,7 @@ export default function Chats() {
 
       if (!discoveryRes.ok) {
         console.error("Discovery check failed");
-        // Fallback to allowing chat creation if discovery fails (or handle error)
+        // Fallback to allowing chat creation if discovery fails
       } else {
         const discoveryData = await discoveryRes.json();
 
@@ -961,13 +1024,17 @@ export default function Chats() {
 
   const getConversationName = (conv: Conversation) => {
     if (conv.isGroup) return conv.name || "Group Chat";
-    const otherUser = conv.participants.find((p) => p.firebaseUid !== user?.uid);
+    const otherUser = conv.participants.find(
+      (p) => p.id !== user?.uid && p.firebaseUid !== user?.uid
+    );
     return otherUser?.name || "Unknown";
   };
 
   const getConversationAvatar = (conv: Conversation) => {
     if (conv.isGroup) return conv.name?.substring(0, 2).toUpperCase() || "GC";
-    const otherUser = conv.participants.find((p) => p.firebaseUid !== user?.uid);
+    const otherUser = conv.participants.find(
+      (p) => p.id !== user?.uid && p.firebaseUid !== user?.uid
+    );
     return (
       otherUser?.name
         .split(" ")
@@ -979,29 +1046,42 @@ export default function Chats() {
 
   const isUserOnline = (conv: Conversation) => {
     if (conv.isGroup) return false;
-    const otherUser = conv.participants.find((p) => p.firebaseUid !== user?.uid);
-    if (!otherUser?.firebaseUid) return false;
-    return onlineUsers.has(otherUser.firebaseUid);
+    const otherUser = conv.participants.find(
+      (p) => p.id !== user?.uid && p.firebaseUid !== user?.uid
+    );
+    if (!otherUser) return false;
+    return (
+      onlineUsers.has(otherUser.id) ||
+      (otherUser.firebaseUid ? onlineUsers.has(otherUser.firebaseUid) : false) ||
+      otherUser.online
+    );
   };
 
   const isUserTyping = () => {
     if (!selectedConversation) return false;
-    // Check if any participant (except current user) is typing
     const typingParticipant = selectedConversation.participants.find(
-      (p) => p.firebaseUid !== user?.uid && typingUsers.has(p.firebaseUid || "")
+      (p) =>
+        p.id !== user?.uid &&
+        p.firebaseUid !== user?.uid &&
+        (typingUsers.has(p.id) || (p.firebaseUid && typingUsers.has(p.firebaseUid)))
     );
     return !!typingParticipant;
   };
 
   const getTypingUser = () => {
     if (!selectedConversation) return null;
-    // Find the typing participant and return their name
     const typingParticipant = selectedConversation.participants.find(
-      (p) => p.firebaseUid !== user?.uid && typingUsers.has(p.firebaseUid || "")
+      (p) =>
+        p.id !== user?.uid &&
+        p.firebaseUid !== user?.uid &&
+        (typingUsers.has(p.id) || (p.firebaseUid && typingUsers.has(p.firebaseUid)))
     );
     if (typingParticipant) {
-      // Try to get name from typingUserNames map first, fallback to participant name
-      const typingName = typingUserNames.get(typingParticipant.firebaseUid || "");
+      const typingName =
+        typingUserNames.get(typingParticipant.id) ||
+        (typingParticipant.firebaseUid
+          ? typingUserNames.get(typingParticipant.firebaseUid)
+          : undefined);
       return typingName || typingParticipant.name;
     }
     return null;

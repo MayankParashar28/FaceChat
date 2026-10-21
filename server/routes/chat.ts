@@ -109,8 +109,15 @@ router.get("/", authenticate, async (req, res) => {
 
     logger.info("Fetching conversations for MongoDB user:", dbUser._id.toString());
 
-    // Get conversations from MongoDB using MongoDB user ID
-    const conversations = await mongoService.getUserConversations(dbUser._id.toString());
+    const getOnlineUserIds = req.app.get("getOnlineUserIds");
+    const onlineUserIds: Set<string> | undefined =
+      typeof getOnlineUserIds === "function" ? getOnlineUserIds() : undefined;
+
+    // Get conversations from MongoDB using MongoDB user ID and current online user IDs
+    const conversations = await mongoService.getUserConversations(
+      dbUser._id.toString(),
+      onlineUserIds
+    );
 
     logger.info("Found conversations:", conversations.length);
 

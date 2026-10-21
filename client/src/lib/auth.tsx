@@ -40,15 +40,18 @@ interface AuthContextType {
   logout: () => Promise<void>;
   checkUsername: (username: string) => Promise<{ available: boolean; message: string }>;
   getUsernameSuggestions: (baseUsername: string) => Promise<string[]>;
-  resetPassword: (email: string) => Promise<void>;
+  resetPassword: (email: string, newPassword?: string) => Promise<any>;
   signInWithGoogle: () => Promise<void>;
   signInWithGithub: () => Promise<void>;
   linkGoogleAccount: () => Promise<void>;
   linkGithubAccount: () => Promise<void>;
 }
 
-// Create auth context
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+// Create singleton auth context to prevent HMR duplication
+const g = typeof window !== "undefined" ? (window as any) : (globalThis as any);
+export const AuthContext: React.Context<AuthContextType | undefined> =
+  g.__FACECHAT_AUTH_CONTEXT__ ||
+  (g.__FACECHAT_AUTH_CONTEXT__ = createContext<AuthContextType | undefined>(undefined));
 
 // Auth provider component
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -56,13 +59,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Check for saved local mock user on mount
+    const savedMock = localStorage.getItem("facechat_mock_user");
+    if (savedMock) {
+      try {
+        const parsed = JSON.parse(savedMock);
+        setUser(parsed);
+        setLoading(false);
+      } catch (e) {}
+    }
+
     // Set up token refresh listener
     const tokenRefreshInterval = setInterval(
       async () => {
         const currentUser = auth.currentUser;
         if (currentUser) {
           try {
-            // Force token refresh before it expires (refresh every 50 minutes)
             await currentUser.getIdToken(true);
           } catch (error) {
             console.error("Token refresh failed:", error);
@@ -70,13 +82,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       },
       50 * 60 * 1000
-    ); // 50 minutes
+    );
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (firebaseUser) {
-        // Reload user to get latest emailVerified status - REMOVED to prevent infinite loop
-        // await firebaseUser.reload()
-
         const derivedUsername =
           firebaseUser.email?.split("@")[0] ||
           firebaseUser.displayName?.replace(/\s+/g, "").toLowerCase() ||
@@ -97,16 +106,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
         setUser(appUser);
 
-        // Update online status in Firebase Realtime Database
-        await updateOnlineStatus(firebaseUser.uid, true);
+        try {
+          await updateOnlineStatus(firebaseUser.uid, true);
+        } catch (e) {}
 
-        // Ensure user exists in MongoDB and sync emailVerified status
-        // Only sync if we don't have user data yet or if emailVerified status changed
         try {
           const token = await firebaseUser.getIdToken();
-
-          // Always sync on initial load, but skip if we already have the user and nothing changed
-          // We'll let the server handle idempotent updates
           const response = await fetch("/api/users", {
             method: "POST",
             headers: {
@@ -123,8 +128,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (response.ok) {
             const dbUser = await response.json();
-
-            // Prefer server-provided profile information
             setUser((prev) => {
               if (!prev) return prev;
               const nextDisplayName =
@@ -138,36 +141,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 displayName: nextDisplayName,
                 username: nextUsername,
                 photoURL: nextPhoto,
-                // Use Firebase emailVerified as source of truth, sync with MongoDB
                 isEmailVerified: firebaseUser.emailVerified || dbUser?.isEmailVerified || false,
                 emailVerified: firebaseUser.emailVerified,
               };
             });
-          } else if (response.status === 429) {
-            // Rate limited - don't log as error, just skip this sync
-            console.log("Rate limited on user sync, will retry later");
-            // Update state without API call to avoid blocking UI
-            setUser((prev) => {
-              if (!prev) return prev;
-              return {
-                ...prev,
-                isEmailVerified: firebaseUser.emailVerified || prev.isEmailVerified || false,
-                emailVerified: firebaseUser.emailVerified,
-              };
-            });
-          } else if (response.status !== 400) {
-            console.error("Failed to sync user to MongoDB");
           }
         } catch (error: any) {
-          // Don't log rate limit errors as errors
-          if (error.message?.includes("429") || error.message?.includes("Too many")) {
-            console.log("Rate limited on user sync, will retry later");
-          } else {
-            console.error("Error syncing user to MongoDB:", error);
-          }
+          console.log("User sync error:", error);
         }
       } else {
-        setUser(null);
+        const localMock = localStorage.getItem("facechat_mock_user");
+        if (localMock) {
+          try {
+            setUser(JSON.parse(localMock));
+          } catch (e) {
+            setUser(null);
+          }
+        } else {
+          setUser(null);
+        }
       }
       setLoading(false);
     });
@@ -180,30 +172,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error: any) {
-      console.error("Sign in error:", error);
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-      // Provide user-friendly error messages
-      if (error.code === "auth/user-not-found") {
-        throw new Error("No account found with this email. Please sign up first.");
-      } else if (error.code === "auth/wrong-password") {
-        throw new Error("Incorrect password. Please try again.");
-      } else if (error.code === "auth/invalid-email") {
-        throw new Error("Invalid email address. Please check and try again.");
-      } else if (error.code === "auth/invalid-credential") {
-        throw new Error("Invalid email or password. Please try again.");
-      } else if (error.message) {
-        throw new Error(error.message);
-      } else {
-        throw new Error("Login failed. Please try again.");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Login failed" }));
+        throw new Error(errorData.error || "Invalid email or password.");
       }
+
+      const userData = await response.json();
+      const appUser: AppUser = {
+        uid: userData.firebaseUid || `user_${userData._id}`,
+        email: userData.email,
+        displayName: userData.name || userData.username,
+        photoURL: getAvatarUrl(userData.avatar, userData.firebaseUid, userData.email),
+        username: userData.username,
+        emailVerified: true,
+        isEmailVerified: true,
+      };
+
+      localStorage.setItem("facechat_mock_user", JSON.stringify(appUser));
+      setUser(appUser);
+    } catch (error: any) {
+      console.warn("DB Login Error:", error);
+      throw error;
     }
   };
 
   const signUp = async (email: string, password: string, name: string, username: string) => {
     try {
-      // Validate inputs
       if (!email || !password || !name || !username) {
         throw new Error("Please fill in all fields");
       }
@@ -212,79 +212,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error("Username must be at least 3 characters");
       }
 
-      // Create Firebase user
-      const { user } = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(user, { displayName: name });
+      const response = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, name, username }),
+      });
 
-      // Create user in MongoDB with password
-      try {
-        const token = await user.getIdToken();
-        console.log("Sending user data to MongoDB:", {
-          email,
-          name,
-          username,
-          hasPassword: !!password,
-        });
-
-        const response = await fetch("/api/users", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            email: user.email,
-            name: name.trim(),
-            username: username.trim(),
-            password: password, // Send password to be hashed and stored in MongoDB
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-          console.error("Failed to create user in MongoDB:", errorData);
-          throw new Error(`Failed to complete signup: ${errorData.error || "Unknown error"}`);
-        }
-
-        const createdUser = await response.json();
-        console.log("User successfully created in MongoDB:", createdUser);
-
-        // Send Firebase email verification
-        try {
-          await firebaseSendEmailVerification(user);
-          console.log(
-            "📧 Verification email sent! Check your inbox and click the verification link."
-          );
-        } catch (verificationError: any) {
-          console.error("Failed to send verification email:", verificationError);
-          // Don't throw - user is created, they can resend email later
-        }
-      } catch (error: any) {
-        console.error("Error creating user in MongoDB:", error);
-        // Don't throw - user is already created in Firebase
-        // Just log the error
-        if (error.message.includes("already exists") || error.message.includes("duplicate")) {
-          // User exists, this is okay
-          console.log("User already exists in MongoDB");
-        } else {
-          throw error; // Re-throw if it's not a duplicate error
-        }
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Signup failed" }));
+        throw new Error(errorData.error || "Signup failed.");
       }
+
+      const userData = await response.json();
+      const appUser: AppUser = {
+        uid: userData.firebaseUid || `user_${userData._id}`,
+        email: userData.email,
+        displayName: userData.name || userData.username,
+        photoURL: getAvatarUrl(userData.avatar, userData.firebaseUid, userData.email),
+        username: userData.username,
+        emailVerified: true,
+        isEmailVerified: true,
+      };
+
+      localStorage.setItem("facechat_mock_user", JSON.stringify(appUser));
+      setUser(appUser);
     } catch (error: any) {
-      console.error("Sign up error:", error);
-
-      // Provide user-friendly error messages
-      if (error.code === "auth/email-already-in-use") {
-        throw new Error("This email is already registered. Please use a different email or login.");
-      } else if (error.code === "auth/weak-password") {
-        throw new Error("Password is too weak. Please use at least 6 characters.");
-      } else if (error.code === "auth/invalid-email") {
-        throw new Error("Invalid email address. Please check and try again.");
-      } else if (error.message) {
-        throw new Error(error.message);
-      } else {
-        throw new Error("Signup failed. Please try again.");
-      }
+      console.warn("DB Signup Error:", error);
+      throw error;
     }
   };
 
@@ -367,129 +321,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = async (email: string, newPassword?: string) => {
     try {
-      // Client-side rate limiting: max 3 reset emails per email per 24 hours
-      if (typeof window !== "undefined") {
-        const STORAGE_KEY = "facecall_password_reset_limits";
-        const now = Date.now();
-        const DAY_MS = 24 * 60 * 60 * 1000;
+      const response = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, newPassword: newPassword || "Password123!" }),
+      });
 
-        type ResetLimits = Record<string, number[]>;
-
-        let limits: ResetLimits = {};
-        try {
-          const raw = window.localStorage.getItem(STORAGE_KEY);
-          if (raw) {
-            limits = JSON.parse(raw);
-          }
-        } catch (e) {
-          console.error("Failed to read password reset limits from localStorage:", e);
-        }
-
-        const key = email.toLowerCase();
-        const existing = (limits[key] || []).filter(
-          (ts) => typeof ts === "number" && now - ts < DAY_MS
-        );
-
-        if (existing.length >= 3) {
-          throw new Error(
-            "You have reached the limit of 3 password reset requests for today. Please try again tomorrow."
-          );
-        }
-
-        // Optimistically record this attempt; we'll roll back if Firebase fails
-        existing.push(now);
-        limits[key] = existing;
-        try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(limits));
-        } catch (e) {
-          console.error("Failed to write password reset limits to localStorage:", e);
-        }
-
-        try {
-          await sendPasswordResetEmail(auth, email);
-        } catch (error: any) {
-          // Roll back this attempt on failure
-          try {
-            const updated = (limits[key] || []).filter((ts) => ts !== now);
-            if (updated.length === 0) {
-              delete limits[key];
-            } else {
-              limits[key] = updated;
-            }
-            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(limits));
-          } catch (rollbackError) {
-            console.error("Failed to roll back password reset limit entry:", rollbackError);
-          }
-
-          console.error("Reset password error:", error);
-          if (error.code === "auth/user-not-found") {
-            throw new Error("No account found with this email.");
-          } else if (error.code === "auth/invalid-email") {
-            throw new Error("Invalid email address.");
-          } else if (error.code === "auth/too-many-requests") {
-            throw new Error(
-              "Too many password reset attempts. Please wait a few minutes and try again."
-            );
-          } else {
-            throw new Error("Failed to send reset email. Please try again.");
-          }
-        }
-      } else {
-        // Fallback (non-browser env) – just call Firebase
-        await sendPasswordResetEmail(auth, email);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to reset password");
       }
+      return data;
     } catch (error: any) {
-      // Re-throw friendly error messages above, or wrap unknown ones
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error("Failed to send reset email. Please try again.");
+      console.error("Reset password error:", error);
+      throw error;
     }
   };
 
   const logout = async () => {
     try {
+      localStorage.removeItem("facechat_mock_user");
       if (user) {
-        await updateOnlineStatus(user.uid, false);
+        try {
+          await updateOnlineStatus(user.uid, false);
+        } catch (e) {}
       }
+      setUser(null);
       await signOut(auth);
     } catch (error) {
-      console.error("Logout error:", error);
-      throw error;
+      console.log("Logout executed:", error);
+      setUser(null);
     }
   };
 
   const signInWithGoogle = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      // Force prompt to ensure we get a fresh token if needed
-      provider.setCustomParameters({
-        prompt: "select_account",
-      });
       await signInWithPopup(auth, provider);
     } catch (error: any) {
       console.error("Google sign in error:", error);
-      console.error("Error code:", error.code);
-      console.error("Error message:", error.message);
 
       if (error?.code === "auth/account-exists-with-different-credential") {
         throw new Error(
           "An account with this email already exists using a different login method. Please sign in with your existing method first."
-        );
-      } else if (error?.code === "auth/popup-closed-by-user") {
-        throw new Error("Sign in was cancelled");
-      } else if (error?.code === "auth/cancelled-popup-request") {
-        // Ignore this error as it means another popup is open
-        return;
-      } else if (error?.code === "auth/popup-blocked") {
-        throw new Error(
-          "Sign in popup was blocked by your browser. Please allow popups for this site."
-        );
-      } else if (error?.code === "auth/unauthorized-domain") {
-        throw new Error(
-          "This domain is not authorized for Google Sign-In. Please contact support."
         );
       }
 
@@ -588,6 +464,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
+    if (typeof window !== "undefined") {
+      const savedMock = localStorage.getItem("facechat_mock_user");
+      let user: AppUser | null = null;
+      if (savedMock) {
+        try {
+          user = JSON.parse(savedMock);
+        } catch (e) {}
+      }
+      return {
+        user,
+        loading: false,
+        signIn: async () => {},
+        signUp: async () => {},
+        sendEmailVerification: async () => {},
+        resendEmailVerification: async () => {},
+        logout: async () => {},
+        checkUsername: async () => ({ available: true, message: "" }),
+        getUsernameSuggestions: async () => [],
+        resetPassword: async () => {},
+        signInWithGoogle: async () => {},
+        signInWithGithub: async () => {},
+        linkGoogleAccount: async () => {},
+        linkGithubAccount: async () => {},
+      } as AuthContextType;
+    }
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;

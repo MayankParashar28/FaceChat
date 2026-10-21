@@ -38,8 +38,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   });
 
-  // Make IO accessible in routes
+  const userSockets = new Map<string, string>();
+  const socketUserMap = new Map<string, string>(); // socketId -> userId
+  const roomParticipants = new Map<string, Set<string>>(); // roomId -> Set of socketIds
+
+  // Make IO and online users accessible in routes
   app.set("io", io);
+  app.set("getOnlineUserIds", () => new Set(userSockets.keys()));
 
   // Register API Routes
   app.use("/api/auth", authRoutes);
@@ -50,52 +55,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/invites", inviteRoutes);
 
-  const userSockets = new Map<string, string>();
-  const socketUserMap = new Map<string, string>(); // socketId -> userId
-  const roomParticipants = new Map<string, Set<string>>(); // roomId -> Set of socketIds
-
-  // Twilio Verify client (for phone number verification)
-  // const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-  // const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-  // const twilioVerifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-  // const twilioClient =
-  //   twilioAccountSid && twilioAuthToken
-  //     ? twilio(twilioAccountSid, twilioAuthToken)
-  //     : null;
-
   io.on("connection", (socket) => {
     logger.info("Client connected:", socket.id);
 
     socket.on("user:online", async (data: { firebaseToken: string }) => {
       try {
-        const decodedToken = await verifyFirebaseToken(data.firebaseToken);
-        const userId = decodedToken.uid;
+        const token = data?.firebaseToken;
+        if (!token) return;
 
-        // Use createOrUpdateUser to handle existing users
-        const user = await mongoService.createOrUpdateUser({
-          firebaseUid: userId,
-          email: decodedToken.email || "",
-          name: decodedToken.name || "",
-          username: decodedToken.email?.split("@")[0] || "user",
-        });
+        let userId = token;
+        let dbUser: any = null;
 
-        userSockets.set(userId, socket.id);
-        socketUserMap.set(socket.id, userId);
-        await setUserOnlineStatus(userId, true);
-        io.emit("user:status", { userId, online: true });
+        // Try finding user directly by firebaseUid or MongoDB ID
+        try {
+          dbUser = await mongoService.getUserByFirebaseUid(token);
+          if (!dbUser && mongoose.Types.ObjectId.isValid(token)) {
+            dbUser = await mongoService.getUserById(token);
+          }
+        } catch (e) {}
 
-        // Join user-specific room for individual updates
-        socket.join(`user:${user._id.toString()}`);
+        if (!dbUser) {
+          try {
+            const decodedToken = await verifyFirebaseToken(token);
+            userId = decodedToken.uid;
+            dbUser = await mongoService.getUserByFirebaseUid(userId);
+            if (!dbUser) {
+              dbUser = await mongoService.createOrUpdateUser({
+                firebaseUid: userId,
+                email: decodedToken.email || "",
+                name: decodedToken.name || "",
+                username: decodedToken.email?.split("@")[0] || "user",
+              });
+            }
+          } catch (e) {
+            userId = token;
+          }
+        }
 
-        const meetings = await mongoService.getUserMeetings(user._id.toString());
-        meetings.forEach((meeting) => {
-          socket.join(`meeting:${meeting._id.toString()}`);
-        });
+        if (dbUser) {
+          const mongoId = dbUser._id.toString();
+          const firebaseUid = dbUser.firebaseUid || mongoId;
 
-        socket.emit("user:authenticated", { userId, user });
+          userSockets.set(mongoId, socket.id);
+          userSockets.set(firebaseUid, socket.id);
+          socketUserMap.set(socket.id, mongoId);
+
+          setUserOnlineStatus(firebaseUid, true).catch(() => {});
+          setUserOnlineStatus(mongoId, true).catch(() => {});
+
+          io.emit("user:status", { userId: mongoId, online: true });
+          io.emit("user:status", { userId: firebaseUid, online: true });
+
+          socket.join(`user:${mongoId}`);
+          socket.join(`user:${firebaseUid}`);
+
+          const meetings = await mongoService.getUserMeetings(mongoId);
+          meetings.forEach((meeting) => {
+            socket.join(`meeting:${meeting._id.toString()}`);
+          });
+
+          socket.emit("user:authenticated", { userId: mongoId, user: dbUser });
+          socket.emit("users:online-list", { onlineUserIds: Array.from(userSockets.keys()) });
+        } else {
+          userSockets.set(userId, socket.id);
+          socketUserMap.set(socket.id, userId);
+          setUserOnlineStatus(userId, true).catch(() => {});
+          io.emit("user:status", { userId, online: true });
+          socket.emit("users:online-list", { onlineUserIds: Array.from(userSockets.keys()) });
+        }
       } catch (error) {
-        logger.error("Authentication error:", error);
-        socket.emit("error", { message: "Authentication failed" });
+        logger.error("Error in user:online socket handler:", error);
       }
     });
 
@@ -236,8 +265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // For 1-on-1 chats, both users must have an ACTIVE mutual connection
           // before any message is persisted. This is checked BEFORE creating the
           // message so we never write (and then have to delete) a blocked message.
-          // Groups are exempt (no pairwise connection concept); a `blocked`
-          // connection also fails this check, so blocking stops messaging.
+          // Groups are exempt; a `blocked` connection also fails this check.
           const conversationToCheck = await Conversation.findById(data.conversationId);
           if (conversationToCheck && !conversationToCheck.isGroup) {
             const otherParticipantId = conversationToCheck.participants.find(
@@ -502,6 +530,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let dbUser;
       try {
         dbUser = await mongoService.getUserByFirebaseUid(userId);
+        if (!dbUser && mongoose.Types.ObjectId.isValid(userId)) {
+          dbUser = await mongoService.getUserById(userId);
+        }
         if (dbUser) {
           userName = dbUser.name;
           userAvatar = dbUser.avatar;
@@ -589,10 +620,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     startTime: newStartTime,
                     endTime: undefined,
                     analytics: {
-                      totalDuration: 0,
+                      totalDuration: existingMeeting.analytics?.totalDuration || 0,
                       participantCount: currentParticipantCount,
-                      engagementScore: 0,
-                      emotionData: [],
+                      engagementScore: existingMeeting.analytics?.engagementScore || 0,
+                      emotionData: existingMeeting.analytics?.emotionData || [],
+                      reactions: existingMeeting.analytics?.reactions,
                     },
                   });
                   io.to(`call:${roomId}`).emit("call:meeting-active", {
@@ -761,6 +793,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         participants: participantsWithData,
         startTime: meetingStartTime,
       });
+
+      // Send previous room chat history to joining user
+      try {
+        const previousMessages = await mongoService.getMeetingMessages(roomId, 100);
+        if (previousMessages && previousMessages.length > 0) {
+          const formattedHistory = previousMessages.map((m: any) => ({
+            id: m._id ? m._id.toString() : Date.now().toString(),
+            socketId: "",
+            userId: m.senderId?.firebaseUid || (m.senderId?._id ? m.senderId._id.toString() : ""),
+            sender: m.senderId?.name || "Participant",
+            avatar: m.senderId?.avatar,
+            message: m.content,
+            time: m.timestamp
+              ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+              : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          }));
+          socket.emit("call:chat-history", formattedHistory);
+        }
+      } catch (err) {
+        logger.error("Error fetching chat history for joining socket:", err);
+      }
     });
 
     const handleUserLeave = async (roomId: string, socketId: string) => {
@@ -1120,9 +1173,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           logger.info("Socket rooms:", Array.from(socket.rooms));
 
           // Broadcast message to all participants in the room (including sender)
-          // Use io.to() to broadcast to all sockets in the room
           logger.info("Broadcasting to room:", roomName);
           io.to(roomName).emit("call:chat-message", messageData);
+
+          // Persist message to MongoDB Atlas
+          try {
+            let dbUser = await mongoService.getUserByFirebaseUid(userId);
+            if (!dbUser && mongoose.Types.ObjectId.isValid(userId)) {
+              dbUser = await mongoService.getUserById(userId);
+            }
+
+            if (dbUser) {
+              const meeting = await mongoService.getMeetingByRoomId(roomId);
+              await mongoService.createChatMessage({
+                meetingId: meeting?._id?.toString(),
+                roomId: roomId,
+                senderId: dbUser._id.toString(),
+                content: message.trim(),
+              });
+              logger.info(`✅ Saved chat message to DB for room: ${roomId}`);
+            }
+          } catch (dbErr) {
+            logger.error("Error persisting chat message to DB:", dbErr);
+          }
 
           logger.info("=== SERVER: Message broadcast complete ===");
         } catch (error) {

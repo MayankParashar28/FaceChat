@@ -314,7 +314,8 @@ MeetingSchema.virtual("participantDetails", {
 
 export interface IChatMessage extends Document {
   _id: Types.ObjectId;
-  meetingId: Types.ObjectId;
+  meetingId?: Types.ObjectId;
+  roomId?: string;
   senderId: Types.ObjectId;
   content: string;
   messageType: "text" | "image" | "file" | "system";
@@ -330,7 +331,8 @@ export interface IChatMessage extends Document {
 
 const ChatMessageSchema = new Schema<IChatMessage>(
   {
-    meetingId: { type: Schema.Types.ObjectId, ref: "Meeting", required: true },
+    meetingId: { type: Schema.Types.ObjectId, ref: "Meeting", required: false },
+    roomId: { type: String, required: false, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     content: { type: String, required: true, trim: true },
     messageType: {
