@@ -1,6 +1,7 @@
-import { initializeApp, getApps, cert, type App } from 'firebase-admin/app';
-import { getAuth, type Auth } from 'firebase-admin/auth';
-import { getDatabase, type Database } from 'firebase-admin/database';
+import { logger } from "../utils/logger";
+import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
+import { getAuth, type Auth } from "firebase-admin/auth";
+import { getDatabase, type Database } from "firebase-admin/database";
 
 // Firebase Admin SDK configuration
 interface FirebaseConfig {
@@ -20,11 +21,12 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       projectId: serviceAccount.project_id,
       privateKey: serviceAccount.private_key,
       clientEmail: serviceAccount.client_email,
-      databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id}.firebaseio.com`,
+      databaseURL:
+        process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id}.firebaseio.com`,
     };
-    console.log('✅ Parsed FIREBASE_SERVICE_ACCOUNT environment variable');
+    logger.info("✅ Parsed FIREBASE_SERVICE_ACCOUNT environment variable");
   } catch (error) {
-    console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT:', error);
+    logger.error("❌ Failed to parse FIREBASE_SERVICE_ACCOUNT:", error);
   }
 }
 
@@ -32,7 +34,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 if (!firebaseConfig.projectId || !firebaseConfig.privateKey || !firebaseConfig.clientEmail) {
   firebaseConfig = {
     projectId: process.env.FIREBASE_PROJECT_ID,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
     databaseURL: process.env.FIREBASE_DATABASE_URL,
   };
@@ -52,14 +54,14 @@ if (getApps().length === 0) {
         }),
         databaseURL: firebaseConfig.databaseURL,
       });
-      console.log('✅ Firebase Admin SDK initialized');
+      logger.info("✅ Firebase Admin SDK initialized");
     } else {
-      console.log('⚠️  Firebase credentials not found - Firebase features will be disabled');
-      console.log('💡 Make sure to set Firebase environment variables in .env');
+      logger.info("⚠️  Firebase credentials not found - Firebase features will be disabled");
+      logger.info("💡 Make sure to set Firebase environment variables in .env");
     }
   } catch (error) {
-    console.error('❌ Firebase Admin SDK initialization failed:', error);
-    console.log('💡 Make sure to set Firebase environment variables in .env');
+    logger.error("❌ Firebase Admin SDK initialization failed:", error);
+    logger.info("💡 Make sure to set Firebase environment variables in .env");
   }
 } else {
   app = getApps()[0];
@@ -72,7 +74,7 @@ export const database: Database | null = app ? getDatabase(app) : null;
 // Verify Firebase ID token
 export async function verifyFirebaseToken(idToken: string) {
   if (!auth) {
-    throw new Error('Firebase Admin SDK not initialized. Please check your environment variables.');
+    throw new Error("Firebase Admin SDK not initialized. Please check your environment variables.");
   }
   try {
     const decodedToken = await auth.verifyIdToken(idToken);
@@ -83,15 +85,15 @@ export async function verifyFirebaseToken(idToken: string) {
       emailVerified: decodedToken.email_verified,
     };
   } catch (error) {
-    console.error('Firebase token verification failed:', error);
-    throw new Error('Invalid Firebase token');
+    logger.error("Firebase token verification failed:", error);
+    throw new Error("Invalid Firebase token");
   }
 }
 
 // Set user online status in Firebase Realtime Database
 export async function setUserOnlineStatus(userId: string, isOnline: boolean) {
   if (!database) {
-    console.log('⚠️  Firebase Database not available - skipping online status update');
+    logger.info("⚠️  Firebase Database not available - skipping online status update");
     return false;
   }
   try {
@@ -102,7 +104,7 @@ export async function setUserOnlineStatus(userId: string, isOnline: boolean) {
     });
     return true;
   } catch (error) {
-    console.error('Failed to set user online status:', error);
+    logger.error("Failed to set user online status:", error);
     return false;
   }
 }
@@ -114,10 +116,10 @@ export async function getUserOnlineStatus(userId: string) {
   }
   try {
     const userStatusRef = database.ref(`users/${userId}/status`);
-    const snapshot = await userStatusRef.once('value');
+    const snapshot = await userStatusRef.once("value");
     return snapshot.val();
   } catch (error) {
-    console.error('Failed to get user online status:', error);
+    logger.error("Failed to get user online status:", error);
     return null;
   }
 }
@@ -125,29 +127,29 @@ export async function getUserOnlineStatus(userId: string) {
 // Listen to user online status changes
 export function listenToUserStatus(userId: string, callback: (status: any) => void) {
   if (!database) {
-    return () => { };
+    return () => {};
   }
   const userStatusRef = database.ref(`users/${userId}/status`);
-  userStatusRef.on('value', (snapshot) => {
+  userStatusRef.on("value", (snapshot) => {
     callback(snapshot.val());
   });
 
   // Return unsubscribe function
-  return () => userStatusRef.off('value');
+  return () => userStatusRef.off("value");
 }
 
 // Listen to all users online status
 export function listenToAllUsersStatus(callback: (users: any) => void) {
   if (!database) {
-    return () => { };
+    return () => {};
   }
-  const usersRef = database.ref('users');
-  usersRef.on('value', (snapshot) => {
+  const usersRef = database.ref("users");
+  usersRef.on("value", (snapshot) => {
     callback(snapshot.val());
   });
 
   // Return unsubscribe function
-  return () => usersRef.off('value');
+  return () => usersRef.off("value");
 }
 
 export default app;

@@ -1,26 +1,30 @@
 import "dotenv/config";
-import express, { type Request, Response, NextFunction } from "express";
+import express from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { connectToMongoDB, testMongoConnection } from "./database/mongodb";
 import { startCronJobs } from "./services/cron";
+import { logger } from "./utils/logger";
+import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 const app = express();
 
 // Start background jobs
 startCronJobs();
 
-declare module 'http' {
+declare module "http" {
   interface IncomingMessage {
-    rawBody: unknown
+    rawBody: unknown;
   }
 }
 // Security headers middleware
 app.use((req, res, next) => {
   // CORS configuration
   const allowedOrigins = process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',')
-    : (process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]);
+    ? process.env.CORS_ORIGIN.split(",")
+    : process.env.NODE_ENV === "production"
+      ? []
+      : ["http://localhost:3000"];
 
   const origin = req.headers.origin;
   if (origin && (allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production")) {
@@ -42,11 +46,13 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({
-  verify: (req, _res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
@@ -82,12 +88,11 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  // Return JSON 404 for unmatched API routes (before the Vite/static catch-all).
+  app.use("/api", notFoundHandler);
 
-    res.status(status).json({ message });
-  });
+  // Centralized error handler — logs with request context and sanitizes output.
+  app.use(errorHandler);
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
@@ -102,7 +107,7 @@ app.use((req, res, next) => {
   // Other ports are firewalled. Default to 3000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '3000', 10);
+  const port = parseInt(process.env.PORT || "3000", 10);
   server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
     log(`Open http://0.0.0.0:${port} to view the app`);
@@ -112,7 +117,9 @@ app.use((req, res, next) => {
   connectToMongoDB()
     .then(() => testMongoConnection())
     .catch((error) => {
-      console.log("⚠️  MongoDB connection failed, but continuing with frontend-only mode");
-      console.log("   The app will work for UI testing, but data features won't work");
+      logger.warn(
+        { err: error },
+        "MongoDB connection failed, continuing in frontend-only mode (data features disabled)"
+      );
     });
 })();
