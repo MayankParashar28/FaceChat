@@ -241,18 +241,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     username: string
   ): Promise<{ available: boolean; message: string }> => {
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        throw new Error("User not authenticated");
-      }
-
-      const token = await user.getIdToken();
-      const response = await fetch(`/api/users/check-username/${encodeURIComponent(username)}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include",
-      });
+      // Public endpoint — no auth needed (used on the signup form pre-login).
+      const response = await fetch(`/api/users/check-username/${encodeURIComponent(username)}`);
       if (!response.ok) {
         throw new Error("Failed to check username");
       }
@@ -293,18 +283,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const getUsernameSuggestions = async (baseUsername: string): Promise<string[]> => {
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        throw new Error("User not authenticated");
-      }
-
-      const token = await user.getIdToken();
-      const response = await fetch(`/api/users/suggestions/${encodeURIComponent(baseUsername)}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include",
-      });
+      // Public endpoint — no auth needed (used on the signup form pre-login).
+      const response = await fetch(`/api/users/suggestions/${encodeURIComponent(baseUsername)}`);
       if (!response.ok) {
         throw new Error("Failed to get suggestions");
       }

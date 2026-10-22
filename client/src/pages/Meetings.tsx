@@ -16,8 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth";
-import { getQueryFn } from "@/lib/queryClient";
-import { auth } from "@/lib/firebase"; // Add this import
+import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import {
   Calendar as CalendarIcon,
   Plus,
@@ -62,25 +61,13 @@ export default function Meetings() {
   // Create meeting mutation
   const createMeetingMutation = useMutation({
     mutationFn: async (data: { title: string; startTime: string }) => {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error("User not authenticated");
-
-      const res = await fetch("/api/meetings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(data),
+      // Use the shared apiRequest helper so auth works for both Firebase and
+      // DB (email/password) logins, and mark the meeting as scheduled.
+      const res = await apiRequest("POST", "/api/meetings", {
+        ...data,
+        status: "scheduled",
       });
-
-      const result = await res.json();
-
-      if (!res.ok) {
-        throw new Error(result.error || result.message || "Failed to schedule meeting");
-      }
-
-      return result;
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });

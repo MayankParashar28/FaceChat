@@ -37,6 +37,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const socketUserMap = new Map<string, string>(); // socketId -> userId
   const roomParticipants = new Map<string, Set<string>>(); // roomId -> Set of socketIds
 
+  /**
+   * Active call invitations, keyed by call roomId. Lets us post "call started /
+   * ended / declined / missed" system messages into the originating chat and
+   * keep caller and callee in sync.
+   */
+  const callSessions = new Map<
+    string,
+    {
+      conversationId?: string;
+      callerUid: string;
+      calleeUid: string;
+      callerName: string;
+      calleeName: string;
+      callType: "audio" | "video";
+      answered: boolean;
+      ended: boolean;
+      startedAt?: number;
+    }
+  >();
+
+  function formatCallDuration(ms: number) {
+    const total = Math.max(1, Math.round(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  }
+
+  /** Post a `system` message into a conversation and broadcast it live. */
+  async function postCallSystemMessage(
+    conversationId: string | undefined,
+    senderUid: string,
+    content: string
+  ) {
+    if (!conversationId) return;
+    try {
+      const dbUser = await mongoService.getUserByFirebaseUidCached(senderUid);
+      if (!dbUser) return;
+
+      const message = await mongoService.createMessage({
+        conversationId,
+        senderId: dbUser._id.toString(),
+        content,
+        messageType: "system",
+      });
+
+      io.to(`conversation:${conversationId}`).emit("message:new", {
+        id: message._id.toString(),
+        conversationId,
+        senderId: senderUid,
+        content,
+        messageType: "system",
+        isPinned: false,
+        createdAt: message.createdAt,
+        sender: {
+          id: dbUser._id.toString(),
+          name: dbUser.name,
+          username: dbUser.username,
+          firebaseUid: senderUid,
+        },
+        status: "sent" as const,
+      });
+    } catch (error) {
+      logger.error("Failed to post call system message:", error);
+    }
+  }
+
   // Make IO and online users accessible in routes
   app.set("io", io);
   app.set("getOnlineUserIds", () => new Set(userSockets.keys()));
@@ -63,7 +129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Try finding user directly by firebaseUid or MongoDB ID
         try {
-          dbUser = await mongoService.getUserByFirebaseUid(token);
+          dbUser = await mongoService.getUserByFirebaseUidCached(token);
           if (!dbUser && mongoose.Types.ObjectId.isValid(token)) {
             dbUser = await mongoService.getUserById(token);
           }
@@ -73,7 +139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try {
             const decodedToken = await verifyFirebaseToken(token);
             userId = decodedToken.uid;
-            dbUser = await mongoService.getUserByFirebaseUid(userId);
+            dbUser = await mongoService.getUserByFirebaseUidCached(userId);
             if (!dbUser) {
               dbUser = await mongoService.createOrUpdateUser({
                 firebaseUid: userId,
@@ -127,13 +193,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       socket.join(`conversation:${conversationId}`);
 
       // Mark messages sent by others as delivered when user joins conversation
-      // Get the socket's user from userSockets map
-      const userId = Array.from(userSockets.entries()).find(
-        ([, socketId]) => socketId === socket.id
-      )?.[0];
+      // O(1) reverse lookup via socketUserMap (socketId -> userId).
+      const userId = socketUserMap.get(socket.id);
       if (userId) {
         try {
-          const dbUser = await mongoService.getUserByFirebaseUid(userId);
+          const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
           if (dbUser) {
             // Find all messages in this conversation that are not from this user
             // These are messages sent by others that this user is receiving
@@ -168,7 +232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       async ({ conversationId, userId }: { conversationId: string; userId: string }) => {
         try {
           // Get user from MongoDB
-          const dbUser = await mongoService.getUserByFirebaseUid(userId);
+          const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
           if (!dbUser) {
             logger.error("User not found for mark read");
             return;
@@ -250,7 +314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       async (data: { conversationId: string; senderId: string; content: string }) => {
         try {
           // Get user from MongoDB
-          const dbUser = await mongoService.getUserByFirebaseUid(data.senderId);
+          const dbUser = await mongoService.getUserByFirebaseUidCached(data.senderId);
           if (!dbUser) {
             socket.emit("message:error", { error: "User not found" });
             return;
@@ -366,9 +430,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const activeRecipients = new Set<string>();
 
               for (const s of socketsInRoom) {
-                const socketUserId = Array.from(userSockets.entries()).find(
-                  ([, socketId]) => socketId === s.id
-                )?.[0];
+                const socketUserId = socketUserMap.get(s.id);
                 if (socketUserId && recipientIds.includes(socketUserId)) {
                   activeRecipients.add(socketUserId);
                 }
@@ -398,7 +460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       async ({ messageId, userId }: { messageId: string; userId: string }) => {
         try {
           // Get user from MongoDB
-          const dbUser = await mongoService.getUserByFirebaseUid(userId);
+          const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
           if (!dbUser) {
             logger.error("User not found for seen status");
             return;
@@ -475,6 +537,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     );
 
+    // --- Incoming-call signaling (ring the callee) ---
+    // Caller -> server -> callee's `user:<id>` room. toUserId/fromUserId are
+    // Firebase UIDs; each socket joins user:<firebaseUid> on connect.
+    socket.on(
+      "call:invite",
+      (data: {
+        toUserId: string;
+        fromUserId: string;
+        fromName?: string;
+        fromAvatar?: string;
+        roomId: string;
+        callType: "audio" | "video";
+        conversationId?: string;
+      }) => {
+        if (!data?.toUserId || !data?.roomId) return;
+        // Don't let a user ring themselves.
+        if (data.toUserId === data.fromUserId) return;
+
+        const session = {
+          conversationId: data.conversationId,
+          callerUid: data.fromUserId,
+          calleeUid: data.toUserId,
+          callerName: data.fromName || "Someone",
+          calleeName: "Someone",
+          callType: data.callType,
+          answered: false,
+          ended: false,
+        };
+        callSessions.set(data.roomId, session);
+
+        // Ring immediately, then fill in real display names for the chat log.
+        io.to(`user:${data.toUserId}`).emit("call:incoming", data);
+
+        mongoService
+          .getUserByFirebaseUidCached(data.toUserId)
+          .then((calleeUser) => {
+            if (calleeUser?.name) session.calleeName = calleeUser.name;
+          })
+          .catch(() => {});
+        if (!data.fromName) {
+          mongoService
+            .getUserByFirebaseUidCached(data.fromUserId)
+            .then((callerUser) => {
+              if (callerUser?.name) session.callerName = callerUser.name;
+            })
+            .catch(() => {});
+        }
+      }
+    );
+
+    // Callee answered — let the caller stop ringing and log it in the chat.
+    socket.on("call:accept", async (data: { roomId: string; toUserId: string }) => {
+      if (!data?.roomId) return;
+      const session = callSessions.get(data.roomId);
+      if (session && !session.answered && !session.ended) {
+        session.answered = true;
+        session.startedAt = Date.now();
+        await postCallSystemMessage(
+          session.conversationId,
+          session.callerUid,
+          session.callType === "video"
+            ? `📹 ${session.callerName} started a video call`
+            : `📞 ${session.callerName} started a voice call`
+        );
+      }
+      if (data.toUserId) {
+        io.to(`user:${data.toUserId}`).emit("call:accepted", { roomId: data.roomId });
+      }
+    });
+
+    // Callee declined.
+    socket.on("call:decline", async (data: { toUserId: string; roomId: string }) => {
+      if (!data?.toUserId) return;
+      const session = callSessions.get(data.roomId);
+      if (session && !session.ended) {
+        session.ended = true;
+        await postCallSystemMessage(
+          session.conversationId,
+          session.callerUid,
+          `📵 ${session.calleeName} declined the call`
+        );
+        callSessions.delete(data.roomId);
+      }
+      io.to(`user:${data.toUserId}`).emit("call:declined", { roomId: data.roomId });
+    });
+
+    // Caller hung up before it was answered — stop the callee's ringing.
+    socket.on("call:cancel", async (data: { toUserId: string; roomId: string }) => {
+      if (!data?.toUserId) return;
+      const session = callSessions.get(data.roomId);
+      if (session && !session.ended) {
+        session.ended = true;
+        await postCallSystemMessage(
+          session.conversationId,
+          session.callerUid,
+          `📞 Missed call from ${session.callerName}`
+        );
+        callSessions.delete(data.roomId);
+      }
+      io.to(`user:${data.toUserId}`).emit("call:cancelled", { roomId: data.roomId });
+    });
+
     // Video call signaling handlers
     socket.on("call:join", async ({ roomId, userId }: { roomId: string; userId: string }) => {
       logger.debug(`=== CALL:JOIN EVENT RECEIVED ===`);
@@ -530,7 +694,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let userAvatar: string | undefined;
       let dbUser;
       try {
-        dbUser = await mongoService.getUserByFirebaseUid(userId);
+        dbUser = await mongoService.getUserByFirebaseUidCached(userId);
         if (!dbUser && mongoose.Types.ObjectId.isValid(userId)) {
           dbUser = await mongoService.getUserById(userId);
         }
@@ -753,14 +917,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Fetch user data for all existing participants
       const participantsWithData = await Promise.all(
         existingSocketIds.map(async (socketId) => {
-          // Find userId for this socketId
-          const participantUserId = Array.from(userSockets.entries()).find(
-            ([, sid]) => sid === socketId
-          )?.[0];
+          // O(1) reverse lookup via socketUserMap (socketId -> userId).
+          const participantUserId = socketUserMap.get(socketId);
 
           if (participantUserId) {
             try {
-              const dbUser = await mongoService.getUserByFirebaseUid(participantUserId);
+              const dbUser = await mongoService.getUserByFirebaseUidCached(participantUserId);
               return {
                 socketId,
                 userId: participantUserId,
@@ -833,6 +995,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Update meeting status to 'ended' if this was the last user
       if (wasLastUser) {
+        // Log the call outcome into the originating chat.
+        const callSession = callSessions.get(roomId);
+        if (callSession && !callSession.ended) {
+          callSession.ended = true;
+          if (callSession.answered && callSession.startedAt) {
+            await postCallSystemMessage(
+              callSession.conversationId,
+              callSession.callerUid,
+              `📞 Call ended · ${formatCallDuration(Date.now() - callSession.startedAt)}`
+            );
+          } else {
+            // Caller gave up before it was answered.
+            await postCallSystemMessage(
+              callSession.conversationId,
+              callSession.callerUid,
+              `📞 Missed call from ${callSession.callerName}`
+            );
+            io.to(`user:${callSession.calleeUid}`).emit("call:cancelled", { roomId });
+          }
+          callSessions.delete(roomId);
+        }
+
         try {
           const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
 
@@ -1143,7 +1327,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           let userName: string | undefined;
           let userAvatar: string | undefined;
           try {
-            const dbUser = await mongoService.getUserByFirebaseUid(userId);
+            const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
             if (dbUser) {
               userName = dbUser.name;
               userAvatar = dbUser.avatar;
@@ -1173,7 +1357,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Persist message to MongoDB Atlas
           try {
-            let dbUser = await mongoService.getUserByFirebaseUid(userId);
+            let dbUser = await mongoService.getUserByFirebaseUidCached(userId);
             if (!dbUser && mongoose.Types.ObjectId.isValid(userId)) {
               dbUser = await mongoService.getUserById(userId);
             }

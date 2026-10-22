@@ -23,7 +23,7 @@ async function throwIfResNotOk(res: Response) {
       errorMessage += errorData.error;
     } else if (errorData?.message) {
       errorMessage += errorData.message;
-    } else if (typeof errorData === 'string') {
+    } else if (typeof errorData === "string") {
       errorMessage += errorData;
     } else {
       errorMessage += JSON.stringify(errorData);
@@ -39,6 +39,35 @@ async function throwIfResNotOk(res: Response) {
 }
 
 /**
+ * Resolve an auth token for API calls that build their own Authorization header.
+ * Prefers the Firebase ID token when a Firebase session exists, and falls back
+ * to the DB-login identifier (uid) stored in localStorage — so API calls work
+ * for both Firebase and email/password (DB) logins. Returns null if neither.
+ */
+export async function getAuthToken(forceRefresh = false): Promise<string | null> {
+  const user = auth.currentUser;
+  if (user) {
+    try {
+      return await user.getIdToken(forceRefresh);
+    } catch (error) {
+      console.error("Failed to get Firebase token:", error);
+    }
+  }
+  if (typeof window !== "undefined") {
+    try {
+      const raw = localStorage.getItem("facechat_mock_user");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.uid) return parsed.uid as string;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+/**
  * Get authentication headers with Firebase token
  * Automatically refreshes expired tokens
  */
@@ -46,9 +75,7 @@ async function getAuthHeaders(forceRefresh = false): Promise<Record<string, stri
   const user = auth.currentUser;
   if (user) {
     try {
-      const token = forceRefresh
-        ? await user.getIdToken(true)
-        : await user.getIdToken();
+      const token = forceRefresh ? await user.getIdToken(true) : await user.getIdToken();
       return {
         Authorization: `Bearer ${token}`,
       };
@@ -117,7 +144,7 @@ async function fetchWithAuthRetry(
 export async function apiRequest(
   method: string,
   url: string,
-  data?: unknown | undefined,
+  data?: unknown | undefined
 ): Promise<Response> {
   const headers: Record<string, string> = {
     ...(data ? { "Content-Type": "application/json" } : {}),
@@ -134,22 +161,20 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
-export const getQueryFn: <T>(options: {
-  on401: UnauthorizedBehavior;
-}) => QueryFunction<T> =
+export const getQueryFn: <T>(options: { on401: UnauthorizedBehavior }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-    async ({ queryKey }) => {
-      const url = queryKey.join("/") as string;
+  async ({ queryKey }) => {
+    const url = queryKey.join("/") as string;
 
-      const res = await fetchWithAuthRetry(url);
+    const res = await fetchWithAuthRetry(url);
 
-      if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-        return null;
-      }
+    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+      return null;
+    }
 
-      await throwIfResNotOk(res);
-      return await res.json();
-    };
+    await throwIfResNotOk(res);
+    return await res.json();
+  };
 
 export const queryClient = new QueryClient({
   defaultOptions: {

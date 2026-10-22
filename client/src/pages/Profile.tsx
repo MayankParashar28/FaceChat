@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
-import { getQueryFn } from "@/lib/queryClient";
+import { getAuthToken, getQueryFn } from "@/lib/queryClient";
 import { auth } from "@/lib/firebase";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
@@ -91,7 +91,7 @@ export default function Profile() {
 
   const generateInviteMutation = useMutation({
     mutationFn: async () => {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
       const response = await fetch("/api/invites/generate", {
         method: "POST",
@@ -255,7 +255,7 @@ export default function Profile() {
   } = useQuery<UserMeeting[]>({
     queryKey: ["/api/users", profile?._id, "meetings"],
     queryFn: async () => {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
 
       const response = await fetch(`/api/users/${profile?._id}/meetings`, {
@@ -360,7 +360,7 @@ export default function Profile() {
   // Update profile mutation
   const updateProfileMutation = useMutation({
     mutationFn: async (data: Partial<UserProfile>) => {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
 
       const response = await fetch("/api/users/me", {

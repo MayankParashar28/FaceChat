@@ -48,6 +48,7 @@ type Message = {
   content: string;
   isPinned: boolean;
   createdAt: Date;
+  messageType?: "text" | "image" | "file" | "system";
   sender: {
     id: string;
     name: string;
@@ -1122,7 +1123,7 @@ export default function Chats() {
     if (!confirm("Remove this match from your list?")) return;
 
     try {
-      const token = await firebaseUser?.getIdToken();
+      const token = await getToken();
       const res = await fetch(`/api/conversations/${conversationId}`, {
         method: "DELETE",
         headers: {
@@ -1145,12 +1146,50 @@ export default function Chats() {
     }
   };
 
+  const startCall = (callType: "audio" | "video") => {
+    const other = selectedConversation?.participants.find(
+      (p) => p.firebaseUid && p.firebaseUid !== user?.uid
+    );
+    if (!other?.firebaseUid) {
+      toast({
+        variant: "destructive",
+        title: "Can't start call",
+        description: "This person isn't available to call right now.",
+      });
+      return;
+    }
+
+    const roomId =
+      Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+
+    // Ring the other participant so they get an incoming-call prompt.
+    socket?.emit("call:invite", {
+      toUserId: other.firebaseUid,
+      fromUserId: user?.uid,
+      fromName: user?.displayName || user?.username,
+      fromAvatar: user?.photoURL,
+      roomId,
+      callType,
+      conversationId: selectedChat,
+    });
+
+    // Carry the call context so the call screen can show "Ringing…",
+    // cancel the invite on hang-up, and react to a decline.
+    const query = new URLSearchParams({
+      outgoing: "1",
+      to: other.firebaseUid,
+      type: callType,
+      name: other.name || "",
+    });
+    setLocation(`/call/${roomId}?${query.toString()}`);
+  };
+
   const handleClearChat = async () => {
-    if (!selectedChat || !firebaseUser) return;
+    if (!selectedChat) return;
     if (!confirm("Are you sure you want to clear the chat history? This cannot be undone.")) return;
 
     try {
-      const token = await firebaseUser.getIdToken();
+      const token = await getToken();
       const res = await fetch(`/api/conversations/${selectedChat}/clear`, {
         method: "POST",
         headers: {
@@ -1178,7 +1217,7 @@ export default function Chats() {
   };
 
   const handleBlockUser = async () => {
-    if (!selectedConversation || !firebaseUser) return;
+    if (!selectedConversation) return;
 
     // Find the other user
     const otherUser = selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid);
@@ -1192,7 +1231,7 @@ export default function Chats() {
       return;
 
     try {
-      const token = await firebaseUser.getIdToken();
+      const token = await getToken();
       // Use the MongoDB ID (otherUser.id) for the block endpoint
       const res = await fetch(`/api/discovery/block/${otherUser.id}`, {
         method: "POST",
@@ -1484,12 +1523,7 @@ export default function Chats() {
                   variant="ghost"
                   size="icon"
                   className="hover:bg-white/10"
-                  onClick={() => {
-                    const roomId =
-                      Math.random().toString(36).substring(2, 10) +
-                      Math.random().toString(36).substring(2, 10);
-                    setLocation(`/call/${roomId}`);
-                  }}
+                  onClick={() => startCall("audio")}
                 >
                   <Phone className="h-5 w-5" />
                 </Button>
@@ -1497,12 +1531,7 @@ export default function Chats() {
                   variant="ghost"
                   size="icon"
                   className="hover:bg-white/10"
-                  onClick={() => {
-                    const roomId =
-                      Math.random().toString(36).substring(2, 10) +
-                      Math.random().toString(36).substring(2, 10);
-                    setLocation(`/call/${roomId}`);
-                  }}
+                  onClick={() => startCall("video")}
                 >
                   <VideoIcon className="h-5 w-5" />
                 </Button>
@@ -1567,6 +1596,18 @@ export default function Chats() {
                   </div>
                 )}
                 {messages.map((msg) => {
+                  // Call events (started / ended / declined / missed) render as
+                  // a centered pill rather than a chat bubble.
+                  if (msg.messageType === "system") {
+                    return (
+                      <div key={msg.id} className="flex justify-center py-1">
+                        <span className="rounded-full bg-muted/60 px-3 py-1 text-xs font-medium text-muted-foreground">
+                          {msg.content}
+                        </span>
+                      </div>
+                    );
+                  }
+
                   const isMe = isMessageFromMe(msg, selectedConversation);
                   return (
                     <div key={msg.id} className="flex gap-3 group/message">

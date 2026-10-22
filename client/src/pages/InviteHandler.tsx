@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
-import { auth } from "@/lib/firebase";
+import { getAuthToken } from "@/lib/queryClient";
 
 export default function InviteHandler() {
   const [, params] = useRoute("/invite/:code");
@@ -33,7 +33,7 @@ export default function InviteHandler() {
 
   const acceptMutation = useMutation({
     mutationFn: async () => {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
 
       const res = await fetch(`/api/invites/${code}/accept`, {
