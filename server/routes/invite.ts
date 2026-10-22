@@ -1,6 +1,6 @@
 import { logger } from "../utils/logger";
 import { Router } from "express";
-import { Invite, User, Connection, Discovery } from "../models";
+import { Invite, Connection, Discovery } from "../models";
 import { authenticate } from "../middleware/auth";
 import { mongoService } from "../services/mongodb"; // Import mongoService
 import crypto from "crypto";

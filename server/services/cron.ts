@@ -1,5 +1,5 @@
 import { logger } from "../utils/logger";
-import { Meeting, Notification, User } from "../models";
+import { Meeting, Notification } from "../models";
 import http from "http";
 import https from "https";
 

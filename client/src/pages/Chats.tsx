@@ -3,15 +3,11 @@ import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Video,
-  Settings,
   LogOut,
-  LayoutDashboard,
   MessageSquare,
   User,
   Search,
@@ -29,7 +25,6 @@ import {
   Lock,
   Unlock,
 } from "lucide-react";
-import { LogoMark } from "@/components/LogoMark";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DropdownMenu,
@@ -43,7 +38,7 @@ import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
 import { auth } from "@/lib/firebase";
 import { User as FirebaseUser } from "firebase/auth";
-import { getAvatarUrl, getInitials, searchUsers } from "@/lib/utils";
+import { searchUsers } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
 type Message = {
@@ -91,7 +86,7 @@ type SearchedUser = {
 export default function Chats() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedChat, setSelectedChat] = useState<string | null>(() => {
@@ -112,7 +107,7 @@ export default function Chats() {
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
-  const [pendingMessages, setPendingMessages] = useState<Map<string, Message>>(new Map()); // Track optimistic messages by tempId
+  const [, setPendingMessages] = useState<Map<string, Message>>(new Map()); // Track optimistic messages by tempId
   const replacingMessagesRef = useRef<Set<string>>(new Set()); // Track messages being replaced to prevent duplicates
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -418,7 +413,6 @@ export default function Chats() {
     });
 
     newSocket.on("message:pinned", ({ messageId, isPinned }) => {
-      const activeChatId = selectedChatRef.current;
       setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, isPinned } : msg)));
     });
 
@@ -480,7 +474,7 @@ export default function Chats() {
       });
     });
 
-    newSocket.on("conversation:updated", (updatedConv: Conversation) => {
+    newSocket.on("conversation:updated", () => {
       // Refetch conversations to update the list
       refetchConversations();
     });

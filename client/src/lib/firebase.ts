@@ -17,7 +17,6 @@ const firebaseConfig = {
 // This tells Firebase where to redirect after email verification
 if (typeof window !== "undefined") {
   // Get the current origin for redirect URL
-  const redirectUrl = `${window.location.origin}/verify-email`;
   // Note: In Firebase Console, set the action URL to use this redirect
   // Authentication > Templates > Email address verification > Customize action URL
 }

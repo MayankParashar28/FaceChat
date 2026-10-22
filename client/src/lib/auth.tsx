@@ -1,14 +1,9 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User,
-  updateProfile,
   sendEmailVerification as firebaseSendEmailVerification,
-  applyActionCode,
-  sendPasswordResetEmail,
   GoogleAuthProvider,
   GithubAuthProvider,
   signInWithPopup,
