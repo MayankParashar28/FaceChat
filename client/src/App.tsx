@@ -8,7 +8,6 @@ import { AuthProvider } from "@/lib/auth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { lazy, Suspense } from "react";
 import { ServerStatus } from "@/components/ServerStatus";
-import { Loader2 } from "lucide-react";
 
 // Lazy load pages for better performance
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -36,7 +35,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 //   </div>
 // );
 
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 function Router() {
   return (

@@ -1,5 +1,5 @@
 import { logger } from "../utils/logger";
-import { OTP, IOTP } from "../models/otp";
+import { OTP } from "../models/otp";
 import { hashPassword, comparePassword } from "../utils/passwordHash";
 import { User } from "../models";
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Flame, Snowflake, Heart, Zap, Lightbulb, Laugh } from "lucide-react";
+import { Flame, Snowflake, Heart, Zap, Lightbulb, Laugh } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface VoiceEffectsOverlayProps {

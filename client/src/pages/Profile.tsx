@@ -1,5 +1,4 @@
-import { useState, useEffect, useMemo, useRef, type CSSProperties } from "react";
-import { useLocation } from "wouter";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,9 +6,25 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Settings, LogOut, LayoutDashboard, MessageSquare, User, Mail, Calendar, Phone, Edit2, Save, X, Camera, CheckCircle2, Loader2, RefreshCw, Shield, Activity, Briefcase, Share2, Download, Clock, Check, Copy, Plus, QrCode } from "lucide-react";
+import {
+  User,
+  Mail,
+  Calendar,
+  Phone,
+  Edit2,
+  Save,
+  Camera,
+  CheckCircle2,
+  Loader2,
+  Shield,
+  Share2,
+  Download,
+  Clock,
+  Copy,
+  Plus,
+  QrCode,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { LogoMark } from "@/components/LogoMark";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
 import { getQueryFn } from "@/lib/queryClient";
 import { auth } from "@/lib/firebase";
@@ -17,7 +32,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface UserProfile {
   _id: string;
@@ -45,8 +67,7 @@ interface UserMeeting {
 }
 
 export default function Profile() {
-  const [, setLocation] = useLocation();
-  const { user: authUser, logout, linkGoogleAccount, linkGithubAccount } = useAuth();
+  const { user: authUser, linkGoogleAccount, linkGithubAccount } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
@@ -74,7 +95,7 @@ export default function Profile() {
       if (!token) throw new Error("Not authenticated");
       const response = await fetch("/api/invites/generate", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) throw new Error("Failed to generate invite");
       return response.json();
@@ -85,14 +106,18 @@ export default function Profile() {
       toast({ title: "Invite Generated", description: "Share this code or link with a friend." });
     },
     onError: (error) => {
-      toast({ title: "Error", description: error.message || "Could not generate invite.", variant: "destructive" });
-    }
+      toast({
+        title: "Error",
+        description: error.message || "Could not generate invite.",
+        variant: "destructive",
+      });
+    },
   });
 
   const handleGenerateInvite = () => {
     setIsGeneratingInvite(true);
     generateInviteMutation.mutate(undefined, {
-      onSettled: () => setIsGeneratingInvite(false)
+      onSettled: () => setIsGeneratingInvite(false),
     });
   };
 
@@ -109,12 +134,12 @@ export default function Profile() {
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'Join me on FaceCallAI',
-          text: 'Connect with me instantly!',
+          title: "Join me on FaceCallAI",
+          text: "Connect with me instantly!",
           url: inviteUrl,
         });
       } catch (err) {
-        console.error('Error sharing:', err);
+        console.error("Error sharing:", err);
       }
     } else {
       copyInviteToClipboard();
@@ -123,10 +148,12 @@ export default function Profile() {
 
   const handleDownloadQR = async () => {
     try {
-      const response = await fetch(`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(inviteUrl)}`);
+      const response = await fetch(
+        `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(inviteUrl)}`
+      );
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
       a.download = `facecall-invite-${inviteCode}.png`;
       document.body.appendChild(a);
@@ -151,7 +178,12 @@ export default function Profile() {
   }, [inviteExpiresAt]);
 
   // Fetch user profile from MongoDB with real-time updates
-  const { data: profile, isLoading, error, refetch, isFetching } = useQuery<UserProfile>({
+  const {
+    data: profile,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery<UserProfile>({
     queryKey: ["/api/users/me"],
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: !!authUser?.uid,
@@ -188,7 +220,9 @@ export default function Profile() {
         username: profile.username || "",
         bio: profile.bio || "",
         phone: profile.phone || "",
-        dateOfBirth: profile.dateOfBirth ? new Date(profile.dateOfBirth).toISOString().split("T")[0] : "",
+        dateOfBirth: profile.dateOfBirth
+          ? new Date(profile.dateOfBirth).toISOString().split("T")[0]
+          : "",
         avatar: profile.avatar || "",
       });
       setPhoneError(null);
@@ -218,8 +252,6 @@ export default function Profile() {
     data: userMeetings,
     isLoading: isMeetingsLoading,
     isFetching: isMeetingsFetching,
-    error: meetingsError,
-    refetch: refetchMeetings,
   } = useQuery<UserMeeting[]>({
     queryKey: ["/api/users", profile?._id, "meetings"],
     queryFn: async () => {
@@ -387,7 +419,9 @@ export default function Profile() {
         username: formData.username,
         bio: formData.bio,
         phone: formData.phone,
-        dateOfBirth: formData.dateOfBirth ? new Date(formData.dateOfBirth).toISOString() : undefined,
+        dateOfBirth: formData.dateOfBirth
+          ? new Date(formData.dateOfBirth).toISOString()
+          : undefined,
         avatar: formData.avatar,
       });
     } catch (error) {
@@ -404,7 +438,9 @@ export default function Profile() {
         username: profile.username || "",
         bio: profile.bio || "",
         phone: profile.phone || "",
-        dateOfBirth: profile.dateOfBirth ? new Date(profile.dateOfBirth).toISOString().split("T")[0] : "",
+        dateOfBirth: profile.dateOfBirth
+          ? new Date(profile.dateOfBirth).toISOString().split("T")[0]
+          : "",
         avatar: profile.avatar || "",
       });
     }
@@ -431,7 +467,9 @@ export default function Profile() {
 
     // Validate simple E.164 format: + followed by 8-15 digits
     if (!/^\+\d{8,15}$/.test(normalized)) {
-      setPhoneError("Invalid phone format. Use full international format like +14155552671 or +919876543210.");
+      setPhoneError(
+        "Invalid phone format. Use full international format like +14155552671 or +919876543210."
+      );
       toast({
         title: "Invalid phone number",
         description: "Please enter your full number with country code, e.g. +14155552671.",
@@ -482,7 +520,8 @@ export default function Profile() {
       setPhoneError(error?.message || "Failed to send verification code. Please try again.");
       toast({
         title: "Failed to send code",
-        description: error?.message || "Could not send SMS. Please check your number and try again.",
+        description:
+          error?.message || "Could not send SMS. Please check your number and try again.",
         variant: "destructive",
       });
     } finally {
@@ -531,7 +570,6 @@ export default function Profile() {
         throw new Error(data.error || "Failed to verify phone number.");
       }
 
-      const data = await response.json();
       setIsPhoneVerified(true);
       setPhoneVerificationId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/users/me"] });
@@ -585,8 +623,6 @@ export default function Profile() {
     }
   };
 
-
-
   const displayName = profile?.name || authUser?.displayName || "User";
   const displayEmail = profile?.email || authUser?.email || "";
   const avatarUrl =
@@ -600,20 +636,19 @@ export default function Profile() {
     { label: "Groups", value: statsReady ? profileStats.groups : "—" },
     { label: "Meetings Hosted", value: statsReady ? profileStats.meetingsHosted : "—" },
   ];
-  const statsStatusText = statsReady ? "Live stats from your recent meetings." : "Gathering stats...";
 
   const memberSinceText = profile?.createdAt
     ? (() => {
-      const diffMs = Date.now() - new Date(profile.createdAt).getTime();
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      if (diffDays < 1) return "Joined today";
-      if (diffDays === 1) return "Joined yesterday";
-      if (diffDays < 30) return `Joined ${diffDays} days ago`;
-      const diffMonths = Math.floor(diffDays / 30);
-      if (diffMonths < 12) return `Joined ${diffMonths} month${diffMonths > 1 ? "s" : ""} ago`;
-      const diffYears = Math.floor(diffMonths / 12);
-      return `Joined ${diffYears} year${diffYears > 1 ? "s" : ""} ago`;
-    })()
+        const diffMs = Date.now() - new Date(profile.createdAt).getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        if (diffDays < 1) return "Joined today";
+        if (diffDays === 1) return "Joined yesterday";
+        if (diffDays < 30) return `Joined ${diffDays} days ago`;
+        const diffMonths = Math.floor(diffDays / 30);
+        if (diffMonths < 12) return `Joined ${diffMonths} month${diffMonths > 1 ? "s" : ""} ago`;
+        const diffYears = Math.floor(diffMonths / 12);
+        return `Joined ${diffYears} year${diffYears > 1 ? "s" : ""} ago`;
+      })()
     : "Member";
 
   const containerVariants = {
@@ -621,9 +656,9 @@ export default function Profile() {
     visible: {
       opacity: 1,
       transition: {
-        staggerChildren: 0.1
-      }
-    }
+        staggerChildren: 0.1,
+      },
+    },
   };
 
   const itemVariants = {
@@ -634,14 +669,13 @@ export default function Profile() {
       transition: {
         type: "spring",
         stiffness: 100,
-        damping: 15
-      }
-    }
+        damping: 15,
+      },
+    },
   };
 
   return (
     <div className="flex-1 overflow-auto p-0 sm:p-6 md:p-10">
-
       <main className="flex-1 overflow-auto p-2 sm:p-6 md:p-10">
         <div className="max-w-5xl mx-auto space-y-4 md:space-y-8">
           {isLoading ? (
@@ -734,9 +768,17 @@ export default function Profile() {
               <AlertDescription>
                 <div className="space-y-2">
                   <p className="font-semibold">
-                    {error instanceof Error ? error.message : "Failed to load profile. Please try again."}
+                    {error instanceof Error
+                      ? error.message
+                      : "Failed to load profile. Please try again."}
                   </p>
-                  <Button onClick={() => refetch()} variant="outline" className="mt-2 border-red-500/30 hover:bg-red-500/20">Retry</Button>
+                  <Button
+                    onClick={() => refetch()}
+                    variant="outline"
+                    className="mt-2 border-red-500/30 hover:bg-red-500/20"
+                  >
+                    Retry
+                  </Button>
                 </div>
               </AlertDescription>
             </Alert>
@@ -748,7 +790,10 @@ export default function Profile() {
               className="space-y-8"
             >
               {/* Profile Header Card */}
-              <motion.div variants={itemVariants} className="relative overflow-hidden rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-4 md:p-8 shadow-2xl">
+              <motion.div
+                variants={itemVariants}
+                className="relative overflow-hidden rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-4 md:p-8 shadow-2xl"
+              >
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent opacity-50 pointer-events-none" />
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
 
@@ -769,13 +814,18 @@ export default function Profile() {
                       <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3">
                         <h1 className="text-4xl font-bold tracking-tight">{displayName}</h1>
                         {profile?.isEmailVerified && (
-                          <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                          <Badge
+                            variant="secondary"
+                            className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                          >
                             <CheckCircle2 className="w-3 h-3 mr-1" />
                             Verified
                           </Badge>
                         )}
                       </div>
-                      <p className="text-lg text-muted-foreground">@{profile?.username || "username"}</p>
+                      <p className="text-lg text-muted-foreground">
+                        @{profile?.username || "username"}
+                      </p>
                       <div className="flex items-center justify-center sm:justify-start gap-4 text-sm text-muted-foreground/80 pt-2">
                         <span className="flex items-center gap-1.5">
                           <Mail className="w-4 h-4" />
@@ -811,7 +861,8 @@ export default function Profile() {
                         <DialogHeader>
                           <DialogTitle>Share Invite</DialogTitle>
                           <DialogDescription>
-                            Create a one-time link for a friend to instantly connect with you. Expires in 24 hours.
+                            Create a one-time link for a friend to instantly connect with you.
+                            Expires in 24 hours.
                           </DialogDescription>
                         </DialogHeader>
                         <div className="flex flex-col items-center space-y-6 py-4">
@@ -823,7 +874,11 @@ export default function Profile() {
                               variant="secondary"
                             >
                               <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 group-hover:opacity-100 opacity-0 transition-opacity" />
-                              {isGeneratingInvite ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Plus className="w-5 h-5 mr-2" />}
+                              {isGeneratingInvite ? (
+                                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                              ) : (
+                                <Plus className="w-5 h-5 mr-2" />
+                              )}
                               Generate New Invite
                             </Button>
                           ) : (
@@ -840,7 +895,11 @@ export default function Profile() {
                               </div>
 
                               <div className="flex gap-2 w-full">
-                                <Button className="flex-1 gap-2" variant="outline" onClick={handleDownloadQR}>
+                                <Button
+                                  className="flex-1 gap-2"
+                                  variant="outline"
+                                  onClick={handleDownloadQR}
+                                >
                                   <Download className="w-4 h-4" />
                                   Save QR
                                 </Button>
@@ -851,12 +910,19 @@ export default function Profile() {
                               </div>
 
                               <div className="space-y-2 w-full">
-                                <Label className="text-muted-foreground text-xs uppercase tracking-wider font-semibold ml-1">Invite Link</Label>
+                                <Label className="text-muted-foreground text-xs uppercase tracking-wider font-semibold ml-1">
+                                  Invite Link
+                                </Label>
                                 <div className="flex items-center gap-2 p-1.5 bg-muted rounded-lg border border-border/50">
                                   <div className="flex-1 px-3 text-sm font-medium truncate select-all text-foreground/90">
                                     {inviteUrl}
                                   </div>
-                                  <Button size="sm" variant="ghost" className="h-8 w-8 hover:bg-background/80" onClick={copyInviteToClipboard}>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-8 w-8 hover:bg-background/80"
+                                    onClick={copyInviteToClipboard}
+                                  >
                                     <Copy className="w-4 h-4" />
                                   </Button>
                                 </div>
@@ -869,7 +935,10 @@ export default function Profile() {
                                 <Button
                                   variant="ghost"
                                   className="w-full text-muted-foreground hover:bg-destructive/5 hover:text-destructive text-xs h-8 mt-2"
-                                  onClick={() => { setInviteCode(null); setInviteExpiresAt(null); }}
+                                  onClick={() => {
+                                    setInviteCode(null);
+                                    setInviteExpiresAt(null);
+                                  }}
                                 >
                                   Generate New Code
                                 </Button>
@@ -880,17 +949,33 @@ export default function Profile() {
                       </DialogContent>
                     </Dialog>
                     {!isEditing ? (
-                      <Button onClick={() => setIsEditing(true)} className="gap-2 shadow-lg shadow-primary/20">
+                      <Button
+                        onClick={() => setIsEditing(true)}
+                        className="gap-2 shadow-lg shadow-primary/20"
+                      >
                         <Edit2 className="w-4 h-4" />
                         Edit Profile
                       </Button>
                     ) : (
                       <div className="flex gap-2">
-                        <Button variant="ghost" onClick={handleCancel} disabled={isSaving} className="hover:bg-white/10">
+                        <Button
+                          variant="ghost"
+                          onClick={handleCancel}
+                          disabled={isSaving}
+                          className="hover:bg-white/10"
+                        >
                           Cancel
                         </Button>
-                        <Button onClick={handleSave} disabled={isSaving} className="gap-2 min-w-[100px]">
-                          {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                        <Button
+                          onClick={handleSave}
+                          disabled={isSaving}
+                          className="gap-2 min-w-[100px]"
+                        >
+                          {isSaving ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Save className="w-4 h-4" />
+                          )}
                           Save
                         </Button>
                       </div>
@@ -906,12 +991,16 @@ export default function Profile() {
                       className="group relative overflow-hidden rounded-xl md:rounded-2xl border border-white/5 bg-white/5 p-3 md:p-4 hover:bg-white/10 transition-all duration-300"
                     >
                       <div className="relative z-10">
-                        <p className="text-[10px] md:text-xs font-medium uppercase tracking-wider text-muted-foreground truncate">{stat.label}</p>
+                        <p className="text-[10px] md:text-xs font-medium uppercase tracking-wider text-muted-foreground truncate">
+                          {stat.label}
+                        </p>
                         <div className="flex items-center gap-2 mt-1">
                           <p className="text-xl md:text-2xl font-bold text-foreground truncate">
                             {statsLoading ? "—" : stat.value}
                           </p>
-                          {statsLoading && <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin text-muted-foreground" />}
+                          {statsLoading && (
+                            <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin text-muted-foreground" />
+                          )}
                         </div>
                       </div>
                       <div className="absolute -right-4 -bottom-4 w-12 h-12 md:w-16 md:h-16 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-colors" />
@@ -922,17 +1011,25 @@ export default function Profile() {
 
               <div className="grid gap-4 md:gap-8 lg:grid-cols-3">
                 {/* Profile Details Form */}
-                <motion.div variants={itemVariants} className="lg:col-span-2 rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-4 md:p-8">
+                <motion.div
+                  variants={itemVariants}
+                  className="lg:col-span-2 rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-4 md:p-8"
+                >
                   <div className="flex items-center justify-between mb-8">
                     <div>
                       <h2 className="text-xl font-semibold flex items-center gap-2">
                         <User className="w-5 h-5 text-primary" />
                         Profile Details
                       </h2>
-                      <p className="text-sm text-muted-foreground mt-1">Manage your personal information</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Manage your personal information
+                      </p>
                     </div>
                     {isEditing && (
-                      <Badge variant="outline" className="border-primary/50 text-primary animate-pulse">
+                      <Badge
+                        variant="outline"
+                        className="border-primary/50 text-primary animate-pulse"
+                      >
                         Editing Mode
                       </Badge>
                     )}
@@ -942,7 +1039,9 @@ export default function Profile() {
                     {/* Basic Info Section */}
                     <div className="grid gap-6 md:grid-cols-2">
                       <div className="space-y-2">
-                        <Label htmlFor="name" className={isEditing ? "text-primary" : ""}>Full Name</Label>
+                        <Label htmlFor="name" className={isEditing ? "text-primary" : ""}>
+                          Full Name
+                        </Label>
                         {isEditing ? (
                           <Input
                             id="name"
@@ -955,12 +1054,16 @@ export default function Profile() {
                         )}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="username" className={isEditing ? "text-primary" : ""}>Username</Label>
+                        <Label htmlFor="username" className={isEditing ? "text-primary" : ""}>
+                          Username
+                        </Label>
                         {isEditing ? (
                           <Input
                             id="username"
                             value={formData.username}
-                            onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase() })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, username: e.target.value.toLowerCase() })
+                            }
                             className="bg-white/5 border-white/10 focus:border-primary/50"
                           />
                         ) : (
@@ -970,7 +1073,9 @@ export default function Profile() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="bio" className={isEditing ? "text-primary" : ""}>Bio</Label>
+                      <Label htmlFor="bio" className={isEditing ? "text-primary" : ""}>
+                        Bio
+                      </Label>
                       {isEditing ? (
                         <Textarea
                           id="bio"
@@ -980,17 +1085,22 @@ export default function Profile() {
                           placeholder="Tell us about yourself..."
                         />
                       ) : (
-                        <p className="text-base text-muted-foreground whitespace-pre-wrap">{profile?.bio || "No bio yet."}</p>
+                        <p className="text-base text-muted-foreground whitespace-pre-wrap">
+                          {profile?.bio || "No bio yet."}
+                        </p>
                       )}
                     </div>
 
-
-
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>Phone Number</Label>
+                        <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>
+                          Phone Number
+                        </Label>
                         {isPhoneVerified && (
-                          <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30">
+                          <Badge
+                            variant="secondary"
+                            className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
+                          >
                             <CheckCircle2 className="w-4 h-4 mr-1" />
                             Verified
                           </Badge>
@@ -1011,19 +1121,15 @@ export default function Profile() {
                           placeholder="+1 (555) 000-0000"
                         />
                       ) : (
-                        <p className="text-lg font-medium">
-                          {profile?.phone || "Not set"}
-                        </p>
+                        <p className="text-lg font-medium">{profile?.phone || "Not set"}</p>
                       )}
-                      {(!profile?.phone && !isEditing) && (
+                      {!profile?.phone && !isEditing && (
                         <p className="text-xs text-red-500 mt-1">
                           Add your mobile number to keep your account more secure.
                         </p>
                       )}
                       {isEditing && phoneError && (
-                        <p className="text-xs text-red-500 mt-1">
-                          {phoneError}
-                        </p>
+                        <p className="text-xs text-red-500 mt-1">{phoneError}</p>
                       )}
                       {!isPhoneVerified && formData.phone && (
                         <div className="mt-3 space-y-2">
@@ -1080,7 +1186,6 @@ export default function Profile() {
                       )}
                     </div>
                   </div>
-
                 </motion.div>
 
                 {/* Sidebar */}
@@ -1093,7 +1198,9 @@ export default function Profile() {
                     </h3>
                     <div className="space-y-4">
                       <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Membership</p>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                          Membership
+                        </p>
                         <p className="font-medium">{memberSinceText}</p>
                       </div>
                       {!profile?.phone && (
@@ -1102,23 +1209,33 @@ export default function Profile() {
                             Action Recommended
                           </p>
                           <p className="text-sm text-amber-100">
-                            Add your mobile number to help secure your account and recover access if you get locked out.
+                            Add your mobile number to help secure your account and recover access if
+                            you get locked out.
                           </p>
                         </div>
                       )}
                       <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Last Active</p>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                          Last Active
+                        </p>
                         <p className="font-medium">
-                          {profile?.updatedAt ? new Date(profile.updatedAt).toLocaleDateString() : "Just now"}
+                          {profile?.updatedAt
+                            ? new Date(profile.updatedAt).toLocaleDateString()
+                            : "Just now"}
                         </p>
                       </div>
                       <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-3">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Connected Accounts</p>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                          Connected Accounts
+                        </p>
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm text-muted-foreground">Google</span>
                             {linkedProviders.google ? (
-                              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                              <Badge
+                                variant="secondary"
+                                className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              >
                                 Connected
                               </Badge>
                             ) : (
@@ -1143,7 +1260,10 @@ export default function Profile() {
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm text-muted-foreground">GitHub</span>
                             {linkedProviders.github ? (
-                              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                              <Badge
+                                variant="secondary"
+                                className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              >
                                 Connected
                               </Badge>
                             ) : (
@@ -1174,8 +1294,8 @@ export default function Profile() {
             </motion.div>
           )}
         </div>
-      </main >
+      </main>
       <div id="phone-recaptcha-container" className="hidden" />
-    </div >
+    </div>
   );
 }

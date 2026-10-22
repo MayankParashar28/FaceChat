@@ -3,10 +3,27 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Scan, Mail, Lock, User, AlertCircle, CheckCircle2, ArrowRight, Sparkles, Eye, EyeOff } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import {
+  Scan,
+  Mail,
+  Lock,
+  User,
+  AlertCircle,
+  CheckCircle2,
+  ArrowRight,
+  Sparkles,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,7 +34,8 @@ import { authenticateWebAuthn, isWebAuthnSupported } from "@/lib/webauthn";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { user, loading, signIn, signUp, checkUsername, getUsernameSuggestions, resetPassword } = useAuth();
+  const { user, loading, signIn, signUp, checkUsername, getUsernameSuggestions, resetPassword } =
+    useAuth();
   const [email, setEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
@@ -29,7 +47,10 @@ export default function Login() {
   const [usernameError, setUsernameError] = useState("");
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [passwordValidation, setPasswordValidation] = useState<{ errors: string[]; strength: "weak" | "medium" | "strong" } | null>(null);
+  const [passwordValidation, setPasswordValidation] = useState<{
+    errors: string[];
+    strength: "weak" | "medium" | "strong";
+  } | null>(null);
 
   // Password visibility
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -144,7 +165,7 @@ export default function Login() {
           setShowSuggestions(true);
         }
       } catch (error) {
-        console.error('Error checking username:', error);
+        console.error("Error checking username:", error);
       }
     }
   };
@@ -229,13 +250,17 @@ export default function Login() {
             </span>
           </h1>
           <p className="text-lg text-muted-foreground dark:text-white/60 leading-relaxed">
-            Join the next generation of video conferencing. AI-powered features, crystal clear quality, and secure connections.
+            Join the next generation of video conferencing. AI-powered features, crystal clear
+            quality, and secure connections.
           </p>
 
           <div className="flex gap-4 pt-4">
             <div className="flex -space-x-4">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="w-10 h-10 rounded-full border-2 border-background dark:border-black bg-background/50 dark:bg-white/10 backdrop-blur-md flex items-center justify-center text-xs text-foreground dark:text-white font-medium shadow-sm">
+                <div
+                  key={i}
+                  className="w-10 h-10 rounded-full border-2 border-background dark:border-black bg-background/50 dark:bg-white/10 backdrop-blur-md flex items-center justify-center text-xs text-foreground dark:text-white font-medium shadow-sm"
+                >
                   {i}
                 </div>
               ))}
@@ -246,7 +271,9 @@ export default function Login() {
                   <Sparkles key={i} className="w-4 h-4 text-yellow-500 fill-yellow-500" />
                 ))}
               </div>
-              <span className="text-sm text-muted-foreground dark:text-white/60">Trusted by thousands</span>
+              <span className="text-sm text-muted-foreground dark:text-white/60">
+                Trusted by thousands
+              </span>
             </div>
           </div>
         </div>
@@ -284,9 +311,7 @@ export default function Login() {
           >
             <div className="text-center space-y-2">
               <h2 className="text-3xl font-bold tracking-tight">Welcome back</h2>
-              <p className="text-muted-foreground">
-                Enter your details to access your account
-              </p>
+              <p className="text-muted-foreground">Enter your details to access your account</p>
             </div>
 
             <AnimatePresence mode="wait">
@@ -319,7 +344,9 @@ export default function Login() {
                   data-testid="button-face-login"
                 >
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-                  <Scan className={`w-5 h-5 mr-2 ${isFaceScanning ? 'animate-pulse text-primary' : 'text-muted-foreground dark:text-white/80'}`} />
+                  <Scan
+                    className={`w-5 h-5 mr-2 ${isFaceScanning ? "animate-pulse text-primary" : "text-muted-foreground dark:text-white/80"}`}
+                  />
                   {isFaceScanning ? "Scanning Face..." : "Login with Face ID"}
                 </Button>
 
@@ -396,7 +423,6 @@ export default function Login() {
               </TabsContent>
 
               <TabsContent value="signup" className="space-y-6">
-
                 <form onSubmit={handleEmailSignup} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -518,13 +544,18 @@ export default function Login() {
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
                               <div
-                                className={`h-full transition-all duration-500 ${passwordValidation.strength === 'strong' ? 'w-full bg-green-500' :
-                                  passwordValidation.strength === 'medium' ? 'w-2/3 bg-yellow-500' :
-                                    'w-1/3 bg-red-500'
-                                  }`}
+                                className={`h-full transition-all duration-500 ${
+                                  passwordValidation.strength === "strong"
+                                    ? "w-full bg-green-500"
+                                    : passwordValidation.strength === "medium"
+                                      ? "w-2/3 bg-yellow-500"
+                                      : "w-1/3 bg-red-500"
+                                }`}
                               />
                             </div>
-                            <span className={`text-xs font-medium ${getPasswordStrengthColor(passwordValidation.strength)}`}>
+                            <span
+                              className={`text-xs font-medium ${getPasswordStrengthColor(passwordValidation.strength)}`}
+                            >
                               {passwordValidation.strength.toUpperCase()}
                             </span>
                           </div>
@@ -636,11 +667,7 @@ export default function Login() {
               )}
 
               <DialogFooter>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setShowForgotPassword(false)}
-                >
+                <Button type="button" variant="ghost" onClick={() => setShowForgotPassword(false)}>
                   Cancel
                 </Button>
                 <Button

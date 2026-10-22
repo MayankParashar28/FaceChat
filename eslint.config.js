@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import unusedImports from "eslint-plugin-unused-imports";
 import prettier from "eslint-config-prettier";
 
 /**
@@ -47,11 +48,25 @@ export default tseslint.config(
 
   // Project-wide rule tuning
   {
+    plugins: { "unused-imports": unusedImports },
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-unused-vars": [
+      // unused-imports owns unused reporting: it auto-removes dead imports on
+      // --fix, and flags unused locals/args (underscore-prefixed are ignored).
+      "@typescript-eslint/no-unused-vars": "off",
+      "unused-imports/no-unused-imports": "warn",
+      "unused-imports/no-unused-vars": [
         "warn",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+        {
+          vars: "all",
+          varsIgnorePattern: "^_",
+          args: "after-used",
+          argsIgnorePattern: "^_",
+          // Allow `const { drop, ...rest } = obj` field-omit idiom.
+          ignoreRestSiblings: true,
+          // Don't flag unused catch bindings (`catch (e)`) — idiomatic noise.
+          caughtErrors: "none",
+        },
       ],
       "no-console": "off",
       // Allow `declare global { namespace Express { ... } }` module augmentation.
