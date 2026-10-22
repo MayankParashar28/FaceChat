@@ -5,36 +5,32 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Video,
-  Plus,
   Users,
   Clock,
-  Settings,
-  LogOut,
-  LayoutDashboard,
-  MessageSquare,
-  Search,
-  Loader2,
   RefreshCw,
-  User,
   CalendarPlus,
-  Sparkles,
   Activity,
   ArrowUpRight,
   Zap,
   BarChart3,
   Calendar,
-  Copy
+  Copy,
 } from "lucide-react";
-import { LogoMark } from "@/components/LogoMark";
 import { useAuth } from "@/lib/auth";
-import { getAvatarUrl, getInitials } from "@/lib/utils";
+import { getInitials } from "@/lib/utils";
 import { getQueryFn } from "@/lib/queryClient";
 import { auth } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
@@ -104,19 +100,21 @@ function getDurationMinutes(startTime: Date, endTime?: Date): number {
   return Math.max(1, Math.floor((end.getTime() - startTime.getTime()) / (1000 * 60)));
 }
 
-function getEmotion(meeting: Meeting): string {
-  if (meeting.analytics?.emotionData && meeting.analytics.emotionData.length > 0) {
-    const topEmotion = meeting.analytics.emotionData.reduce((prev, current) =>
-      (prev.percentage > current.percentage) ? prev : current
-    );
-    return topEmotion.emotion;
-  }
-  return "Completed";
-}
-
 // --- Components ---
 
-const StatCard = ({ icon: Icon, label, value, trend, delay }: { icon: any, label: string, value: string | number, trend?: string, delay: number }) => (
+const StatCard = ({
+  icon: Icon,
+  label,
+  value,
+  trend,
+  delay,
+}: {
+  icon: any;
+  label: string;
+  value: string | number;
+  trend?: string;
+  delay: number;
+}) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
@@ -139,7 +137,19 @@ const StatCard = ({ icon: Icon, label, value, trend, delay }: { icon: any, label
   </motion.div>
 );
 
-const ActionButton = ({ icon: Icon, label, onClick, variant = "primary", delay }: { icon: any, label: string, onClick: () => void, variant?: "primary" | "secondary", delay: number }) => (
+const ActionButton = ({
+  icon: Icon,
+  label,
+  onClick,
+  variant = "primary",
+  delay,
+}: {
+  icon: any;
+  label: string;
+  onClick: () => void;
+  variant?: "primary" | "secondary";
+  delay: number;
+}) => (
   <motion.button
     initial={{ opacity: 0, scale: 0.9 }}
     animate={{ opacity: 1, scale: 1 }}
@@ -149,12 +159,16 @@ const ActionButton = ({ icon: Icon, label, onClick, variant = "primary", delay }
     onClick={onClick}
     className={`
       relative overflow-hidden rounded-2xl p-3 flex flex-col items-center justify-center gap-1.5 w-full h-20 transition-all
-      ${variant === "primary"
-        ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
-        : "bg-transparent hover:bg-accent/30 border border-border/40 text-muted-foreground hover:text-foreground"}
+      ${
+        variant === "primary"
+          ? "bg-primary text-primary-foreground shadow-sm shadow-primary/20"
+          : "bg-transparent hover:bg-accent/30 border border-border/40 text-muted-foreground hover:text-foreground"
+      }
     `}
   >
-    <div className={`p-2 rounded-full ${variant === "primary" ? "bg-white/20" : "bg-primary/5 text-primary"}`}>
+    <div
+      className={`p-2 rounded-full ${variant === "primary" ? "bg-white/20" : "bg-primary/5 text-primary"}`}
+    >
       <Icon className={`w-5 h-5 ${variant === "primary" ? "text-white" : "text-primary"}`} />
     </div>
     <span className="font-medium text-xs">{label}</span>
@@ -166,12 +180,14 @@ const ActionButton = ({ icon: Icon, label, onClick, variant = "primary", delay }
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
   const [roomId, setRoomId] = useState("");
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
-  const [scheduledRoomId] = useState(() => Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10));
+  const [scheduledRoomId] = useState(
+    () => Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10)
+  );
   const queryClient = useQueryClient();
 
   const { data: profileData } = useQuery<UserProfile>({
@@ -181,7 +197,11 @@ export default function Dashboard() {
     staleTime: 30000,
   });
 
-  const { data: meetings, isLoading: meetingsLoading, refetch } = useQuery<Meeting[]>({
+  const {
+    data: meetings,
+    isLoading: meetingsLoading,
+    refetch,
+  } = useQuery<Meeting[]>({
     queryKey: ["/api/meetings?limit=10"],
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: !!user,
@@ -190,12 +210,7 @@ export default function Dashboard() {
     refetchInterval: 60000,
   });
 
-  const {
-    data: userMeetings,
-    isLoading: userMeetingsLoading,
-    isFetching: userMeetingsFetching,
-    refetch: refetchUserMeetings,
-  } = useQuery<UserMeeting[]>({
+  const { data: userMeetings, isLoading: userMeetingsLoading } = useQuery<UserMeeting[]>({
     queryKey: ["user-meetings", profileData?._id],
     queryFn: async () => {
       if (!profileData?._id) return [];
@@ -218,18 +233,19 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/meetings?limit=10"] });
       refetch();
       const handleVisibilityChange = () => {
-        if (document.visibilityState === 'visible') {
+        if (document.visibilityState === "visible") {
           queryClient.invalidateQueries({ queryKey: ["/api/meetings?limit=10"] });
           refetch();
         }
       };
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
     }
   }, [user, refetch, queryClient]);
 
   const startQuickAction = (mode: "instant" | "invite" | "schedule") => {
-    const newRoomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    const newRoomId =
+      Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     const params = new URLSearchParams();
     params.set("mode", mode);
     if (quickActionInviteIds.length) params.set("invite", quickActionInviteIds.join(","));
@@ -237,7 +253,8 @@ export default function Dashboard() {
   };
 
   const createCall = () => {
-    const newRoomId = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    const newRoomId =
+      Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     setLocation(`/call/${newRoomId}`);
   };
 
@@ -249,7 +266,7 @@ export default function Dashboard() {
       toast({
         title: "Invalid Room Code",
         description: "Please enter a room code with at least 3 characters.",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
@@ -265,7 +282,7 @@ export default function Dashboard() {
         toast({
           title: "Room not found",
           description: "Please check the room code and try again.",
-          variant: "destructive"
+          variant: "destructive",
         });
       }
     } catch (error) {
@@ -289,7 +306,10 @@ export default function Dashboard() {
   const { topCollaborators, collaboratorCount } = useMemo(() => {
     if (!profileData?._id || !userMeetings) return { topCollaborators: [], collaboratorCount: 0 };
     const userId = profileData._id;
-    const collaboratorMap = new Map<string, { id: string; name: string; email?: string; avatar?: string; count: number }>();
+    const collaboratorMap = new Map<
+      string,
+      { id: string; name: string; email?: string; avatar?: string; count: number }
+    >();
 
     const register = (p: any) => {
       const id = extractId(p);
@@ -313,16 +333,16 @@ export default function Dashboard() {
       const hostId = extractId(m.hostId);
       if (hostId && hostId !== userId) uniqueParticipants.add(hostId);
 
-      (m.participants || []).forEach(p => {
+      (m.participants || []).forEach((p) => {
         const id = extractId(p);
         if (id && id !== userId) uniqueParticipants.add(id);
       });
 
-      uniqueParticipants.forEach(id => {
+      uniqueParticipants.forEach((id) => {
         // We need to find the name/email for this ID from the meeting data
         // This is a bit tricky since we only have the ID in the Set
         // So we'll look it up again from the participants array or host
-        let participantData = m.participants.find(p => extractId(p) === id);
+        let participantData = m.participants.find((p) => extractId(p) === id);
         if (!participantData && extractId(m.hostId) === id) participantData = m.hostId;
 
         register(participantData || { _id: id });
@@ -330,7 +350,9 @@ export default function Dashboard() {
     });
 
     return {
-      topCollaborators: Array.from(collaboratorMap.values()).sort((a, b) => b.count - a.count).slice(0, 5),
+      topCollaborators: Array.from(collaboratorMap.values())
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5),
       collaboratorCount: collaboratorMap.size,
     };
   }, [profileData?._id, userMeetings]);
@@ -338,14 +360,17 @@ export default function Dashboard() {
   const quickActionInviteIds = topCollaborators.map((c) => c.id).filter(Boolean);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const weeklyMeetings = filteredMeetings.filter((m) => new Date(m.startTime) >= weekAgo).length;
-  const totalDuration = filteredMeetings.reduce((acc, m) => acc + getDurationMinutes(new Date(m.startTime), m.endTime ? new Date(m.endTime) : undefined), 0);
-  const avgDuration = filteredMeetings.length ? Math.round(totalDuration / filteredMeetings.length) : 0;
-
-
+  const totalDuration = filteredMeetings.reduce(
+    (acc, m) =>
+      acc + getDurationMinutes(new Date(m.startTime), m.endTime ? new Date(m.endTime) : undefined),
+    0
+  );
+  const avgDuration = filteredMeetings.length
+    ? Math.round(totalDuration / filteredMeetings.length)
+    : 0;
 
   return (
     <div className="max-w-7xl mx-auto space-y-10 pb-10">
-
       {/* Hero Section */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -357,7 +382,8 @@ export default function Dashboard() {
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
           <div className="space-y-2 max-w-2xl">
             <h1 className="text-3xl font-bold tracking-tight text-foreground drop-shadow-sm">
-              Welcome back, <span className="text-primary">{user?.displayName?.split(' ')[0] || "Creator"}</span>
+              Welcome back,{" "}
+              <span className="text-primary">{user?.displayName?.split(" ")[0] || "Creator"}</span>
             </h1>
             <div className="flex flex-col gap-1">
               <p className="text-base text-muted-foreground font-medium">
@@ -365,52 +391,90 @@ export default function Dashboard() {
               </p>
               <p className="text-xs text-muted-foreground/70 font-medium flex items-center gap-2">
                 <Clock className="w-3 h-3" />
-                {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 <span className="w-1 h-1 rounded-full bg-foreground/20" />
-                {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+                {new Date().toLocaleDateString([], {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })}
               </p>
             </div>
           </div>
 
-          <div className="flex gap-4">
-          </div>
+          <div className="flex gap-4"></div>
         </div>
       </motion.div>
 
       {/* Quick Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Video} label="Weekly Calls" value={weeklyMeetings} trend="+12% vs last week" delay={0.1} />
-        <StatCard icon={Users} label="Collaborators" value={collaboratorCount} trend="Active collaborators" delay={0.2} />
-        <StatCard icon={Clock} label="Avg Duration" value={`${avgDuration}m`} trend="Average call duration" delay={0.3} />
-        <StatCard icon={Activity} label="Engagement" value="High" trend="Top 10% engagement among users" delay={0.4} />
+        <StatCard
+          icon={Video}
+          label="Weekly Calls"
+          value={weeklyMeetings}
+          trend="+12% vs last week"
+          delay={0.1}
+        />
+        <StatCard
+          icon={Users}
+          label="Collaborators"
+          value={collaboratorCount}
+          trend="Active collaborators"
+          delay={0.2}
+        />
+        <StatCard
+          icon={Clock}
+          label="Avg Duration"
+          value={`${avgDuration}m`}
+          trend="Average call duration"
+          delay={0.3}
+        />
+        <StatCard
+          icon={Activity}
+          label="Engagement"
+          value="High"
+          trend="Top 10% engagement among users"
+          delay={0.4}
+        />
       </div>
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
         {/* Left Column: Actions & Recent */}
         <div className="lg:col-span-2 space-y-8">
-
           {/* Quick Actions */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4">
-            <ActionButton icon={Zap} label="Instant" onClick={createCall} variant="primary" delay={0.5} />
+            <ActionButton
+              icon={Zap}
+              label="Instant"
+              onClick={createCall}
+              variant="primary"
+              delay={0.5}
+            />
 
             <Dialog open={joinDialogOpen} onOpenChange={setJoinDialogOpen}>
               <DialogTrigger asChild>
                 <div className="w-full">
-                  <ActionButton icon={Users} label="Join" onClick={() => setJoinDialogOpen(true)} variant="secondary" delay={0.7} />
+                  <ActionButton
+                    icon={Users}
+                    label="Join"
+                    onClick={() => setJoinDialogOpen(true)}
+                    variant="secondary"
+                    delay={0.7}
+                  />
                 </div>
               </DialogTrigger>
               <DialogContent className="w-[90vw] max-w-[400px] glass-panel border-white/10">
                 <DialogHeader>
                   <DialogTitle>Join a room</DialogTitle>
-                  <DialogDescription>
-                    Enter a room code to jump into a meeting.
-                  </DialogDescription>
+                  <DialogDescription>Enter a room code to jump into a meeting.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 pt-4">
                   <div className="space-y-2">
-                    <Label htmlFor="dialog-join-input" className="text-xs font-medium text-muted-foreground ml-1">
+                    <Label
+                      htmlFor="dialog-join-input"
+                      className="text-xs font-medium text-muted-foreground ml-1"
+                    >
                       Enter room code
                     </Label>
                     <Input
@@ -421,7 +485,10 @@ export default function Dashboard() {
                       className="bg-muted/50 border-border/50 text-center text-lg tracking-wider font-mono h-10 rounded-xl"
                     />
                   </div>
-                  <Button onClick={joinCall} className="w-full h-10 text-sm font-medium shadow-md shadow-primary/20 rounded-xl">
+                  <Button
+                    onClick={joinCall}
+                    className="w-full h-10 text-sm font-medium shadow-md shadow-primary/20 rounded-xl"
+                  >
                     Join now
                   </Button>
                 </div>
@@ -432,7 +499,13 @@ export default function Dashboard() {
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
               <DialogTrigger asChild>
                 <div className="w-full">
-                  <ActionButton icon={CalendarPlus} label="Schedule" onClick={() => setScheduleDialogOpen(true)} variant="secondary" delay={0.6} />
+                  <ActionButton
+                    icon={CalendarPlus}
+                    label="Schedule"
+                    onClick={() => setScheduleDialogOpen(true)}
+                    variant="secondary"
+                    delay={0.6}
+                  />
                 </div>
               </DialogTrigger>
               <DialogContent className="w-[90vw] max-w-[420px] glass-panel border-white/10">
@@ -444,17 +517,29 @@ export default function Dashboard() {
                 </DialogHeader>
                 <div className="space-y-6 pt-4">
                   <div className="space-y-2">
-                    <Label className="text-xs font-medium text-muted-foreground ml-1">Meeting Link</Label>
+                    <Label className="text-xs font-medium text-muted-foreground ml-1">
+                      Meeting Link
+                    </Label>
                     <div className="flex gap-2">
                       <Input
                         readOnly
                         value={`${window.location.origin}/call/${scheduledRoomId}`}
                         className="bg-muted/50 border-border/50 font-mono text-xs h-10 rounded-xl"
                       />
-                      <Button size="icon" variant="outline" className="shrink-0 border-border/50 rounded-xl h-10 w-10" onClick={() => {
-                        navigator.clipboard.writeText(`${window.location.origin}/call/${scheduledRoomId}`);
-                        toast({ title: "Copied!", description: "Meeting link copied to clipboard" });
-                      }}>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="shrink-0 border-border/50 rounded-xl h-10 w-10"
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            `${window.location.origin}/call/${scheduledRoomId}`
+                          );
+                          toast({
+                            title: "Copied!",
+                            description: "Meeting link copied to clipboard",
+                          });
+                        }}
+                      >
                         <Copy className="h-4 w-4" />
                       </Button>
                     </div>
@@ -464,16 +549,27 @@ export default function Dashboard() {
                     <Calendar className="w-5 h-5 text-primary shrink-0 mt-0.5" />
                     <div className="space-y-1">
                       <p className="text-sm font-medium text-primary">Pro Tip</p>
-                      <p className="text-xs text-muted-foreground">This room is permanently reserved for you. You can share this link anytime.</p>
+                      <p className="text-xs text-muted-foreground">
+                        This room is permanently reserved for you. You can share this link anytime.
+                      </p>
                     </div>
                   </div>
 
                   <div className="flex gap-3">
-                    <Button variant="ghost" className="w-full rounded-xl" onClick={() => setScheduleDialogOpen(false)}>Close</Button>
-                    <Button className="w-full rounded-xl" onClick={() => {
-                      setScheduleDialogOpen(false);
-                      setLocation(`/call/${scheduledRoomId}`);
-                    }}>
+                    <Button
+                      variant="ghost"
+                      className="w-full rounded-xl"
+                      onClick={() => setScheduleDialogOpen(false)}
+                    >
+                      Close
+                    </Button>
+                    <Button
+                      className="w-full rounded-xl"
+                      onClick={() => {
+                        setScheduleDialogOpen(false);
+                        setLocation(`/call/${scheduledRoomId}`);
+                      }}
+                    >
                       Start Now
                     </Button>
                   </div>
@@ -481,7 +577,13 @@ export default function Dashboard() {
               </DialogContent>
             </Dialog>
 
-            <ActionButton icon={BarChart3} label="Analytics" onClick={() => setLocation("/analytics")} variant="secondary" delay={0.8} />
+            <ActionButton
+              icon={BarChart3}
+              label="Analytics"
+              onClick={() => setLocation("/analytics")}
+              variant="secondary"
+              delay={0.8}
+            />
           </div>
 
           {/* Recent Meetings List */}
@@ -491,8 +593,13 @@ export default function Dashboard() {
                 <Clock className="w-5 h-5 text-primary" />
                 Recent Sessions
               </h2>
-              <Button variant="ghost" size="sm" onClick={() => refetch()} className="hover:bg-white/5">
-                <RefreshCw className={`w-4 h-4 ${meetingsLoading ? 'animate-spin' : ''}`} />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => refetch()}
+                className="hover:bg-white/5"
+              >
+                <RefreshCw className={`w-4 h-4 ${meetingsLoading ? "animate-spin" : ""}`} />
               </Button>
             </div>
 
@@ -501,7 +608,10 @@ export default function Dashboard() {
                 {meetingsLoading ? (
                   <div className="space-y-3">
                     {[1, 2, 3].map((i) => (
-                      <div key={i} className="flex items-center justify-between p-4 rounded-xl border border-border/20 bg-card/50">
+                      <div
+                        key={i}
+                        className="flex items-center justify-between p-4 rounded-xl border border-border/20 bg-card/50"
+                      >
                         <div className="flex items-center gap-4">
                           <Skeleton className="h-10 w-10 rounded-full" />
                           <div className="space-y-2">
@@ -518,11 +628,17 @@ export default function Dashboard() {
                     <div className="bg-primary/5 p-4 rounded-full mb-4">
                       <Calendar className="w-8 h-8 text-primary/40" />
                     </div>
-                    <h3 className="text-base font-semibold text-foreground mb-1">No meetings yet</h3>
+                    <h3 className="text-base font-semibold text-foreground mb-1">
+                      No meetings yet
+                    </h3>
                     <p className="text-sm text-muted-foreground max-w-[250px] mb-6">
                       Your recent meetings and calls will appear here once you start collaborating.
                     </p>
-                    <Button onClick={() => startQuickAction("schedule")} variant="outline" className="gap-2 border-primary/20 hover:bg-primary/5 hover:text-primary">
+                    <Button
+                      onClick={() => startQuickAction("schedule")}
+                      variant="outline"
+                      className="gap-2 border-primary/20 hover:bg-primary/5 hover:text-primary"
+                    >
                       <CalendarPlus className="w-4 h-4" />
                       Schedule meeting
                     </Button>
@@ -547,7 +663,10 @@ export default function Dashboard() {
                         <div className="flex items-center gap-3 md:gap-4">
                           <div className="flex -space-x-3 rtl:space-x-reverse shrink-0">
                             {meeting.participants.slice(0, 3).map((p: any, idx) => (
-                              <Avatar key={idx} className="border-2 border-background h-8 w-8 md:h-10 md:w-10">
+                              <Avatar
+                                key={idx}
+                                className="border-2 border-background h-8 w-8 md:h-10 md:w-10"
+                              >
                                 <AvatarImage src={p.avatar} />
                                 <AvatarFallback className="bg-primary/10 text-[10px] text-primary">
                                   {getInitials(p.name || "U")}
@@ -561,15 +680,31 @@ export default function Dashboard() {
                             )}
                           </div>
                           <div className="flex flex-col gap-1 min-w-0">
-                            <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors truncate">{meeting.title || "Untitled Session"}</h3>
+                            <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors truncate">
+                              {meeting.title || "Untitled Session"}
+                            </h3>
                             <div className="flex items-center gap-3 text-xs text-muted-foreground font-medium">
-                              <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {formatTimeAgo(new Date(meeting.startTime))}</span>
-                              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {calculateDuration(new Date(meeting.startTime), meeting.endTime ? new Date(meeting.endTime) : undefined)}</span>
+                              <span className="flex items-center gap-1">
+                                <Calendar className="w-3 h-3" />{" "}
+                                {formatTimeAgo(new Date(meeting.startTime))}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-3 h-3" />{" "}
+                                {calculateDuration(
+                                  new Date(meeting.startTime),
+                                  meeting.endTime ? new Date(meeting.endTime) : undefined
+                                )}
+                              </span>
                             </div>
                           </div>
                         </div>
                         <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto mt-1 sm:mt-0 pl-[44px] sm:pl-0">
-                          <Badge variant="outline" className="bg-background/50 border-border/50 text-[10px] font-medium px-2 py-0.5 h-5">Completed</Badge>
+                          <Badge
+                            variant="outline"
+                            className="bg-background/50 border-border/50 text-[10px] font-medium px-2 py-0.5 h-5"
+                          >
+                            Completed
+                          </Badge>
                           <ArrowUpRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
                         </div>
                         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-foreground/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 pointer-events-none" />
@@ -581,8 +716,6 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-
-
 
         {/* Right Column: Insights */}
         <div className="space-y-8">
@@ -607,32 +740,46 @@ export default function Dashboard() {
                   </div>
                 ))
               ) : topCollaborators.length > 0 ? (
-                topCollaborators.map((collab, i) => (
-                  <div key={collab.id} className="flex items-center justify-between group py-3 px-2 rounded-lg hover:bg-accent/30 transition-colors border-b border-border/20 last:border-0">
+                topCollaborators.map((collab) => (
+                  <div
+                    key={collab.id}
+                    className="flex items-center justify-between group py-3 px-2 rounded-lg hover:bg-accent/30 transition-colors border-b border-border/20 last:border-0"
+                  >
                     <div className="flex items-center gap-3">
                       <Avatar className="h-9 w-9 border border-white/10">
                         <AvatarImage src={collab.avatar} />
-                        <AvatarFallback className="bg-primary/10 text-primary text-xs">{getInitials(collab.name)}</AvatarFallback>
+                        <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                          {getInitials(collab.name)}
+                        </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">{collab.name}</p>
-                        <p className="text-xs text-muted-foreground font-medium">{collab.count} sessions</p>
+                        <p className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">
+                          {collab.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground font-medium">
+                          {collab.count} sessions
+                        </p>
                       </div>
                     </div>
-                    <Button variant="secondary" size="sm" className="h-7 text-xs px-3 bg-white/5 hover:bg-primary/20 hover:text-primary border-white/5" onClick={() => startQuickAction("invite")}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 text-xs px-3 bg-white/5 hover:bg-primary/20 hover:text-primary border-white/5"
+                      onClick={() => startQuickAction("invite")}
+                    >
                       Invite
                     </Button>
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">No collaborators yet.</p>
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No collaborators yet.
+                </p>
               )}
             </div>
           </div>
         </div>
-
       </div>
     </div>
-
   );
 }

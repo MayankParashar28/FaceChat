@@ -11,13 +11,8 @@ import { mongoService } from "./services/mongodb";
 import { verifyFirebaseToken, setUserOnlineStatus } from "./firebase/admin";
 import { mongoHealthCheck } from "./database/mongodb";
 import { Message, Conversation, User, Meeting, ChatMessage, Notification } from "./models";
-import { authenticate, optionalAuthenticate } from "./middleware/auth";
-import {
-  authRateLimiter,
-  apiRateLimiter,
-  usernameCheckRateLimiter,
-} from "./middleware/rateLimiter";
-import { createOTP, verifyOTP } from "./services/otpService";
+import { authenticate } from "./middleware/auth";
+
 import { transcriptionService } from "./services/transcription";
 import authRoutes from "./routes/auth";
 import userRoutes from "./routes/user";
@@ -970,15 +965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Generic signaling for simple-peer
     socket.on(
       "call:signal",
-      ({
-        targetSocketId,
-        signal,
-        roomId,
-      }: {
-        targetSocketId: string;
-        signal: any;
-        roomId: string;
-      }) => {
+      ({ targetSocketId, signal }: { targetSocketId: string; signal: any; roomId: string }) => {
         io.to(targetSocketId).emit("call:signal", {
           signal,
           senderId: socket.id,
