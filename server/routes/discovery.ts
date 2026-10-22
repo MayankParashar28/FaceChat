@@ -3,7 +3,7 @@ import { Router } from "express";
 import { authenticate } from "../middleware/auth";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { mongoService } from "../services/mongodb";
-import { Discovery, Connection, User, Notification as NotificationModel } from "../models";
+import { Discovery, Connection, Notification as NotificationModel } from "../models";
 import mongoose from "mongoose";
 
 const router = Router();

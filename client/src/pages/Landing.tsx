@@ -1,6 +1,24 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Video, Sparkles, Users, Shield, BarChart3, Zap, ArrowRight, Play, Globe, Lock, Smile, MessageSquare, Star, TrendingUp, Brain, Headphones, Camera } from "lucide-react";
+import {
+  Video,
+  Sparkles,
+  Users,
+  Shield,
+  BarChart3,
+  Zap,
+  ArrowRight,
+  Play,
+  Globe,
+  Lock,
+  Smile,
+  MessageSquare,
+  Star,
+  TrendingUp,
+  Brain,
+  Headphones,
+  Camera,
+} from "lucide-react";
 import { LogoMark } from "@/components/LogoMark";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
@@ -12,8 +30,6 @@ export default function Landing() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const { scrollYProgress } = useScroll();
 
-
-  const y1 = useTransform(scrollYProgress, [0, 1], [0, -200]);
   const y2 = useTransform(scrollYProgress, [0, 1], [0, -100]);
   const opacity = useTransform(scrollYProgress, [0, 0.5], [1, 0]);
   const scale = useTransform(scrollYProgress, [0, 0.3], [1, 0.95]);
@@ -33,46 +49,50 @@ export default function Landing() {
     };
   }, []);
 
-
   const features = [
     {
       icon: Sparkles,
       title: "AI Emotion Detection",
-      description: "Real-time emotion analysis to understand participant engagement and sentiment during calls.",
-      color: "from-violet-500 to-purple-500"
+      description:
+        "Real-time emotion analysis to understand participant engagement and sentiment during calls.",
+      color: "from-violet-500 to-purple-500",
     },
     {
       icon: Shield,
       title: "Facial Recognition",
-      description: "Secure authentication and attendance tracking using advanced facial recognition technology.",
-      color: "from-blue-500 to-cyan-500"
+      description:
+        "Secure authentication and attendance tracking using advanced facial recognition technology.",
+      color: "from-blue-500 to-cyan-500",
     },
     {
       icon: Users,
       title: "Smart Collaboration",
-      description: "Seamless video calls with up to 6 participants, screen sharing, and intelligent backgrounds.",
-      color: "from-emerald-500 to-teal-500"
+      description:
+        "Seamless video calls with up to 6 participants, screen sharing, and intelligent backgrounds.",
+      color: "from-emerald-500 to-teal-500",
     },
     {
       icon: BarChart3,
       title: "Call Analytics",
-      description: "Detailed post-call summaries with emotion stats, attendance reports, and engagement metrics.",
-      color: "from-orange-500 to-red-500"
+      description:
+        "Detailed post-call summaries with emotion stats, attendance reports, and engagement metrics.",
+      color: "from-orange-500 to-red-500",
     },
     {
       icon: Zap,
       title: "Instant Filters",
-      description: "Apply AI-powered filters and background blur in real-time for professional appearance.",
-      color: "from-yellow-500 to-amber-500"
+      description:
+        "Apply AI-powered filters and background blur in real-time for professional appearance.",
+      color: "from-yellow-500 to-amber-500",
     },
     {
       icon: Video,
       title: "HD Quality",
-      description: "Crystal-clear video and audio with adaptive quality for smooth calling experience.",
-      color: "from-pink-500 to-rose-500"
-    }
+      description:
+        "Crystal-clear video and audio with adaptive quality for smooth calling experience.",
+      color: "from-pink-500 to-rose-500",
+    },
   ];
-
 
   const useCases = [
     { icon: Brain, title: "Remote Teams", desc: "Track engagement and collaboration" },
@@ -102,10 +122,7 @@ export default function Landing() {
         className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/60 border-b border-white/10"
       >
         <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 md:h-20 flex items-center justify-between">
-          <motion.div
-            className="flex items-center gap-2 md:gap-3"
-            whileHover={{ scale: 1.05 }}
-          >
+          <motion.div className="flex items-center gap-2 md:gap-3" whileHover={{ scale: 1.05 }}>
             <LogoMark className="h-8 w-8 md:h-10 md:w-10" />
             <span className="text-xl md:text-2xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
               AI Meet
@@ -113,15 +130,27 @@ export default function Landing() {
           </motion.div>
 
           <div className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-sm font-medium hover:text-primary transition-colors">Features</a>
-            <a href="#how-it-works" className="text-sm font-medium hover:text-primary transition-colors">How It Works</a>
+            <a
+              href="#features"
+              className="text-sm font-medium hover:text-primary transition-colors"
+            >
+              Features
+            </a>
+            <a
+              href="#how-it-works"
+              className="text-sm font-medium hover:text-primary transition-colors"
+            >
+              How It Works
+            </a>
           </div>
 
           <div className="flex items-center gap-2 md:gap-3">
             {!loading && !user && (
               <>
                 <Link href="/login">
-                  <Button variant="ghost" size="sm" className="hidden md:inline-flex">Login</Button>
+                  <Button variant="ghost" size="sm" className="hidden md:inline-flex">
+                    Login
+                  </Button>
                 </Link>
                 <Link href="/login">
                   <Button size="sm" className="gap-2 text-xs md:text-sm h-8 md:h-10 px-3 md:px-4">
@@ -134,7 +163,9 @@ export default function Landing() {
             )}
             {!loading && user && (
               <Link href="/dashboard">
-                <Button size="sm" className="h-8 md:h-10">Dashboard</Button>
+                <Button size="sm" className="h-8 md:h-10">
+                  Dashboard
+                </Button>
               </Link>
             )}
             <ThemeToggle />
@@ -144,10 +175,7 @@ export default function Landing() {
 
       {/* Hero Section */}
       <section className="pt-24 md:pt-40 pb-12 md:pb-20 px-4 md:px-6 relative">
-        <motion.div
-          style={{ opacity, scale }}
-          className="max-w-7xl mx-auto"
-        >
+        <motion.div style={{ opacity, scale }} className="max-w-7xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-10 md:gap-16 items-center">
             {/* Left Content */}
             <motion.div
@@ -183,13 +211,20 @@ export default function Landing() {
 
               <div className="flex flex-col sm:flex-row gap-4 mb-10 md:mb-12">
                 <Link href="/dashboard" className="w-full sm:w-auto">
-                  <Button size="lg" className="w-full sm:w-auto px-8 h-12 md:h-14 text-base md:text-lg gap-2 shadow-xl shadow-primary/20">
+                  <Button
+                    size="lg"
+                    className="w-full sm:w-auto px-8 h-12 md:h-14 text-base md:text-lg gap-2 shadow-xl shadow-primary/20"
+                  >
                     <Play className="w-5 h-5" fill="currentColor" />
                     Start Video Call
                   </Button>
                 </Link>
                 <Link href="/dashboard" className="w-full sm:w-auto">
-                  <Button size="lg" variant="outline" className="w-full sm:w-auto px-8 h-12 md:h-14 text-base md:text-lg gap-2">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="w-full sm:w-auto px-8 h-12 md:h-14 text-base md:text-lg gap-2"
+                  >
                     Join Room
                     <ArrowRight className="w-5 h-5" />
                   </Button>
@@ -201,7 +236,7 @@ export default function Landing() {
                 {[
                   { value: "50K+", label: "Active Users" },
                   { value: "1M+", label: "Meetings" },
-                  { value: "99.9%", label: "Uptime" }
+                  { value: "99.9%", label: "Uptime" },
                 ].map((stat, i) => (
                   <motion.div
                     key={i}
@@ -212,7 +247,9 @@ export default function Landing() {
                     <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
                       {stat.value}
                     </div>
-                    <div className="text-xs md:text-sm text-muted-foreground mt-1">{stat.label}</div>
+                    <div className="text-xs md:text-sm text-muted-foreground mt-1">
+                      {stat.label}
+                    </div>
                   </motion.div>
                 ))}
               </div>
@@ -226,7 +263,7 @@ export default function Landing() {
               className="relative perspective-1000 hidden md:block"
               style={{
                 transform: `rotateY(${mousePosition.x}deg) rotateX(${-mousePosition.y}deg)`,
-                transition: "transform 0.3s ease-out"
+                transition: "transform 0.3s ease-out",
               }}
             >
               <div className="relative w-full h-[400px] md:h-[600px]">
@@ -235,14 +272,14 @@ export default function Landing() {
                   className="absolute inset-0 rounded-3xl bg-gradient-to-br from-primary/20 via-violet-500/20 to-blue-500/20 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden"
                   style={{
                     transform: "translateZ(50px)",
-                    transformStyle: "preserve-3d"
+                    transformStyle: "preserve-3d",
                   }}
                   animate={{
                     boxShadow: [
                       "0 25px 50px -12px rgba(139, 92, 246, 0.25)",
                       "0 25px 50px -12px rgba(59, 130, 246, 0.25)",
                       "0 25px 50px -12px rgba(139, 92, 246, 0.25)",
-                    ]
+                    ],
                   }}
                   transition={{ duration: 3, repeat: Infinity }}
                 >
@@ -261,7 +298,7 @@ export default function Landing() {
                       style={{
                         left: item.x,
                         top: item.y,
-                        transform: `translateZ(${100 + i * 15}px) rotate(${item.rotate}deg)`
+                        transform: `translateZ(${100 + i * 15}px) rotate(${item.rotate}deg)`,
                       }}
                       animate={{
                         y: [0, -20, 0],
@@ -270,7 +307,7 @@ export default function Landing() {
                       transition={{
                         duration: 3 + i * 0.5,
                         repeat: Infinity,
-                        delay: item.delay
+                        delay: item.delay,
                       }}
                     >
                       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/40 to-violet-500/40 backdrop-blur-sm border border-white/20 flex items-center justify-center shadow-xl">
@@ -334,7 +371,9 @@ export default function Landing() {
             className="text-center mb-10 md:mb-16"
           >
             <h2 className="text-3xl md:text-4xl font-bold mb-3 md:mb-4">Perfect For Every Team</h2>
-            <p className="text-base md:text-lg text-muted-foreground">Trusted by professionals across industries</p>
+            <p className="text-base md:text-lg text-muted-foreground">
+              Trusted by professionals across industries
+            </p>
           </motion.div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
@@ -396,7 +435,9 @@ export default function Landing() {
                 whileHover={{ y: -10, scale: 1.02 }}
                 className="group relative"
               >
-                <div className={`absolute -inset-1 bg-gradient-to-r ${feature.color} opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 rounded-2xl`} />
+                <div
+                  className={`absolute -inset-1 bg-gradient-to-r ${feature.color} opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 rounded-2xl`}
+                />
                 <div className="relative p-6 md:p-8 rounded-2xl bg-card/80 backdrop-blur-sm border border-white/10 h-full hover:border-white/20 transition-colors">
                   <motion.div
                     className={`w-14 h-14 md:w-16 md:h-16 rounded-xl bg-gradient-to-r ${feature.color} flex items-center justify-center mb-4 md:mb-6 shadow-lg`}
@@ -406,7 +447,9 @@ export default function Landing() {
                     <feature.icon className="w-6 h-6 md:w-8 md:h-8 text-white" />
                   </motion.div>
                   <h3 className="text-xl md:text-2xl font-bold mb-2 md:mb-3">{feature.title}</h3>
-                  <p className="text-sm md:text-base text-muted-foreground leading-relaxed">{feature.description}</p>
+                  <p className="text-sm md:text-base text-muted-foreground leading-relaxed">
+                    {feature.description}
+                  </p>
                 </div>
               </motion.div>
             ))}
@@ -416,10 +459,7 @@ export default function Landing() {
 
       {/* How It Works */}
       <section id="how-it-works" className="py-20 md:py-32 px-6 relative">
-        <motion.div
-          style={{ y: y2 }}
-          className="max-w-6xl mx-auto"
-        >
+        <motion.div style={{ y: y2 }} className="max-w-6xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -427,16 +467,33 @@ export default function Landing() {
             className="text-center mb-20"
           >
             <h2 className="text-5xl font-bold mb-6">Get Started in Seconds</h2>
-            <p className="text-xl text-muted-foreground">Simple steps to begin your AI-powered meetings</p>
+            <p className="text-xl text-muted-foreground">
+              Simple steps to begin your AI-powered meetings
+            </p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-12 relative">
             <div className="hidden md:block absolute top-1/2 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-primary/50 to-transparent -translate-y-1/2" />
 
             {[
-              { step: "01", title: "Sign Up", desc: "Create your account with email or facial recognition", icon: Lock },
-              { step: "02", title: "Start or Join", desc: "Create a new call or join using a room ID", icon: Video },
-              { step: "03", title: "Connect", desc: "Enjoy AI-powered video calls with smart features", icon: Sparkles }
+              {
+                step: "01",
+                title: "Sign Up",
+                desc: "Create your account with email or facial recognition",
+                icon: Lock,
+              },
+              {
+                step: "02",
+                title: "Start or Join",
+                desc: "Create a new call or join using a room ID",
+                icon: Video,
+              },
+              {
+                step: "03",
+                title: "Connect",
+                desc: "Enjoy AI-powered video calls with smart features",
+                icon: Sparkles,
+              },
             ].map((item, i) => (
               <motion.div
                 key={i}
@@ -459,7 +516,7 @@ export default function Landing() {
                           "0 20px 40px -10px rgba(139, 92, 246, 0.3)",
                           "0 20px 40px -10px rgba(59, 130, 246, 0.3)",
                           "0 20px 40px -10px rgba(139, 92, 246, 0.3)",
-                        ]
+                        ],
                       }}
                       transition={{ duration: 3, repeat: Infinity }}
                       style={{ transform: "translateZ(30px)" }}
@@ -482,9 +539,7 @@ export default function Landing() {
       {/* CTA Section */}
       <section className="py-16 md:py-20 px-6 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-violet-500/20 to-blue-500/20" />
-        <motion.div
-          className="max-w-4xl mx-auto text-center relative z-10"
-        >
+        <motion.div className="max-w-4xl mx-auto text-center relative z-10">
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             whileInView={{ opacity: 1, scale: 1 }}
@@ -517,14 +572,32 @@ export default function Landing() {
             <span className="font-bold">AI Meet</span>
           </div>
           <div className="flex items-center gap-6">
-            <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">Privacy</a>
-            <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">Terms</a>
-            <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">Twitter</a>
-            <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">GitHub</a>
+            <a
+              href="#"
+              className="text-sm text-muted-foreground hover:text-primary transition-colors"
+            >
+              Privacy
+            </a>
+            <a
+              href="#"
+              className="text-sm text-muted-foreground hover:text-primary transition-colors"
+            >
+              Terms
+            </a>
+            <a
+              href="#"
+              className="text-sm text-muted-foreground hover:text-primary transition-colors"
+            >
+              Twitter
+            </a>
+            <a
+              href="#"
+              className="text-sm text-muted-foreground hover:text-primary transition-colors"
+            >
+              GitHub
+            </a>
           </div>
-          <p className="text-xs text-muted-foreground select-none">
-            © 2025 AI Meet
-          </p>
+          <p className="text-xs text-muted-foreground select-none">© 2025 AI Meet</p>
         </div>
       </footer>
     </div>

@@ -6,13 +6,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Clock, Users, Smile, CheckCircle, Download, Star, ArrowLeft,
-  Loader2, AlertCircle, Sparkles, Zap, Heart, ThumbsUp, Brain,
-  Share2, Calendar, LogOut
+  Clock,
+  Users,
+  Smile,
+  CheckCircle,
+  Download,
+  Star,
+  Loader2,
+  AlertCircle,
+  Zap,
+  Brain,
+  Share2,
+  LogOut,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { motion } from "framer-motion";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface MeetingParticipant {
   _id?: string;
@@ -77,7 +93,6 @@ function normalizeParticipants(participants: (MeetingParticipant | string)[] = [
 
 // Helper to get icon and color for emotions
 
-
 export default function CallSummary() {
   const [, setLocation] = useLocation();
   const [, params] = useRoute("/summary/:callId");
@@ -85,7 +100,12 @@ export default function CallSummary() {
   const callId = params?.callId;
   const isValidCallId = Boolean(callId && callId !== "new");
 
-  const { data: meeting, isLoading, isError, error } = useQuery<MeetingDetail>({
+  const {
+    data: meeting,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<MeetingDetail>({
     queryKey: [`/api/meetings/${callId}`],
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: isValidCallId,
@@ -99,7 +119,9 @@ export default function CallSummary() {
     const participants = normalizeParticipants(meeting.participants);
     const participantCount = meeting.analytics?.participantCount || participants.length;
     const attendedCount = participants.filter((p) => p.attended).length;
-    const attendanceRate = participantCount ? Math.round((attendedCount / participantCount) * 100) : 0;
+    const attendanceRate = participantCount
+      ? Math.round((attendedCount / participantCount) * 100)
+      : 0;
 
     const startTime = meeting.startTime ? new Date(meeting.startTime) : null;
     const endTime = meeting.endTime ? new Date(meeting.endTime) : undefined;
@@ -122,24 +144,30 @@ export default function CallSummary() {
       return 0;
     })();
 
-    const formattedDuration = durationMinutes !== null && durationMinutes !== undefined ? formatDuration(durationMinutes) : "—";
+    const formattedDuration =
+      durationMinutes !== null && durationMinutes !== undefined
+        ? formatDuration(durationMinutes)
+        : "—";
 
     // Aggregate emotion data
     const emotionMap = new Map<string, number>();
-    (meeting.analytics?.emotionData || []).forEach(item => {
+    (meeting.analytics?.emotionData || []).forEach((item) => {
       const e = item.emotion || "Neutral";
       const count = item.count || 1;
       emotionMap.set(e, (emotionMap.get(e) || 0) + count);
     });
 
     const totalEmotions = Array.from(emotionMap.values()).reduce((a, b) => a + b, 0);
-    const aggregatedEmotions = Array.from(emotionMap.entries()).map(([emotion, count]) => ({
-      emotion,
-      percentage: totalEmotions ? Math.round((count / totalEmotions) * 100) : 0,
-    })).sort((a, b) => b.percentage - a.percentage);
+    const aggregatedEmotions = Array.from(emotionMap.entries())
+      .map(([emotion, count]) => ({
+        emotion,
+        percentage: totalEmotions ? Math.round((count / totalEmotions) * 100) : 0,
+      }))
+      .sort((a, b) => b.percentage - a.percentage);
 
     // Find top emotion
-    const topEmotion = aggregatedEmotions.length > 0 ? aggregatedEmotions[0] : { emotion: "Neutral", percentage: 0 };
+    const topEmotion =
+      aggregatedEmotions.length > 0 ? aggregatedEmotions[0] : { emotion: "Neutral", percentage: 0 };
 
     // Process reactions
     const reactions = Object.entries(meeting.analytics?.reactions || {})
@@ -148,7 +176,13 @@ export default function CallSummary() {
 
     return {
       title: meeting.title || "Call Summary",
-      date: startTime ? startTime.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) : "",
+      date: startTime
+        ? startTime.toLocaleDateString(undefined, {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          })
+        : "",
       duration: formattedDuration,
       participants,
       emotions: aggregatedEmotions,
@@ -183,11 +217,16 @@ export default function CallSummary() {
             </div>
             <CardTitle className="text-foreground">Unable to load summary</CardTitle>
             <CardDescription className="text-muted-foreground">
-              {(error as Error)?.message || "The call summary could not be found or is still processing."}
+              {(error as Error)?.message ||
+                "The call summary could not be found or is still processing."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center">
-            <Button onClick={() => setLocation("/dashboard")} variant="outline" className="border-border/50 hover:bg-accent hover:text-accent-foreground">
+            <Button
+              onClick={() => setLocation("/dashboard")}
+              variant="outline"
+              className="border-border/50 hover:bg-accent hover:text-accent-foreground"
+            >
               Back to Dashboard
             </Button>
           </CardContent>
@@ -196,10 +235,7 @@ export default function CallSummary() {
     );
   }
 
-
-
   return (
-
     <div className="relative min-h-screen overflow-auto bg-background">
       {/* Background Gradients */}
       <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:50px_50px]" />
@@ -208,7 +244,6 @@ export default function CallSummary() {
 
       <div className="max-w-5xl mx-auto space-y-8 pb-32 p-6 relative z-10">
         <div className="max-w-5xl mx-auto space-y-8 pb-24">
-
           {/* Title Section */}
           <div className="text-center space-y-2">
             <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/60">
@@ -217,14 +252,27 @@ export default function CallSummary() {
             <p className="text-muted-foreground">Call Summary & Analytics</p>
           </div>
 
-
-
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { label: "Duration", value: summaryData?.duration, icon: Clock, color: "text-blue-400" },
-              { label: "Participants", value: summaryData?.stats.totalParticipants, icon: Users, color: "text-green-400" },
-              { label: "Engagement", value: `${summaryData?.stats.avgEngagement}%`, icon: Zap, color: "text-yellow-400" },
+              {
+                label: "Duration",
+                value: summaryData?.duration,
+                icon: Clock,
+                color: "text-blue-400",
+              },
+              {
+                label: "Participants",
+                value: summaryData?.stats.totalParticipants,
+                icon: Users,
+                color: "text-green-400",
+              },
+              {
+                label: "Engagement",
+                value: `${summaryData?.stats.avgEngagement}%`,
+                icon: Zap,
+                color: "text-yellow-400",
+              },
             ].map((stat, index) => (
               <motion.div
                 key={index}
@@ -234,12 +282,16 @@ export default function CallSummary() {
               >
                 <Card className="border-border/50 bg-card/40 backdrop-blur-md hover:bg-accent/50 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group">
                   <CardContent className="p-6 flex items-center gap-5">
-                    <div className={`p-4 rounded-2xl bg-background/50 ${stat.color} group-hover:scale-110 transition-transform duration-300`}>
+                    <div
+                      className={`p-4 rounded-2xl bg-background/50 ${stat.color} group-hover:scale-110 transition-transform duration-300`}
+                    >
                       <stat.icon className="w-6 h-6" />
                     </div>
                     <div>
                       <p className="text-sm font-medium text-muted-foreground mb-1">{stat.label}</p>
-                      <p className="text-3xl font-bold text-foreground tracking-tight">{stat.value}</p>
+                      <p className="text-3xl font-bold text-foreground tracking-tight">
+                        {stat.value}
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
@@ -273,14 +325,19 @@ export default function CallSummary() {
                           initial={{ width: 0 }}
                           animate={{ width: `${item.percentage}%` }}
                           transition={{ duration: 1, delay: 0.5 + index * 0.1 }}
-                          className={`h-full rounded-full bg-gradient-to-r ${index === 0 ? 'from-primary to-primary/60' : 'from-secondary to-secondary/60'
-                            }`}
+                          className={`h-full rounded-full bg-gradient-to-r ${
+                            index === 0
+                              ? "from-primary to-primary/60"
+                              : "from-secondary to-secondary/60"
+                          }`}
                         />
                       </div>
                     </div>
                   ))}
                   {(!summaryData?.emotions || summaryData.emotions.length === 0) && (
-                    <p className="text-muted-foreground text-center py-8">No emotion data available</p>
+                    <p className="text-muted-foreground text-center py-8">
+                      No emotion data available
+                    </p>
                   )}
                 </CardContent>
               </Card>
@@ -304,13 +361,20 @@ export default function CallSummary() {
                   <CardContent>
                     <div className="flex flex-wrap gap-4">
                       {summaryData?.reactions.map((reaction, index) => (
-                        <div key={index} className="flex flex-col items-center p-3 bg-secondary/20 rounded-xl min-w-[80px]">
+                        <div
+                          key={index}
+                          className="flex flex-col items-center p-3 bg-secondary/20 rounded-xl min-w-[80px]"
+                        >
                           <span className="text-3xl mb-1">{reaction.emoji}</span>
-                          <span className="text-sm font-medium text-foreground">{reaction.count}</span>
+                          <span className="text-sm font-medium text-foreground">
+                            {reaction.count}
+                          </span>
                         </div>
                       ))}
                       {(!summaryData?.reactions || summaryData.reactions.length === 0) && (
-                        <p className="text-muted-foreground w-full text-center py-4">No reactions recorded</p>
+                        <p className="text-muted-foreground w-full text-center py-4">
+                          No reactions recorded
+                        </p>
                       )}
                     </div>
                   </CardContent>
@@ -350,19 +414,27 @@ export default function CallSummary() {
                             <span className="font-medium text-foreground">{participant.name}</span>
                           </div>
                           {participant.attended ? (
-                            <Badge variant="secondary" className="bg-green-500/10 text-green-400 border-green-500/20">
+                            <Badge
+                              variant="secondary"
+                              className="bg-green-500/10 text-green-400 border-green-500/20"
+                            >
                               <CheckCircle className="w-3 h-3 mr-1" />
                               Present
                             </Badge>
                           ) : (
-                            <Badge variant="secondary" className="bg-secondary/50 text-muted-foreground">
+                            <Badge
+                              variant="secondary"
+                              className="bg-secondary/50 text-muted-foreground"
+                            >
                               Absent
                             </Badge>
                           )}
                         </div>
                       ))}
                       {(!summaryData?.participants || summaryData.participants.length === 0) && (
-                        <p className="text-muted-foreground text-center py-8">No participants recorded</p>
+                        <p className="text-muted-foreground text-center py-8">
+                          No participants recorded
+                        </p>
                       )}
                     </div>
                   </CardContent>
@@ -373,7 +445,10 @@ export default function CallSummary() {
           {/* Floating Action Dock */}
           <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
             <div className="flex items-center justify-between bg-background/80 backdrop-blur-2xl border border-border/50 p-2 rounded-full shadow-2xl ring-1 ring-white/10">
-              <Button variant="ghost" className="text-muted-foreground hover:text-foreground hover:bg-accent rounded-xl">
+              <Button
+                variant="ghost"
+                className="text-muted-foreground hover:text-foreground hover:bg-accent rounded-xl"
+              >
                 <Download className="w-4 h-4 mr-2" />
                 Recording
               </Button>
@@ -384,7 +459,9 @@ export default function CallSummary() {
                 onClick={() => {
                   const text = `Check out my call summary: ${window.location.href}`;
                   if (navigator.share) {
-                    navigator.share({ title: 'FaceCall Summary', text, url: window.location.href }).catch(console.error);
+                    navigator
+                      .share({ title: "FaceCall Summary", text, url: window.location.href })
+                      .catch(console.error);
                   } else {
                     navigator.clipboard.writeText(text);
                     alert("Link copied to clipboard!");

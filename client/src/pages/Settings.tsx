@@ -1,37 +1,33 @@
-import { useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-import { Settings as SettingsIcon, LogOut, LayoutDashboard, MessageSquare, User, Camera, Mic, Monitor, Palette, ChevronRight, Sparkles } from "lucide-react";
+import { Camera, Mic, Palette, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/components/ThemeProvider";
-import { useAuth } from "@/lib/auth";
-import { LogoMark } from "@/components/LogoMark";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { getAvatarUrl, getInitials } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Settings() {
-  const [, setLocation] = useLocation();
   const { theme } = useTheme();
-  const { user, logout } = useAuth();
   const { toast } = useToast();
   const { settings, updateSettings } = useSettings();
-
-
 
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
       opacity: 1,
       transition: {
-        staggerChildren: 0.1
-      }
-    }
+        staggerChildren: 0.1,
+      },
+    },
   };
 
   const itemVariants = {
@@ -42,15 +38,13 @@ export default function Settings() {
       transition: {
         type: "spring",
         stiffness: 100,
-        damping: 15
-      }
-    }
+        damping: 15,
+      },
+    },
   };
 
   return (
     <div className="flex-1 overflow-auto p-6 md:p-10">
-
-
       <motion.div
         className="max-w-4xl mx-auto space-y-8"
         variants={containerVariants}
@@ -58,8 +52,12 @@ export default function Settings() {
         animate="visible"
       >
         <motion.div variants={itemVariants}>
-          <h1 className="text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">Preferences</h1>
-          <p className="text-lg text-muted-foreground">Manage your camera, microphone, and call experience.</p>
+          <h1 className="text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
+            Preferences
+          </h1>
+          <p className="text-lg text-muted-foreground">
+            Manage your camera, microphone, and call experience.
+          </p>
         </motion.div>
 
         <motion.div variants={itemVariants} className="grid gap-6">
@@ -72,15 +70,24 @@ export default function Settings() {
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold">Video Settings</h2>
-                  <p className="text-sm text-muted-foreground">Configure your camera and visual preferences</p>
+                  <p className="text-sm text-muted-foreground">
+                    Configure your camera and visual preferences
+                  </p>
                 </div>
               </div>
             </div>
             <div className="p-6 space-y-6">
               <div className="flex items-center justify-between group">
                 <div className="space-y-1">
-                  <Label htmlFor="auto-video" className="text-base font-medium group-hover:text-primary transition-colors">Auto-join with video</Label>
-                  <p className="text-sm text-muted-foreground">Automatically turn on camera when joining calls</p>
+                  <Label
+                    htmlFor="auto-video"
+                    className="text-base font-medium group-hover:text-primary transition-colors"
+                  >
+                    Auto-join with video
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically turn on camera when joining calls
+                  </p>
                 </div>
                 <Switch
                   id="auto-video"
@@ -89,25 +96,33 @@ export default function Settings() {
                     updateSettings({ autoJoinVideo: checked });
                     toast({
                       title: "Settings saved",
-                      description: checked ? "Video will auto-join on calls" : "Video will be off by default",
+                      description: checked
+                        ? "Video will auto-join on calls"
+                        : "Video will be off by default",
                     });
                   }}
                   className="data-[state=checked]:bg-blue-500"
                 />
               </div>
 
-
-
               <div className="space-y-3 pt-2">
-                <Label htmlFor="video-quality" className="text-base font-medium">Video Quality</Label>
-                <Select value={settings.videoQuality} onValueChange={(value: "sd" | "hd" | "full-hd") => {
-                  updateSettings({ videoQuality: value });
-                  toast({
-                    title: "Settings saved",
-                    description: `Video quality set to ${value.toUpperCase()}`,
-                  });
-                }}>
-                  <SelectTrigger id="video-quality" className="h-12 bg-white/5 border-white/10 focus:ring-blue-500/20 rounded-xl">
+                <Label htmlFor="video-quality" className="text-base font-medium">
+                  Video Quality
+                </Label>
+                <Select
+                  value={settings.videoQuality}
+                  onValueChange={(value: "sd" | "hd" | "full-hd") => {
+                    updateSettings({ videoQuality: value });
+                    toast({
+                      title: "Settings saved",
+                      description: `Video quality set to ${value.toUpperCase()}`,
+                    });
+                  }}
+                >
+                  <SelectTrigger
+                    id="video-quality"
+                    className="h-12 bg-white/5 border-white/10 focus:ring-blue-500/20 rounded-xl"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-background/95 backdrop-blur-xl border-white/10">
@@ -129,15 +144,24 @@ export default function Settings() {
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold">Audio Settings</h2>
-                  <p className="text-sm text-muted-foreground">Configure your microphone and sound</p>
+                  <p className="text-sm text-muted-foreground">
+                    Configure your microphone and sound
+                  </p>
                 </div>
               </div>
             </div>
             <div className="p-6 space-y-6">
               <div className="flex items-center justify-between group">
                 <div className="space-y-1">
-                  <Label htmlFor="auto-audio" className="text-base font-medium group-hover:text-primary transition-colors">Auto-join with audio</Label>
-                  <p className="text-sm text-muted-foreground">Automatically unmute when joining calls</p>
+                  <Label
+                    htmlFor="auto-audio"
+                    className="text-base font-medium group-hover:text-primary transition-colors"
+                  >
+                    Auto-join with audio
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically unmute when joining calls
+                  </p>
                 </div>
                 <Switch
                   id="auto-audio"
@@ -146,7 +170,9 @@ export default function Settings() {
                     updateSettings({ autoJoinAudio: checked });
                     toast({
                       title: "Settings saved",
-                      description: checked ? "Audio will auto-join on calls" : "Audio will be muted by default",
+                      description: checked
+                        ? "Audio will auto-join on calls"
+                        : "Audio will be muted by default",
                     });
                   }}
                   className="data-[state=checked]:bg-emerald-500"
@@ -154,15 +180,23 @@ export default function Settings() {
               </div>
 
               <div className="space-y-3 pt-2">
-                <Label htmlFor="audio-quality" className="text-base font-medium">Audio Quality</Label>
-                <Select value={settings.audioQuality} onValueChange={(value: "standard" | "high" | "studio") => {
-                  updateSettings({ audioQuality: value });
-                  toast({
-                    title: "Settings saved",
-                    description: `Audio quality set to ${value}`,
-                  });
-                }}>
-                  <SelectTrigger id="audio-quality" className="h-12 bg-white/5 border-white/10 focus:ring-emerald-500/20 rounded-xl">
+                <Label htmlFor="audio-quality" className="text-base font-medium">
+                  Audio Quality
+                </Label>
+                <Select
+                  value={settings.audioQuality}
+                  onValueChange={(value: "standard" | "high" | "studio") => {
+                    updateSettings({ audioQuality: value });
+                    toast({
+                      title: "Settings saved",
+                      description: `Audio quality set to ${value}`,
+                    });
+                  }}
+                >
+                  <SelectTrigger
+                    id="audio-quality"
+                    className="h-12 bg-white/5 border-white/10 focus:ring-emerald-500/20 rounded-xl"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-background/95 backdrop-blur-xl border-white/10">
@@ -184,15 +218,24 @@ export default function Settings() {
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold">AI Features</h2>
-                  <p className="text-sm text-muted-foreground">Smart capabilities powered by FaceCall AI</p>
+                  <p className="text-sm text-muted-foreground">
+                    Smart capabilities powered by FaceCall AI
+                  </p>
                 </div>
               </div>
             </div>
             <div className="p-6 space-y-6">
               <div className="flex items-center justify-between group">
                 <div className="space-y-1">
-                  <Label htmlFor="emotion" className="text-base font-medium group-hover:text-primary transition-colors">Emotion Detection</Label>
-                  <p className="text-sm text-muted-foreground">Real-time emotion analysis during calls</p>
+                  <Label
+                    htmlFor="emotion"
+                    className="text-base font-medium group-hover:text-primary transition-colors"
+                  >
+                    Emotion Detection
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Real-time emotion analysis during calls
+                  </p>
                 </div>
                 <Switch
                   id="emotion"
@@ -201,7 +244,9 @@ export default function Settings() {
                     updateSettings({ emotionDetection: checked });
                     toast({
                       title: "Settings saved",
-                      description: checked ? "Emotion detection enabled" : "Emotion detection disabled",
+                      description: checked
+                        ? "Emotion detection enabled"
+                        : "Emotion detection disabled",
                     });
                   }}
                   className="data-[state=checked]:bg-purple-500"
@@ -226,8 +271,13 @@ export default function Settings() {
             <div className="p-6">
               <div className="flex items-center justify-between group">
                 <div className="space-y-1">
-                  <Label className="text-base font-medium group-hover:text-primary transition-colors">Theme</Label>
-                  <p className="text-sm text-muted-foreground">Currently using <span className="capitalize font-medium text-foreground">{theme}</span> mode</p>
+                  <Label className="text-base font-medium group-hover:text-primary transition-colors">
+                    Theme
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Currently using{" "}
+                    <span className="capitalize font-medium text-foreground">{theme}</span> mode
+                  </p>
                 </div>
                 <ThemeToggle />
               </div>

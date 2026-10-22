@@ -1,9 +1,7 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo, forwardRef } from "react";
+import { useState, useEffect, useRef, memo, forwardRef } from "react";
 import { useLocation, useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   PhoneOff,
   Mic,
@@ -18,14 +16,8 @@ import {
   Check,
   Send,
   X,
-  Music,
-  Info,
   Captions,
   Smile,
-  Settings,
-  LogOut,
-  LayoutGrid,
-  Maximize2,
   Pin,
   PinOff,
 } from "lucide-react";
@@ -35,14 +27,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
 import { auth } from "@/lib/firebase";
-import { getAvatarUrl, getInitials } from "@/lib/utils";
+import { getInitials } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SmartPulse } from "@/components/SmartPulse";
 import { useAudioAnalysis } from "@/hooks/useAudioAnalysis";
-import { useFaceExpression } from "@/hooks/useFaceExpression";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { VoiceEffectsOverlay } from "@/components/VoiceEffectsOverlay";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
@@ -54,13 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import SimplePeer, { Instance as PeerInstance } from "simple-peer";
 
 // Polyfill for simple-peer in browser environment if needed,
@@ -175,7 +160,7 @@ type RemoteParticipantVideoProps = {
 
 const RemoteParticipantVideo = memo(
   forwardRef<HTMLDivElement, RemoteParticipantVideoProps>(
-    ({ participant, onPin, isPinned, isSpotlightMode, className }, ref) => {
+    ({ participant, onPin, isPinned, className }, ref) => {
       const { volume } = useAudioAnalysis(participant.stream || null);
       const localVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -307,7 +292,7 @@ export default function VideoCall() {
   });
   const roomId = params?.roomId || "";
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [meetingId] = useState<string | null>(null);
 
   // Fetch initial chat history for the room via HTTP
   useEffect(() => {
@@ -345,7 +330,7 @@ export default function VideoCall() {
   const [copied, setCopied] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  const [isRecording, setIsRecording] = useState(false);
+  const [, setIsRecording] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [showCaptions, setShowCaptions] = useState(false);
   const [showReactionsMenu, setShowReactionsMenu] = useState(false);
@@ -353,8 +338,7 @@ export default function VideoCall() {
   const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number }[]>([]);
 
   // Captions State
-  const { isListening, transcript, startRecognition, stopRecognition, resetTranscript } =
-    useSpeechRecognition();
+  const { transcript, startRecognition } = useSpeechRecognition();
   const [captions, setCaptions] = useState<{
     userId: string;
     userName?: string;
@@ -381,7 +365,6 @@ export default function VideoCall() {
   // const { expression, confidence, isLoaded: isFaceModelLoaded } = useFaceExpression(localVideoRef);
   const expression = "Neutral"; // Fallback
   const confidence = 0;
-  const isFaceModelLoaded = false;
   const { videoDevices, audioInputDevices, audioOutputDevices } = useMediaDevices();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [pinnedSocketId, setPinnedSocketId] = useState<string | null>(null);
@@ -716,7 +699,7 @@ export default function VideoCall() {
       });
     });
 
-    newSocket.on("call:reaction", ({ socketId, emoji }) => {
+    newSocket.on("call:reaction", ({ emoji }) => {
       const id = Date.now().toString() + Math.random();
       const x = Math.random() * 80 + 10;
       setReactions((prev) => [...prev, { id, emoji, x }]);
@@ -916,7 +899,6 @@ export default function VideoCall() {
       setParticipants((prev) => {
         const newMap = new Map(prev);
         // Update or create participant
-        const existing = newMap.get(targetSocketId);
         newMap.set(targetSocketId, {
           socketId: targetSocketId,
           userId,
@@ -1045,7 +1027,6 @@ export default function VideoCall() {
           peersRef.current.forEach((peer) => {
             // Replace camera track with screen track
             // Note: simple-peer wrapper for RTCPeerConnection.replaceTrack
-            const sender = peer.streams[0]?.getVideoTracks()[0]; // Current track being sent
             // If existing connection has a video track, replace it
             // Note: simple-peer exposes the raw RTCPeerConnection as peer._pc, but standard API is replaceTrack on sender
             // peer.replaceTrack(oldTrack, newTrack, stream)
@@ -1094,7 +1075,8 @@ export default function VideoCall() {
     setMessage("");
   };
 
-  const startRecording = async () => {
+  // Unwired feature (no UI control yet); kept for future use.
+  const _startRecording = async () => {
     try {
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: { mediaSource: "screen" } as any,
@@ -1166,13 +1148,13 @@ export default function VideoCall() {
     }
   };
 
-  const stopRecording = () => {
+  const _stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
   };
 
-  const sendReaction = (emoji: string) => {
+  const _sendReaction = (emoji: string) => {
     socket?.emit("call:reaction", { roomId, emoji });
     const id = Date.now().toString() + Math.random();
     const x = Math.random() * 80 + 10;
@@ -1182,7 +1164,7 @@ export default function VideoCall() {
     }, 2000);
   };
 
-  const toggleMusic = () => {
+  const _toggleMusic = () => {
     if (!audioRef.current) {
       audioRef.current = new Audio(
         "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3"
@@ -1220,8 +1202,6 @@ export default function VideoCall() {
 
   // --- Render ---
   const participantsList = Array.from(participants.values());
-  const localParticipant = participantsList.find((p) => p.isLocal);
-  const otherParticipants = participantsList.filter((p) => !p.isLocal);
   const hasMultipleParticipants = participantsList.length > 1;
 
   // Dynamic Grid / Layout Logic
@@ -1311,7 +1291,6 @@ export default function VideoCall() {
               const isLocal = p.isLocal;
               const isAlone = participantsList.length === 1;
               const isOneOnOne = participantsList.length === 2;
-              const isGroup = participantsList.length > 2;
 
               // Class Construction
               let containerClass = "overflow-hidden transition-all duration-500 "; // No base position
