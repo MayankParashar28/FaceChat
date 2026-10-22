@@ -316,33 +316,30 @@ router.put("/me", authenticate, async (req, res) => {
 });
 
 // Check if username is available (rate limited to prevent abuse)
-router.get(
-  "/check-username/:username",
-  usernameCheckRateLimiter,
-  authenticate,
-  async (req, res) => {
-    try {
-      const { username } = req.params;
+// Public (rate-limited): username availability is needed on the signup form,
+// before the user has an account/token.
+router.get("/check-username/:username", usernameCheckRateLimiter, async (req, res) => {
+  try {
+    const { username } = req.params;
 
-      if (!username || username.length < 3) {
-        return res.status(400).json({ error: "Username must be at least 3 characters" });
-      }
-
-      const isTaken = await mongoService.isUsernameTaken(username);
-      res.json({
-        username,
-        available: !isTaken,
-        message: isTaken ? "Username is already taken" : "Username is available",
-      });
-    } catch (error) {
-      logger.error("Error checking username:", error);
-      res.status(500).json({ error: "Failed to check username" });
+    if (!username || username.length < 3) {
+      return res.status(400).json({ error: "Username must be at least 3 characters" });
     }
-  }
-);
 
-// Get username suggestions
-router.get("/suggestions/:baseUsername", authenticate, async (req, res) => {
+    const isTaken = await mongoService.isUsernameTaken(username);
+    res.json({
+      username,
+      available: !isTaken,
+      message: isTaken ? "Username is already taken" : "Username is available",
+    });
+  } catch (error) {
+    logger.error("Error checking username:", error);
+    res.status(500).json({ error: "Failed to check username" });
+  }
+});
+
+// Get username suggestions — public (rate-limited); also used on the signup form.
+router.get("/suggestions/:baseUsername", usernameCheckRateLimiter, async (req, res) => {
   try {
     const { baseUsername } = req.params;
 

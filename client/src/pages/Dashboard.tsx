@@ -31,8 +31,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getInitials } from "@/lib/utils";
-import { getQueryFn } from "@/lib/queryClient";
-import { auth } from "@/lib/firebase";
+import { getAuthToken, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 // --- Types ---
@@ -214,7 +213,7 @@ export default function Dashboard() {
     queryKey: ["user-meetings", profileData?._id],
     queryFn: async () => {
       if (!profileData?._id) return [];
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
       const response = await fetch(`/api/users/${profileData._id}/meetings`, {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },

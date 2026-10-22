@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/lib/auth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { lazy, Suspense } from "react";
+import { MotionConfig } from "framer-motion";
 import { ServerStatus } from "@/components/ServerStatus";
 
 // Lazy load pages for better performance
@@ -129,13 +130,17 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <ServerStatus />
-            <Router />
-          </TooltipProvider>
-        </AuthProvider>
+        {/* reducedMotion="user" makes all framer-motion animations respect the
+            viewer's prefers-reduced-motion setting (content appears instantly). */}
+        <MotionConfig reducedMotion="user">
+          <AuthProvider>
+            <TooltipProvider>
+              <Toaster />
+              <ServerStatus />
+              <Router />
+            </TooltipProvider>
+          </AuthProvider>
+        </MotionConfig>
       </ThemeProvider>
     </QueryClientProvider>
   );

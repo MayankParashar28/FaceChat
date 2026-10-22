@@ -294,6 +294,14 @@ export default function VideoCall() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [meetingId] = useState<string | null>(null);
 
+  // Outgoing-call context (set by Chats when starting a call): show a
+  // "Ringing…" state until the other side answers or declines.
+  const callQuery =
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const isOutgoing = callQuery?.get("outgoing") === "1";
+  const outgoingName = callQuery?.get("name") || "";
+  const [isRinging, setIsRinging] = useState(isOutgoing);
+
   // Fetch initial chat history for the room via HTTP
   useEffect(() => {
     if (!roomId) return;
@@ -583,6 +591,20 @@ export default function VideoCall() {
       }
     });
 
+    // A2: Outgoing-call outcome (we are the caller, waiting for an answer)
+    newSocket.on("call:accepted", () => {
+      setIsRinging(false);
+    });
+
+    newSocket.on("call:declined", () => {
+      setIsRinging(false);
+      toast({
+        title: "Call declined",
+        description: `${outgoingName || "They"} declined your call.`,
+      });
+      setTimeout(() => setLocation("/chats"), 800);
+    });
+
     // B: Existing participants (We join)
     newSocket.on(
       "call:existing-users",
@@ -614,6 +636,7 @@ export default function VideoCall() {
     // C: New user joined (We are existing)
     newSocket.on("call:user-joined", ({ socketId, userId, userName, userAvatar }) => {
       console.log("New user joined:", socketId);
+      setIsRinging(false);
       createPeer(socketId, userId, userName, userAvatar, false, localStreamRef.current);
     });
 
@@ -1235,6 +1258,21 @@ export default function VideoCall() {
 
   return (
     <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative font-sans">
+      {/* Outgoing call: waiting for the other side to pick up */}
+      {isRinging && (
+        <div className="absolute top-20 left-1/2 z-50 -translate-x-1/2">
+          <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/70 px-5 py-2.5 text-white shadow-lg backdrop-blur">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+            </span>
+            <span className="text-sm font-medium">
+              Ringing{outgoingName ? ` ${outgoingName}` : ""}…
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Smart Pulse (Local User Mood Analysis) */}
       <div className="absolute top-24 left-4 z-50 hidden md:block">
         <SmartPulse
