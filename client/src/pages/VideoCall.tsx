@@ -106,7 +106,7 @@ const LocalVideo = memo(
           autoPlay
           playsInline
           muted
-          className="w-full h-full object-cover rounded-[2rem] transition-opacity duration-300 opacity-100"
+          className="w-full h-full object-cover rounded-2xl transition-opacity duration-300 opacity-100"
         />
         {isVideoOn && (
           <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
@@ -160,7 +160,7 @@ const RemoteVideo = memo(
           ref={videoRef}
           autoPlay
           playsInline
-          className="w-full h-full object-cover rounded-[2rem] transition-opacity duration-300 opacity-100"
+          className="w-full h-full object-cover rounded-2xl transition-opacity duration-300 opacity-100"
         />
         {isVideoOn && (
           <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
@@ -202,7 +202,7 @@ const RemoteParticipantVideo = memo(
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9 }}
-          className={`relative ${baseClasses} bg-black/50 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-2xl group transition-all duration-300 ${participant.isAudioOn && volume > 20 && !participant.isLocal ? "border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]" : "border border-white/10"}`}
+          className={`relative ${baseClasses} bg-card rounded-2xl overflow-hidden shadow-sm ring-1 ring-border/60 group transition-all duration-300 ${participant.isAudioOn && volume > 20 && !participant.isLocal ? "border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]" : "border border-border"}`}
         >
           {/* Video Element */}
           {participant.isLocal ? (
@@ -230,7 +230,7 @@ const RemoteParticipantVideo = memo(
 
           {/* Status Indicator */}
           {!participant.isLocal && participant.status === "connecting" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
+            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 z-20">
               <div className="text-white text-sm font-light animate-pulse">Connecting...</div>
             </div>
           )}
@@ -249,7 +249,7 @@ const RemoteParticipantVideo = memo(
 
           {/* Overlay Info */}
           <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center z-30 pointer-events-none">
-            <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-white font-medium text-xs md:text-sm shadow-md">
+            <div className="flex items-center gap-2 bg-background/85 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-border text-foreground font-medium text-xs shadow-sm">
               <span>
                 {participant.name} {participant.isLocal && "(You)"}
               </span>
@@ -264,7 +264,7 @@ const RemoteParticipantVideo = memo(
                 <Button
                   size="icon"
                   variant="ghost"
-                  className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? "bg-blue-500/20 text-blue-400" : "bg-black/50 text-white hover:bg-white/20"}`}
+                  className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? "bg-blue-500/20 text-blue-400" : "bg-background/80 text-foreground hover:bg-accent"}`}
                   onClick={() => onPin(participant.socketId)}
                 >
                   {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
@@ -1278,11 +1278,11 @@ export default function VideoCall() {
   };
 
   return (
-    <div className="h-screen w-full bg-background/95 backdrop-blur-3xl overflow-hidden relative font-sans">
+    <div className="h-screen w-full bg-muted/50 overflow-hidden relative font-sans">
       {/* Outgoing call: waiting for the other side to pick up */}
       {isRinging && (
         <div className="absolute top-20 left-1/2 z-50 -translate-x-1/2">
-          <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/70 px-5 py-2.5 text-white shadow-lg backdrop-blur">
+          <div className="flex items-center gap-2.5 rounded-full border border-border bg-card/95 px-4 py-2 text-foreground shadow-sm backdrop-blur-sm">
             <span className="relative flex h-2.5 w-2.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
@@ -1306,7 +1306,7 @@ export default function VideoCall() {
 
       {/* Header */}
       <div className="absolute top-4 md:top-6 left-0 right-0 z-50 flex justify-center items-center pointer-events-none px-4">
-        <div className="pointer-events-auto bg-black/40 backdrop-blur-md px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-3 md:gap-6 text-white border border-white/10 items-center shadow-2xl transition-all hover:bg-black/50 overflow-hidden max-w-full">
+        <div className="pointer-events-auto bg-card/95 backdrop-blur-sm px-4 py-1.5 md:px-5 md:py-2 rounded-full flex gap-3 md:gap-4 text-foreground border border-border items-center shadow-sm overflow-hidden max-w-full">
           <div className="flex items-center gap-2 md:gap-3 shrink-0">
             <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
             <span className="font-semibold tracking-wide text-sm md:text-lg truncate max-w-[100px] md:max-w-none">
@@ -1341,7 +1341,9 @@ export default function VideoCall() {
       </div>
 
       {/* Video Grid */}
-      <div className={`w-full h-full relative overflow-hidden bg-black ${getGridClass()}`}>
+      <div
+        className={`w-full h-full relative overflow-hidden bg-transparent p-2 md:p-4 gap-2 md:gap-3 ${getGridClass()}`}
+      >
         <AnimatePresence mode="popLayout">
           {/* Default Grid Mode */}
           {!pinnedSocketId &&
@@ -1435,7 +1437,7 @@ export default function VideoCall() {
 
       {/* Controls */}
       <div className="absolute bottom-4 md:bottom-10 left-0 right-0 md:left-1/2 md:-translate-x-1/2 z-50 flex justify-center md:gap-4 p-2 pointer-events-none">
-        <div className="pointer-events-auto flex gap-3 md:gap-4 p-2 md:p-4 bg-black/80 md:bg-black/60 backdrop-blur-2xl rounded-2xl md:rounded-[2.5rem] border border-white/10 shadow-2xl transition-all hover:scale-105 hover:bg-black/90 md:hover:bg-black/70 overflow-x-auto max-w-[95vw] [&::-webkit-scrollbar]:hidden">
+        <div className="pointer-events-auto flex items-center gap-1.5 md:gap-2 p-1.5 md:p-2 bg-card/95 backdrop-blur-sm rounded-2xl border border-border shadow-lg overflow-x-auto max-w-[95vw] [&::-webkit-scrollbar]:hidden">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1481,7 +1483,7 @@ export default function VideoCall() {
               <Button
                 variant={isScreenSharing ? "secondary" : "ghost"}
                 size="icon"
-                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? "bg-blue-500 text-white" : ""}`}
+                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? "bg-blue-500 text-foreground" : ""}`}
                 onClick={toggleScreenShare}
               >
                 <MonitorUp className="w-4 h-4 md:w-5 md:h-5" />
@@ -1497,7 +1499,7 @@ export default function VideoCall() {
               <Button
                 variant={isSidebarOpen && activeTab === "chat" ? "secondary" : "ghost"}
                 size="icon"
-                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "chat" ? "bg-white/20" : ""}`}
+                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "chat" ? "bg-accent" : ""}`}
                 onClick={() => {
                   if (isSidebarOpen && activeTab === "chat") {
                     setIsSidebarOpen(false);
@@ -1520,7 +1522,7 @@ export default function VideoCall() {
               <Button
                 variant={isSidebarOpen && activeTab === "participants" ? "secondary" : "ghost"}
                 size="icon"
-                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "participants" ? "bg-white/20" : ""}`}
+                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "participants" ? "bg-accent" : ""}`}
                 onClick={() => {
                   if (isSidebarOpen && activeTab === "participants") {
                     setIsSidebarOpen(false);
@@ -1546,7 +1548,7 @@ export default function VideoCall() {
                   initial={{ opacity: 0, y: 10, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex gap-1 min-w-max"
+                  className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/95 backdrop-blur-xl border border-border rounded-2xl shadow-2xl flex gap-1 min-w-max"
                 >
                   {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
                     <button
@@ -1565,7 +1567,7 @@ export default function VideoCall() {
                           setShowReactionsMenu(false);
                         }
                       }}
-                      className="p-2 hover:bg-white/10 rounded-xl text-xl transition-transform active:scale-95"
+                      className="p-2 hover:bg-accent rounded-xl text-xl transition-transform active:scale-95"
                     >
                       {emoji}
                     </button>
@@ -1578,7 +1580,7 @@ export default function VideoCall() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className={`text-white hover:bg-white/10 rounded-xl w-8 h-8 shrink-0 transition-all duration-200 ${showReactionsMenu ? "bg-white/20" : ""}`}
+                  className={`text-foreground hover:bg-accent rounded-xl w-8 h-8 shrink-0 transition-all duration-200 ${showReactionsMenu ? "bg-accent" : ""}`}
                   onClick={() => setShowReactionsMenu(!showReactionsMenu)}
                 >
                   <Smile className="w-4 h-4" />
@@ -1594,7 +1596,7 @@ export default function VideoCall() {
               <Button
                 variant={showCaptions ? "secondary" : "ghost"}
                 size="icon"
-                className={`text-white hover:bg-white/10 rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${showCaptions ? "bg-white/20" : ""}`}
+                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${showCaptions ? "bg-accent" : ""}`}
                 onClick={() => setShowCaptions(!showCaptions)}
               >
                 <Captions className="w-4 h-4 md:w-5 md:h-5" />
@@ -1650,7 +1652,7 @@ export default function VideoCall() {
 
       {/* Right Side Vertical Reaction Bar */}
       <div
-        className={`absolute right-12 top-1/2 -translate-y-1/2 z-40 hidden md:flex flex-col gap-3 p-3 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl transition-all duration-300 ${isSidebarOpen ? "translate-x-32 opacity-0 pointer-events-none" : "translate-x-0 opacity-100"}`}
+        className={`absolute right-12 top-1/2 -translate-y-1/2 z-40 hidden md:flex flex-col gap-3 p-2 bg-card/95 backdrop-blur-sm border border-border rounded-full shadow-sm transition-all duration-300 ${isSidebarOpen ? "translate-x-32 opacity-0 pointer-events-none" : "translate-x-0 opacity-100"}`}
       >
         {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
           <button
@@ -1665,7 +1667,7 @@ export default function VideoCall() {
                 setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2000);
               }
             }}
-            className="p-2 hover:bg-white/20 rounded-full text-2xl transition-transform hover:scale-125 active:scale-95"
+            className="p-2 hover:bg-accent rounded-full text-2xl transition-transform hover:scale-125 active:scale-95"
           >
             {emoji}
           </button>
@@ -1674,15 +1676,15 @@ export default function VideoCall() {
 
       {/* Sidebar (Chat & Participants) */}
       {isSidebarOpen && (
-        <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-black/95 md:bg-black/90 backdrop-blur-xl md:rounded-3xl border-l md:border border-white/10 flex flex-col z-[70] shadow-2xl overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
-          <div className="p-4 border-b border-white/10 flex justify-between items-center">
-            <h3 className="text-white font-medium">
+        <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-card md:rounded-2xl border-l md:border border-border flex flex-col z-[70] shadow-lg overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
+          <div className="p-4 border-b border-border flex justify-between items-center">
+            <h3 className="text-foreground font-medium">
               {activeTab === "chat" ? "Group Chat" : "Participants"}
             </h3>
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-white/50 hover:text-white"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
               onClick={() => setIsSidebarOpen(false)}
             >
               <X className="w-4 h-4" />
@@ -1695,7 +1697,7 @@ export default function VideoCall() {
             className="flex-1 flex flex-col min-h-0"
           >
             <div className="px-4 pt-2">
-              <TabsList className="w-full bg-white/5">
+              <TabsList className="w-full bg-muted">
                 <TabsTrigger value="chat" className="flex-1">
                   Chat
                 </TabsTrigger>
@@ -1711,16 +1713,16 @@ export default function VideoCall() {
             <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0">
               <div className="flex-1 p-4 overflow-y-auto space-y-4" ref={chatScrollRef}>
                 {chatMessages.length === 0 && (
-                  <div className="text-center text-white/30 text-sm mt-10">
+                  <div className="text-center text-foreground/30 text-sm mt-10">
                     No messages yet. Start the conversation!
                   </div>
                 )}
                 {chatMessages.map((m) => (
                   <div key={m.id} className={`flex gap-3 ${m.isLocal ? "flex-row-reverse" : ""}`}>
                     {!m.isLocal && (
-                      <Avatar className="h-8 w-8 border border-white/10">
+                      <Avatar className="h-8 w-8 border border-border">
                         <AvatarImage src={m.avatar} />
-                        <AvatarFallback className="text-[10px] bg-indigo-500 text-white">
+                        <AvatarFallback className="text-[10px] bg-indigo-500 text-foreground">
                           {getInitials(m.sender)}
                         </AvatarFallback>
                       </Avatar>
@@ -1732,16 +1734,16 @@ export default function VideoCall() {
                       <div
                         className={`flex items-baseline gap-2 mb-1 ${m.isLocal ? "flex-row-reverse" : ""}`}
                       >
-                        <span className="text-xs text-white/70 font-medium">
+                        <span className="text-xs text-muted-foreground font-medium">
                           {m.isLocal ? "You" : m.sender}
                         </span>
-                        <span className="text-[10px] text-white/40">{m.time}</span>
+                        <span className="text-[10px] text-muted-foreground">{m.time}</span>
                       </div>
                       <div
                         className={`p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
                           m.isLocal
-                            ? "bg-blue-600 text-white rounded-tr-sm"
-                            : "bg-white/10 text-white border border-white/10 rounded-tl-sm"
+                            ? "bg-blue-600 text-foreground rounded-tr-sm"
+                            : "bg-accent/60 text-foreground border border-border rounded-tl-sm"
                         }`}
                       >
                         {m.message}
@@ -1753,12 +1755,12 @@ export default function VideoCall() {
 
               <form
                 onSubmit={sendMessage}
-                className="p-3 border-t border-white/10 flex gap-2 items-center bg-black/50"
+                className="p-3 border-t border-border flex gap-2 items-center bg-muted/30"
               >
                 <Input
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  className="bg-white/5 border-white/10 text-white rounded-xl focus:border-blue-500/50"
+                  className="bg-muted border-border text-foreground rounded-xl focus:border-blue-500/50"
                   placeholder="Type a message..."
                 />
                 <Button
@@ -1777,21 +1779,21 @@ export default function VideoCall() {
                 {Array.from(participants.values()).map((p) => (
                   <div
                     key={p.socketId}
-                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors"
+                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-muted transition-colors"
                   >
-                    <Avatar className="h-10 w-10 border border-white/10">
+                    <Avatar className="h-10 w-10 border border-border">
                       <AvatarImage src={p.avatar} />
-                      <AvatarFallback className="bg-primary text-white">
+                      <AvatarFallback className="bg-primary text-foreground">
                         {getInitials(p.name)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-white truncate">
+                        <span className="text-sm font-medium text-foreground truncate">
                           {p.name} {p.isLocal && "(You)"}
                         </span>
                       </div>
-                      <span className="text-xs text-white/40 capitalize">
+                      <span className="text-xs text-muted-foreground capitalize">
                         {p.isLocal ? "Host" : "Participant"}
                       </span>
                     </div>
@@ -1822,20 +1824,20 @@ export default function VideoCall() {
             <TabsContent value="info" className="flex-1 p-4 space-y-6 mt-0">
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-white/50 uppercase tracking-wider">
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Room Details
                   </h4>
-                  <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-4">
+                  <div className="p-4 rounded-xl bg-muted border border-border space-y-4">
                     <div>
-                      <label className="text-xs text-white/40 mb-1.5 block">Room ID</label>
-                      <div className="flex items-center gap-2 bg-black/20 p-2 rounded-lg border border-white/5">
-                        <code className="text-sm font-mono text-white flex-1 truncate">
+                      <label className="text-xs text-muted-foreground mb-1.5 block">Room ID</label>
+                      <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg border border-border">
+                        <code className="text-sm font-mono text-foreground flex-1 truncate">
                           {roomId}
                         </code>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-white/50 hover:text-white"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
                           onClick={copyInviteLink}
                         >
                           <Copy className="w-3 h-3" />
@@ -1846,10 +1848,10 @@ export default function VideoCall() {
                 </div>
 
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-white/50 uppercase tracking-wider">
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Invite
                   </h4>
-                  <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                  <div className="p-4 rounded-xl bg-muted border border-border">
                     <Button
                       className="w-full bg-primary hover:bg-primary/90"
                       onClick={copyInviteLink}
@@ -1919,7 +1921,7 @@ export default function VideoCall() {
 
       {/* Settings Dialog */}
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent className="sm:max-w-[425px] bg-black/90 border-white/10 text-white">
+        <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Call Settings</DialogTitle>
           </DialogHeader>
@@ -1931,10 +1933,10 @@ export default function VideoCall() {
                 value={settings.videoDeviceId}
                 onValueChange={(val) => updateSettings({ videoDeviceId: val })}
               >
-                <SelectTrigger className="w-full bg-white/5 border-white/10 text-white">
+                <SelectTrigger className="w-full bg-muted border-border text-foreground">
                   <SelectValue placeholder="Select Camera" />
                 </SelectTrigger>
-                <SelectContent className="bg-zinc-900 border-white/10 text-white">
+                <SelectContent className="bg-zinc-900 border-border text-foreground">
                   {videoDevices.map((device) => (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
                       {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
@@ -1951,10 +1953,10 @@ export default function VideoCall() {
                 value={settings.audioDeviceId}
                 onValueChange={(val) => updateSettings({ audioDeviceId: val })}
               >
-                <SelectTrigger className="w-full bg-white/5 border-white/10 text-white">
+                <SelectTrigger className="w-full bg-muted border-border text-foreground">
                   <SelectValue placeholder="Select Microphone" />
                 </SelectTrigger>
-                <SelectContent className="bg-zinc-900 border-white/10 text-white">
+                <SelectContent className="bg-zinc-900 border-border text-foreground">
                   {audioInputDevices.map((device) => (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
                       {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
@@ -1972,10 +1974,10 @@ export default function VideoCall() {
                   value={settings.audioOutputDeviceId}
                   onValueChange={(val) => updateSettings({ audioOutputDeviceId: val })}
                 >
-                  <SelectTrigger className="w-full bg-white/5 border-white/10 text-white">
+                  <SelectTrigger className="w-full bg-muted border-border text-foreground">
                     <SelectValue placeholder="Select Speaker" />
                   </SelectTrigger>
-                  <SelectContent className="bg-zinc-900 border-white/10 text-white">
+                  <SelectContent className="bg-zinc-900 border-border text-foreground">
                     {audioOutputDevices.map((device) => (
                       <SelectItem key={device.deviceId} value={device.deviceId}>
                         {device.label || `Speaker ${device.deviceId.slice(0, 5)}...`}
