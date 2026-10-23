@@ -17,6 +17,12 @@ import {
 import mongoose, { Types } from "mongoose";
 import { hashPassword, validatePasswordStrength } from "../utils/passwordHash";
 
+// Short-TTL cache for hot, read-only user lookups (presence, call participant
+// display, message sender resolution). Keyed by Firebase UID. NOT used by auth
+// or profile-mutation paths, which must stay fresh.
+const userUidCache = new Map<string, { user: IUser | null; expires: number }>();
+const USER_CACHE_TTL_MS = 30_000;
+
 export class MongoDBService {
   private buildDefaultAvatarUrl(seed: string): string {
     const safeSeed = encodeURIComponent(seed || Math.random().toString(36).slice(2));
@@ -219,6 +225,23 @@ export class MongoDBService {
       logger.error("Error getting user by Firebase UID:", error);
       throw error;
     }
+  }
+
+  /**
+   * Cached variant of getUserByFirebaseUid for high-frequency socket handlers
+   * (presence, call participant names, sender resolution). Returns a result
+   * that may be up to ~30s stale; do NOT use where freshness matters (auth,
+   * right after a profile update).
+   */
+  async getUserByFirebaseUidCached(firebaseUid: string): Promise<IUser | null> {
+    const now = Date.now();
+    const cached = userUidCache.get(firebaseUid);
+    if (cached && cached.expires > now) {
+      return cached.user;
+    }
+    const user = await this.getUserByFirebaseUid(firebaseUid);
+    userUidCache.set(firebaseUid, { user, expires: now + USER_CACHE_TTL_MS });
+    return user;
   }
 
   async getUserById(userId: string): Promise<IUser | null> {
@@ -1038,6 +1061,7 @@ export class MongoDBService {
           senderId,
           content: msg.content,
           isPinned: msg.isPinned,
+          messageType: msg.messageType,
           createdAt: msg.createdAt,
           sender: sender || { id: senderId, name: "Unknown", username: "unknown" },
           status,

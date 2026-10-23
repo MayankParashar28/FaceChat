@@ -18,3 +18,30 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
+      # Allowed browser origin(s) for CORS / Socket.io, e.g. https://facecall-ai.onrender.com
+      - key: CORS_ORIGIN
+        sync: false
+      # --- Client (Vite) build-time vars ---
+      # Vite inlines these into the bundle during `npm run build`, so they MUST
+      # be set here. Missing values ship an app that fails to start in the browser.
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false
+      - key: VITE_FIREBASE_DATABASE_URL
+        sync: false
+      # TURN relay for WebRTC (without it, calls fail behind symmetric NAT)
+      - key: VITE_TURN_URL
+        sync: false
+      - key: VITE_TURN_USERNAME
+        sync: false
+      - key: VITE_TURN_CREDENTIAL
+        sync: false
