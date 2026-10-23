@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SmartPulse } from "@/components/SmartPulse";
 import { useAudioAnalysis } from "@/hooks/useAudioAnalysis";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { useFaceExpression } from "@/hooks/useFaceExpression";
 import { VoiceEffectsOverlay } from "@/components/VoiceEffectsOverlay";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { Label } from "@/components/ui/label";
@@ -117,6 +118,29 @@ const LocalVideo = memo(
   }
 );
 
+/**
+ * ICE servers for WebRTC. Google STUN handles most home networks; a TURN relay
+ * is required for users behind symmetric NAT (many mobile/corporate networks).
+ * TURN is added only when VITE_TURN_URL is configured at build time.
+ */
+const TURN_URL = import.meta.env.VITE_TURN_URL;
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" },
+  ...(TURN_URL
+    ? [
+        {
+          urls: TURN_URL,
+          username: import.meta.env.VITE_TURN_USERNAME,
+          credential: import.meta.env.VITE_TURN_CREDENTIAL,
+        } as RTCIceServer,
+      ]
+    : []),
+];
+
 // Remote Video Component
 const RemoteVideo = memo(
   ({ stream, isVideoOn }: { stream: MediaStream | undefined; isVideoOn: boolean }) => {
@@ -156,11 +180,14 @@ type RemoteParticipantVideoProps = {
   isPinned?: boolean;
   isSpotlightMode?: boolean;
   className?: string;
+  /** For the local tile: lets the parent own the <video> ref so face/emotion
+   *  detection can read real frames from the displayed local video. */
+  externalVideoRef?: React.RefObject<HTMLVideoElement>;
 };
 
 const RemoteParticipantVideo = memo(
   forwardRef<HTMLDivElement, RemoteParticipantVideoProps>(
-    ({ participant, onPin, isPinned, className }, ref) => {
+    ({ participant, onPin, isPinned, className, externalVideoRef }, ref) => {
       const { volume } = useAudioAnalysis(participant.stream || null);
       const localVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -182,7 +209,7 @@ const RemoteParticipantVideo = memo(
             <LocalVideo
               stream={participant.stream || null}
               isVideoOn={participant.isVideoOn}
-              videoRef={localVideoRef}
+              videoRef={externalVideoRef || localVideoRef}
               volume={volume}
             />
           ) : (
@@ -369,10 +396,10 @@ export default function VideoCall() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const { volume } = useAudioAnalysis(localStream);
 
-  // Face Expression Hook - Removed for performance as ref was not attached
-  // const { expression, confidence, isLoaded: isFaceModelLoaded } = useFaceExpression(localVideoRef);
-  const expression = "Neutral"; // Fallback
-  const confidence = 0;
+  // Face/emotion detection on the local video (throttled to ~500ms in the hook).
+  // localVideoRef is handed to the local tile via externalVideoRef so this reads
+  // real frames from the displayed video element.
+  const { expression, confidence } = useFaceExpression(localVideoRef);
   const { videoDevices, audioInputDevices, audioOutputDevices } = useMediaDevices();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [pinnedSocketId, setPinnedSocketId] = useState<string | null>(null);
@@ -463,7 +490,7 @@ export default function VideoCall() {
       }
     }
 
-    if (!isMicOn || !socket || !roomId || !localStream || !settings.autoJoinAudio) return;
+    if (!isMicOn || !socket || !roomId || !localStream) return;
 
     // Small delay to ensure stream is ready and prevent rapid toggling issues
     const startRecordingLoop = () => {
@@ -899,13 +926,7 @@ export default function VideoCall() {
       trickle: true,
       stream: stream || undefined,
       config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-          { urls: "stun:stun3.l.google.com:19302" },
-          { urls: "stun:stun4.l.google.com:19302" },
-        ],
+        iceServers: ICE_SERVERS,
       },
     });
 
@@ -1355,6 +1376,7 @@ export default function VideoCall() {
               return (
                 <div key={p.socketId} className={containerClass}>
                   <RemoteParticipantVideo
+                    externalVideoRef={localVideoRef}
                     participant={p}
                     onPin={setPinnedSocketId}
                     isPinned={false}
@@ -1375,6 +1397,7 @@ export default function VideoCall() {
                   return (
                     <div className="w-full h-full relative aspect-video max-h-[80vh]">
                       <RemoteParticipantVideo
+                        externalVideoRef={localVideoRef}
                         participant={pinnedUser}
                         onPin={() => setPinnedSocketId(null)} // Unpin
                         isPinned={true}
@@ -1395,6 +1418,7 @@ export default function VideoCall() {
                       className="min-w-[160px] md:min-w-0 md:w-full aspect-video relative shrink-0"
                     >
                       <RemoteParticipantVideo
+                        externalVideoRef={localVideoRef}
                         participant={p}
                         onPin={setPinnedSocketId}
                         isPinned={false}
@@ -1522,7 +1546,7 @@ export default function VideoCall() {
                   initial={{ opacity: 0, y: 10, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex gap-1 min-w-max"
+                  className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex gap-1 min-w-max"
                 >
                   {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
                     <button
