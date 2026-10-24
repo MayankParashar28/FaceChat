@@ -23,6 +23,7 @@ import discoveryRoutes from "./routes/discovery";
 import notificationRoutes from "./routes/notification";
 import inviteRoutes from "./routes/invite";
 import attachmentRoutes from "./routes/attachments";
+import { CacheKeys, cacheDelete } from "./services/cache";
 
 /**
  * Room ids double as conversation ids for calls started from a chat, but ad-hoc
@@ -260,6 +261,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             { isRead: true }
           );
 
+          // Their unread badge just changed.
+          await cacheDelete(CacheKeys.conversationList(dbUser._id.toString()));
+
           // Get updated unread count
           const conversation = await Conversation.findById(conversationId);
           if (conversation) {
@@ -452,6 +456,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             "participants",
             "firebaseUid"
           );
+
+          // The cached conversation list is now stale for everyone in this
+          // chat: both the last message and the unread counts have moved. Drop
+          // it rather than waiting for the TTL, so nobody sees an old preview.
+          if (conversation) {
+            await cacheDelete(
+              ...conversation.participants.map((p: any) =>
+                CacheKeys.conversationList(p._id.toString())
+              )
+            );
+          }
 
           // Broadcast to all users in the conversation
           io.to(`conversation:${data.conversationId}`).emit("message:new", formattedMessage);

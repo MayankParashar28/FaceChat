@@ -1,7 +1,16 @@
 import type { Request, Response, NextFunction } from "express";
+import { getRedis } from "../services/cache";
+import { logger } from "../utils/logger";
 
-// Simple in-memory rate limiter
-// For production, consider using Redis-based rate limiting
+// Counters live in Redis when REDIS_URL is set, and in memory otherwise.
+//
+// In-memory counters reset whenever the process restarts, and on a sleeping
+// free-tier instance that is often — which makes the auth limiter much weaker
+// than it looks, since waiting out a restart clears the count. They are also
+// per-process, so they stop working the moment there is more than one.
+//
+// Redis keys are created with a TTL equal to the window, so the counters expire
+// on their own and the store stays empty between bursts.
 interface RateLimitStore {
   [key: string]: {
     count: number;
@@ -33,9 +42,37 @@ export function rateLimiter(options: RateLimitOptions) {
     },
   } = options;
 
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const key = keyGenerator(req);
     const now = Date.now();
+
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const redisKey = `ratelimit:${key}`;
+        // INCR then EXPIRE on first hit: one counter per window, and the key
+        // removes itself when the window ends.
+        const count = await redis.incr(redisKey);
+        if (count === 1) {
+          await redis.expire(redisKey, Math.ceil(windowMs / 1000));
+        }
+        const ttl = await redis.ttl(redisKey);
+        const resetAt = new Date(now + Math.max(ttl, 0) * 1000);
+
+        res.setHeader("X-RateLimit-Limit", max.toString());
+        res.setHeader("X-RateLimit-Remaining", Math.max(0, max - count).toString());
+        res.setHeader("X-RateLimit-Reset", resetAt.toISOString());
+
+        if (count > max) {
+          return res.status(429).json({ error: message, retryAfter: Math.max(ttl, 1) });
+        }
+        return next();
+      } catch (error) {
+        // A rate limiter that fails closed would lock everyone out, so fall
+        // through to the in-memory counters instead.
+        logger.warn("Rate limiter: Redis unavailable, using in-memory counters:", error);
+      }
+    }
 
     // Clean up expired entries (simple garbage collection)
     if (Object.keys(store).length > 1000) {
@@ -62,10 +99,7 @@ export function rateLimiter(options: RateLimitOptions) {
     // Set rate limit headers
     res.setHeader("X-RateLimit-Limit", max.toString());
     res.setHeader("X-RateLimit-Remaining", Math.max(0, max - entry.count).toString());
-    res.setHeader(
-      "X-RateLimit-Reset",
-      new Date(entry.resetTime).toISOString()
-    );
+    res.setHeader("X-RateLimit-Reset", new Date(entry.resetTime).toISOString());
 
     // Check if limit exceeded
     if (entry.count > max) {
@@ -110,4 +144,3 @@ export const usernameCheckRateLimiter = rateLimiter({
   max: 10, // 10 checks per minute
   message: "Too many username checks. Please slow down.",
 });
-

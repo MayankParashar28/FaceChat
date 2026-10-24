@@ -45,6 +45,11 @@ services:
         sync: false
       - key: VITE_TURN_CREDENTIAL
         sync: false
+      # Redis for caching and rate limiting. Leave unset to use the in-process
+      # fallback. Render Key Value sits in the same region as this service, so
+      # it is the lowest-latency option.
+      - key: REDIS_URL
+        sync: false
       # Cloudinary for chat attachments. Leave unset to fall back to GridFS
       # (stores files in MongoDB and streams them through this service).
       # Set either CLOUDINARY_URL on its own, or the three parts below.

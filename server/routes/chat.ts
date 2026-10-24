@@ -5,8 +5,14 @@ import { authenticate } from "../middleware/auth";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { mongoService } from "../services/mongodb";
 import { Conversation, Message } from "../models";
+import { CacheKeys, CacheTTL, cacheDelete, remember } from "../services/cache";
 
 const router = Router();
+
+/** Drop the cached conversation list for everyone in a conversation. */
+async function invalidateConversationLists(participants: { toString(): string }[]) {
+  await cacheDelete(...participants.map((p) => CacheKeys.conversationList(p.toString())));
+}
 
 // Get all conversations for the current user
 router.get("/", authenticate, async (req, res) => {
@@ -35,15 +41,32 @@ router.get("/", authenticate, async (req, res) => {
     const onlineUserIds: Set<string> | undefined =
       typeof getOnlineUserIds === "function" ? getOnlineUserIds() : undefined;
 
-    // Get conversations from MongoDB using MongoDB user ID and current online user IDs
-    const conversations = await mongoService.getUserConversations(
-      dbUser._id.toString(),
-      onlineUserIds
+    // The expensive part of this request is the conversation query plus the
+    // unread-count aggregate, and the chat page asks for it on every open and
+    // on a poll. Cache that, keyed by user, for a few seconds.
+    //
+    // Online status is deliberately NOT cached: it is re-applied below from the
+    // live socket set on every request, so a cached list never shows someone as
+    // online after they have left.
+    const conversations = await remember(
+      CacheKeys.conversationList(dbUser._id.toString()),
+      CacheTTL.conversationList,
+      () => mongoService.getUserConversations(dbUser._id.toString())
     );
 
-    logger.info("Found conversations:", conversations.length);
+    const withPresence = conversations.map((conversation: any) => ({
+      ...conversation,
+      participants: (conversation.participants || []).map((p: any) => ({
+        ...p,
+        online: onlineUserIds
+          ? onlineUserIds.has(p.id) || (p.firebaseUid ? onlineUserIds.has(p.firebaseUid) : false)
+          : false,
+      })),
+    }));
 
-    res.json(conversations);
+    logger.info("Found conversations:", withPresence.length);
+
+    res.json(withPresence);
   } catch (error) {
     logger.error("Error fetching conversations:", error);
     res.status(500).json({ error: "Failed to fetch conversations" });
@@ -306,6 +329,8 @@ router.delete("/:conversationId", authenticate, async (req, res) => {
       await Conversation.findByIdAndUpdate(conversationId, { isDeleted: true });
     }
 
+    await invalidateConversationLists(conversation.participants);
+
     res.json({ success: true });
   } catch (error) {
     logger.error("Error deleting conversation:", error);
@@ -351,6 +376,8 @@ router.post("/:conversationId/clear", authenticate, async (req, res) => {
 
     // BETTER APPROACH for MVP: just delete them `isDeleted: true`.
     await Message.updateMany({ conversationId: conversation._id }, { isDeleted: true });
+
+    await invalidateConversationLists(conversation.participants);
 
     res.json({ success: true });
   } catch (error) {
