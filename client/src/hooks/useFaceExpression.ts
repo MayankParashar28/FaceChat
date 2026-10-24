@@ -1,110 +1,160 @@
-import { useState, useEffect, useRef } from 'react';
-import * as faceapi from 'face-api.js';
+import { useState, useEffect } from "react";
+import * as faceapi from "face-api.js";
 
 // Define the expressions we care about
 export type FaceExpression = "Happy" | "Neutral" | "Sad" | "Surprised" | "Angry";
 
+export type FaceExpressionStatus = "loading" | "ready" | "unavailable";
+
 interface FaceExpressionResult {
-    expression: FaceExpression;
-    confidence: number;
-    isLoaded: boolean;
+  expression: FaceExpression;
+  confidence: number;
+  isLoaded: boolean;
+  status: FaceExpressionStatus;
 }
 
-export function useFaceExpression(videoRef: React.RefObject<HTMLVideoElement>): FaceExpressionResult {
-    const [expression, setExpression] = useState<FaceExpression>("Neutral");
-    const [confidence, setConfidence] = useState(0);
-    const [isLoaded, setIsLoaded] = useState(false);
-    const requestRef = useRef<number>();
+const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 
-    useEffect(() => {
-        const loadModels = async () => {
-            const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+// Minimum gap between runs. Detection costs ~30-60ms on WebGL but ~700ms on the
+// CPU fallback, and the CPU backend blocks the main thread — so the real gap is
+// scaled to the last run's cost (see nextDelay) and this is only the floor.
+const DETECT_INTERVAL_MS = 500;
 
-            try {
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
-                ]);
-                setIsLoaded(true);
-            } catch (err) {
-                console.error("Error loading face-api models:", err);
-            }
-        };
+// On a slow backend, leave this much idle time per unit of inference time so the
+// video and UI still get the main thread.
+const IDLE_RATIO = 3;
 
-        loadModels();
-    }, []);
+/**
+ * Pick a TensorFlow backend, falling back to CPU when WebGL is unavailable.
+ *
+ * face-api.js lets tfjs choose on its own, and tfjs only tries WebGL. On a
+ * machine without it (hardware acceleration off, an older GPU, some embedded
+ * browsers) every detection threw "WebGL is not supported on this device" and
+ * the hook sat on its initial Neutral forever.
+ */
+async function initBackend(): Promise<boolean> {
+  const tf = faceapi.tf;
+  for (const backend of ["webgl", "cpu"]) {
+    try {
+      if (await tf.setBackend(backend)) {
+        await tf.ready();
+        return true;
+      }
+    } catch {
+      // Try the next one.
+    }
+  }
+  return false;
+}
 
-    useEffect(() => {
-        if (!isLoaded || !videoRef.current) return;
+/** A video element can only be fed to the detector once it has real pixels. */
+function isVideoReady(video: HTMLVideoElement | null): video is HTMLVideoElement {
+  return !!video && !video.paused && !video.ended && video.readyState >= 2 && video.videoWidth > 0;
+}
 
-        const detectExpression = async () => {
-            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
-                requestRef.current = requestAnimationFrame(detectExpression);
-                return;
-            }
+export function useFaceExpression(
+  videoRef: React.RefObject<HTMLVideoElement>
+): FaceExpressionResult {
+  const [expression, setExpression] = useState<FaceExpression>("Neutral");
+  const [confidence, setConfidence] = useState(0);
+  const [status, setStatus] = useState<FaceExpressionStatus>("loading");
 
-            try {
-                // Use TinyFaceDetector for better performance with adjusted options
-                const detections = await faceapi
-                    .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
-                    .withFaceExpressions();
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-                if (detections) {
-                    const expressions = detections.expressions;
+    const schedule = (delay: number, fn: () => void) => {
+      if (cancelled) return;
+      timer = setTimeout(fn, delay);
+    };
 
-                    // Find the dominant expression
-                    // Custom sorting to prioritize active emotions over Neutral
-                    // If a non-neutral emotion is > 0.3, pick it even if Neutral is higher (up to a point)
-                    const sorted = Object.entries(expressions).sort((a, b) => {
-                        const [exprA, confA] = a;
-                        const [exprB, confB] = b;
+    // Starts at the floor and adapts once we have measured the backend.
+    let nextDelay = DETECT_INTERVAL_MS;
 
-                        // Boost non-neutral expressions
-                        const scoreA = exprA === 'neutral' ? confA * 0.4 : confA;
-                        const scoreB = exprB === 'neutral' ? confB * 0.4 : confB;
+    const detect = async () => {
+      if (cancelled) return;
 
-                        return scoreB - scoreA;
-                    });
+      const video = videoRef.current;
+      // The video element mounts and starts playing well after the models
+      // finish loading, so keep polling instead of giving up — the previous
+      // version bailed out of the effect and never detected anything.
+      if (!isVideoReady(video)) {
+        schedule(DETECT_INTERVAL_MS, detect);
+        return;
+      }
 
-                    const topExpression = sorted[0];
+      const startedAt = performance.now();
+      try {
+        const detection = await faceapi
+          .detectSingleFace(
+            video,
+            new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+          )
+          .withFaceExpressions();
 
-                    if (topExpression) {
-                        const [expr, conf] = topExpression;
+        if (cancelled) return;
 
-                        // Map face-api expressions to our types
-                        let mappedExpr: FaceExpression = "Neutral";
-                        if (expr === "happy") mappedExpr = "Happy";
-                        else if (expr === "sad") mappedExpr = "Sad";
-                        else if (expr === "angry") mappedExpr = "Angry";
-                        else if (expr === "surprised") mappedExpr = "Surprised";
-                        else if (expr === "neutral") mappedExpr = "Neutral";
-                        // We can map others like 'fearful' or 'disgusted' if needed, or default to Neutral
+        if (detection) {
+          // Neutral dominates almost every frame, so weight it down rather than
+          // taking the raw argmax — otherwise the mood never visibly changes.
+          const [expr, conf] = Object.entries(detection.expressions).sort(
+            ([exprA, confA], [exprB, confB]) =>
+              (exprB === "neutral" ? confB * 0.4 : confB) -
+              (exprA === "neutral" ? confA * 0.4 : confA)
+          )[0];
 
-                        // Only update if confidence is decent, otherwise stick to previous or Neutral
-                        if (conf > 0.3) {
-                            setExpression(mappedExpr);
-                            setConfidence(conf);
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error("Face detection error:", err);
-            }
+          const mapped: Record<string, FaceExpression> = {
+            happy: "Happy",
+            sad: "Sad",
+            angry: "Angry",
+            surprised: "Surprised",
+            neutral: "Neutral",
+          };
 
-            // Throttle: Run detection every 500ms instead of every frame to save CPU
-            setTimeout(() => {
-                requestRef.current = requestAnimationFrame(detectExpression);
-            }, 500);
-        };
+          if (conf > 0.3 && mapped[expr]) {
+            setExpression(mapped[expr]);
+            setConfidence(conf);
+          }
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Face detection error:", err);
+        // A throwing detector will throw on every frame; stop rather than
+        // flooding the console once per interval for the whole call.
+        setStatus("unavailable");
+        return;
+      }
 
-        detectExpression();
+      nextDelay = Math.max(DETECT_INTERVAL_MS, (performance.now() - startedAt) * IDLE_RATIO);
+      schedule(nextDelay, detect);
+    };
 
-        return () => {
-            if (requestRef.current) {
-                cancelAnimationFrame(requestRef.current);
-            }
-        };
-    }, [isLoaded, videoRef]);
+    const start = async () => {
+      try {
+        if (!(await initBackend())) {
+          throw new Error("No TensorFlow backend available (WebGL and CPU both failed)");
+        }
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+        ]);
+        if (cancelled) return;
+        setStatus("ready");
+        detect();
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Emotion detection unavailable:", err);
+        setStatus("unavailable");
+      }
+    };
 
-    return { expression, confidence, isLoaded };
+    start();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [videoRef]);
+
+  return { expression, confidence, isLoaded: status === "ready", status };
 }

@@ -20,14 +20,18 @@ import {
   Smile,
   Pin,
   PinOff,
+  MoreHorizontal,
+  Settings,
 } from "lucide-react";
 import { VoiceWave } from "@/components/VoiceWave";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
 import { auth } from "@/lib/firebase";
 import { getInitials } from "@/lib/utils";
+import { getAuthToken } from "@/lib/queryClient";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
@@ -38,6 +42,7 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useFaceExpression } from "@/hooks/useFaceExpression";
 import { VoiceEffectsOverlay } from "@/components/VoiceEffectsOverlay";
 import { useMediaDevices } from "@/hooks/useMediaDevices";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -141,6 +146,39 @@ const ICE_SERVERS: RTCIceServer[] = [
     : []),
 ];
 
+// Mood colours, shared by the tile chip and the participant list so one mood
+// always reads the same wherever it appears.
+const MOOD_CHIP: Record<string, string> = {
+  Happy: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  Surprised: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
+  Angry: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+  Sad: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
+  Neutral: "bg-muted text-muted-foreground",
+};
+
+const moodChipClass = (mood: string) => MOOD_CHIP[mood] ?? MOOD_CHIP.Neutral;
+
+const REACTION_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"];
+
+// One source of truth for toolbar control styling.
+//
+// Button already ships `hover-elevate`, which paints a translucent ::after over
+// the whole control on hover. The old classes added `hover:bg-accent` on top of
+// that, so two different hover treatments stacked and the winner depended on
+// Tailwind's output order. Hover is left to the component; the pressed state
+// uses the design system's own `toggle-elevate`, which paints *behind* the
+// icon instead of over it.
+const toolbarButton = (active = false) =>
+  [
+    "shrink-0 rounded-xl md:rounded-2xl w-10 h-10 md:w-12 md:h-12 md:[&_svg]:size-5",
+    active ? "toggle-elevate toggle-elevated text-primary" : "text-foreground",
+  ].join(" ");
+
+// getDisplayMedia is absent on most mobile browsers (notably iOS Safari);
+// offering the control there just produces an error nobody can act on.
+const canShareScreen =
+  typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
+
 // Remote Video Component
 const RemoteVideo = memo(
   ({ stream, isVideoOn }: { stream: MediaStream | undefined; isVideoOn: boolean }) => {
@@ -202,7 +240,7 @@ const RemoteParticipantVideo = memo(
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9 }}
-          className={`relative ${baseClasses} bg-card rounded-2xl overflow-hidden shadow-sm ring-1 ring-border/60 group transition-all duration-300 ${participant.isAudioOn && volume > 20 && !participant.isLocal ? "border-2 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.3)]" : "border border-border"}`}
+          className={`relative ${baseClasses} bg-card rounded-2xl overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.18)] group transition-all duration-300 ${participant.isAudioOn && volume > 20 && !participant.isLocal ? "ring-2 ring-primary shadow-md" : "ring-1 ring-border"}`}
         >
           {/* Video Element */}
           {participant.isLocal ? (
@@ -216,29 +254,17 @@ const RemoteParticipantVideo = memo(
             <RemoteVideo stream={participant.stream} isVideoOn={participant.isVideoOn} />
           )}
 
-          {/* Smart Pulse Indicator (Remote Only) */}
-          {!participant.isLocal && participant.emotion && (
-            <div className="absolute top-4 left-4 z-50 transform scale-75 md:scale-90">
-              <SmartPulse
-                sentiment={participant.emotion}
-                engagement={participant.engagement || 0}
-                userName={participant.name}
-                showLabel={true}
-              />
-            </div>
-          )}
-
           {/* Status Indicator */}
           {!participant.isLocal && participant.status === "connecting" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 z-20">
-              <div className="text-white text-sm font-light animate-pulse">Connecting...</div>
+            <div className="absolute inset-0 flex items-center justify-center bg-card/80 z-20">
+              <div className="text-muted-foreground text-sm animate-pulse">Connecting...</div>
             </div>
           )}
 
           {/* Fallback Avatar */}
           {!participant.isVideoOn && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/5">
-              <Avatar className="h-24 w-24 border-4 border-white/10">
+            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-card via-card to-muted">
+              <Avatar className="h-[38%] w-auto aspect-square max-h-24 min-h-10 ring-4 ring-background shadow-lg">
                 <AvatarImage src={participant.avatar} />
                 <AvatarFallback className="bg-primary text-white text-2xl">
                   {getInitials(participant.name)}
@@ -251,10 +277,13 @@ const RemoteParticipantVideo = memo(
           <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center z-30 pointer-events-none">
             <div className="flex items-center gap-2 bg-background/85 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-border text-foreground font-medium text-xs shadow-sm">
               <span>
-                {participant.name} {participant.isLocal && "(You)"}
+                {participant.name}
+                {participant.isLocal && participant.name !== "You" && " (You)"}
               </span>
               {participant.emotion && (
-                <span className="text-[10px] text-primary bg-primary/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider ${moodChipClass(participant.emotion)}`}
+                >
                   {participant.emotion}
                 </span>
               )}
@@ -264,7 +293,7 @@ const RemoteParticipantVideo = memo(
                 <Button
                   size="icon"
                   variant="ghost"
-                  className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? "bg-blue-500/20 text-blue-400" : "bg-background/80 text-foreground hover:bg-accent"}`}
+                  className={`h-7 w-7 md:h-8 md:w-8 rounded-full ${isPinned ? "bg-primary/15 text-primary" : "bg-background/80 text-foreground hover:bg-accent"}`}
                   onClick={() => onPin(participant.socketId)}
                 >
                   {isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
@@ -381,9 +410,17 @@ export default function VideoCall() {
     timestamp: number;
   } | null>(null);
 
+  // Toasts default to the bottom-right corner, where the control bar and the
+  // side panel live. Inset them while this page is mounted so neither is covered.
   useEffect(() => {
-    if (captions) console.log("Caption Received:", captions);
-  }, [captions]);
+    const root = document.documentElement;
+    root.style.setProperty("--toast-bottom-inset", "8rem");
+    root.style.setProperty("--toast-right-inset", isSidebarOpen ? "26rem" : "0rem");
+    return () => {
+      root.style.removeProperty("--toast-bottom-inset");
+      root.style.removeProperty("--toast-right-inset");
+    };
+  }, [isSidebarOpen]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRecorderRef = useRef<MediaRecorder | null>(null); // Dedicated recorder for captions
@@ -394,16 +431,18 @@ export default function VideoCall() {
   const socketRef = useRef<Socket | null>(null);
   const peersRef = useRef<Map<string, PeerInstance>>(new Map());
   const chatScrollRef = useRef<HTMLDivElement>(null);
-  const { volume } = useAudioAnalysis(localStream);
 
   // Face/emotion detection on the local video (throttled to ~500ms in the hook).
   // localVideoRef is handed to the local tile via externalVideoRef so this reads
   // real frames from the displayed video element.
-  const { expression, confidence } = useFaceExpression(localVideoRef);
+  const { expression, confidence, status: emotionStatus } = useFaceExpression(localVideoRef);
   const { videoDevices, audioInputDevices, audioOutputDevices } = useMediaDevices();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // Below md the toolbar keeps only the primary controls; the rest move into an
+  // overflow menu. Rendered rather than CSS-hidden so crossing the breakpoint
+  // cannot leave that menu open with no trigger to anchor to.
+  const isCompactToolbar = !useMediaQuery("(min-width: 768px)");
   const [pinnedSocketId, setPinnedSocketId] = useState<string | null>(null);
-  const sentiment = expression; // Simplified for now
   const lastSentEmotionRef = useRef<{ emotion: string; timestamp: number }>({
     emotion: "",
     timestamp: 0,
@@ -411,10 +450,21 @@ export default function VideoCall() {
   const callStartTimeRef = useRef<number | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  // The video track peers are actually receiving: the camera normally, the
+  // screen while sharing. simple-peer's replaceTrack needs the exact track in
+  // flight, which localStream alone cannot tell us during a screen share.
+  const sentVideoTrackRef = useRef<MediaStreamTrack | null>(null);
+  // Lets the browser's "Stop sharing" bar reach the current handler instead of
+  // the one captured when the share started.
+  const stopScreenShareRef = useRef<() => void>(() => {});
 
   // Sync ref with state
   useEffect(() => {
     localStreamRef.current = localStream;
+    // While sharing, the screen track is the one in flight — don't clobber it.
+    if (!screenStreamRef.current) {
+      sentVideoTrackRef.current = localStream?.getVideoTracks()[0] ?? null;
+    }
 
     // If stream changes (and exists), update all existing peers
     if (localStream) {
@@ -480,20 +530,22 @@ export default function VideoCall() {
   }, [startRecognition]);
 
   // --- Live Captions Logic (Server-Side Streaming) ---
+  //
+  // Microphone audio is cut into ~1.5s clips and sent to the server, which runs
+  // them through Whisper. This only runs while captions are switched on: it was
+  // previously tied to the mic alone, so every call uploaded its audio for
+  // transcription whether or not anyone had asked for captions.
   useEffect(() => {
-    // Cleanup previous recorder
-    if (audioStreamRecorderRef.current && audioStreamRecorderRef.current.state !== "inactive") {
-      try {
-        audioStreamRecorderRef.current.stop();
-      } catch (e) {
-        // ignore
-      }
-    }
+    if (!showCaptions || !isMicOn || !socket || !roomId || !localStream) return;
 
-    if (!isMicOn || !socket || !roomId || !localStream) return;
+    // The recorder restarts itself after each clip (each one needs its own file
+    // header). Without this flag, the stop() in cleanup fires onstop, which
+    // starts another recorder — the loop outlived the effect.
+    let cancelled = false;
+    let stopTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // Small delay to ensure stream is ready and prevent rapid toggling issues
     const startRecordingLoop = () => {
+      if (cancelled) return;
       try {
         const audioTrack = localStream.getAudioTracks()[0];
         if (!audioTrack || !audioTrack.enabled) return;
@@ -509,21 +561,19 @@ export default function VideoCall() {
         audioStreamRecorderRef.current = recorder;
 
         recorder.ondataavailable = (event) => {
-          if (event.data && event.data.size > 0 && socket.connected) {
+          if (!cancelled && event.data && event.data.size > 0 && socket.connected) {
             socket.emit("call:audio-stream", { roomId, audioData: event.data });
           }
         };
 
-        // Recursive restart to ensure valid file headers
         recorder.onstop = () => {
-          if (isMicOn && socket?.connected && localStream?.active) {
+          if (!cancelled && socket.connected && localStream.active) {
             startRecordingLoop();
           }
         };
 
         recorder.start();
-        // Stop after 1.5 seconds to reduce lag (3s was too slow)
-        setTimeout(() => {
+        stopTimer = setTimeout(() => {
           if (recorder.state === "recording") recorder.stop();
         }, 1500);
       } catch (error) {
@@ -531,23 +581,24 @@ export default function VideoCall() {
       }
     };
 
-    // Small delay to ensure stream is ready
-    const timer = setTimeout(() => {
-      console.log("🎙️ Starting audio loop for captions...");
-      startRecordingLoop();
-    }, 1000);
+    // Let the track settle before the first clip.
+    const timer = setTimeout(startRecordingLoop, 1000);
 
     return () => {
+      cancelled = true;
       clearTimeout(timer);
-      if (audioStreamRecorderRef.current && audioStreamRecorderRef.current.state !== "inactive") {
+      if (stopTimer) clearTimeout(stopTimer);
+      const recorder = audioStreamRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
         try {
-          audioStreamRecorderRef.current.stop();
+          recorder.stop();
         } catch {
           /* recorder already stopped */
         }
       }
+      audioStreamRecorderRef.current = null;
     };
-  }, [isMicOn, socket, roomId, localStream, settings.autoJoinAudio]);
+  }, [showCaptions, isMicOn, socket, roomId, localStream]);
 
   useEffect(() => {
     if (!socket) return;
@@ -757,29 +808,13 @@ export default function VideoCall() {
     });
 
     // Captions
-    newSocket.on("call:caption", (data) => {
-      setCaptions(data);
-      setTimeout(
-        () => setCaptions((prev) => (prev?.timestamp === data.timestamp ? null : prev)),
-        3000
-      );
-    });
-
     newSocket.on("call:emotion", ({ socketId, emotion, percentage }) => {
-      console.log(`[DEBUG] Received emotion from ${socketId}: ${emotion} (${percentage}%)`);
       setParticipants((prev) => {
         const p = prev.get(socketId);
-        // Debug
-        if (!p) console.warn(`[DEBUG] Participant ${socketId} not found in map`);
-
-        if (p) {
-          // FORCE UPDATE for debugging - remove the threshold check temporarily or log it
-          console.log(`[DEBUG] Updating participant ${p.name} emotion to ${emotion}`);
-          const newMap = new Map(prev);
-          newMap.set(socketId, { ...p, emotion, engagement: percentage });
-          return newMap;
-        }
-        return prev;
+        if (!p) return prev;
+        const newMap = new Map(prev);
+        newMap.set(socketId, { ...p, emotion, engagement: percentage });
+        return newMap;
       });
     });
 
@@ -804,7 +839,7 @@ export default function VideoCall() {
 
   // Emit emotion data to server (sampled every 1s)
   useEffect(() => {
-    if (!socket || !roomId || !settings.emotionDetection) return;
+    if (!socket || !roomId || !settings.emotionDetection || emotionStatus !== "ready") return;
 
     const sampleAndEmit = () => {
       const currentSentiment = latestExpressionRef.current;
@@ -815,7 +850,6 @@ export default function VideoCall() {
 
       // Emit if changed (with small debounce) or heartbeat needed
       if ((isDifferent && timeSinceLast > 1000) || timeSinceLast > 5000) {
-        console.log(`[DEBUG] Auto - Emitting: ${currentSentiment}`);
         socket.emit("call:emotion", {
           roomId,
           emotion: currentSentiment,
@@ -827,7 +861,7 @@ export default function VideoCall() {
 
     const timer = setInterval(sampleAndEmit, 1000);
     return () => clearInterval(timer);
-  }, [socket, roomId, settings.emotionDetection]);
+  }, [socket, roomId, settings.emotionDetection, emotionStatus]);
 
   // --- Initialization ---
 
@@ -1029,68 +1063,115 @@ export default function VideoCall() {
     socket?.emit("call:toggle-media", { roomId, mediaType: "video", enabled });
   };
 
-  const toggleScreenShare = async () => {
-    if (isScreenSharing) {
-      // Stop screen share
-      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-      screenStreamRef.current = null;
-
-      // Revert to camera
-      if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-          peersRef.current.forEach((peer) => {
-            const sender = peer.streams[0]?.getVideoTracks()[0]; // Replaces current track
-            // SimplePeer replaceTrack is complex, easier to just remove/add stream or replace track if supported
-            // For simple-peer, replaceTrack is usually handled by:
-            if (peer.replaceTrack && sender) {
-              peer.replaceTrack(sender, videoTrack, localStream!);
-            }
-          });
-
-          // Update local participant
-          setParticipants((prev) => {
-            const newMap = new Map(prev);
-            const local = newMap.get("local");
-            if (local) newMap.set("local", { ...local, stream: localStream });
-            return newMap;
-          });
-        }
-      }
-      setIsScreenSharing(false);
-    } else {
+  /**
+   * Swap the video track every peer is receiving.
+   *
+   * simple-peer's replaceTrack needs the track it is *currently* sending as the
+   * first argument, so the track in flight is tracked explicitly rather than
+   * guessed from localStream (which still holds the camera track while a screen
+   * is being shared). A peer that joined with the camera off has no track to
+   * replace, so failures are per-peer and must not abort the rest.
+   */
+  const replaceOutgoingVideoTrack = (nextTrack: MediaStreamTrack) => {
+    const current = sentVideoTrackRef.current;
+    if (!current || !localStream) return;
+    peersRef.current.forEach((peer) => {
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        screenStreamRef.current = screenStream;
-        const screenTrack = screenStream.getVideoTracks()[0];
+        peer.replaceTrack(current, nextTrack, localStream);
+      } catch (err) {
+        console.warn("Could not replace video track on a peer:", err);
+      }
+    });
+    sentVideoTrackRef.current = nextTrack;
+  };
 
-        screenTrack.onended = () => toggleScreenShare(); // Handle "Stop Sharing" browser UI
+  const setLocalPreviewStream = (stream: MediaStream) => {
+    setParticipants((prev) => {
+      const local = prev.get("local");
+      if (!local) return prev;
+      const newMap = new Map(prev);
+      newMap.set("local", { ...local, stream });
+      return newMap;
+    });
+  };
 
-        if (localStream) {
-          const cameraTrack = localStream.getVideoTracks()[0];
-          peersRef.current.forEach((peer) => {
-            // Replace camera track with screen track
-            // Note: simple-peer wrapper for RTCPeerConnection.replaceTrack
-            // If existing connection has a video track, replace it
-            // Note: simple-peer exposes the raw RTCPeerConnection as peer._pc, but standard API is replaceTrack on sender
-            // peer.replaceTrack(oldTrack, newTrack, stream)
-            if (cameraTrack) {
-              peer.replaceTrack(cameraTrack, screenTrack, localStream!);
-            }
-          });
+  const stopScreenShare = () => {
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
 
-          // Update local view to show screen share
-          setParticipants((prev) => {
-            const newMap = new Map(prev);
-            const local = newMap.get("local");
-            if (local) newMap.set("local", { ...local, stream: screenStream });
-            return newMap;
+    const cameraTrack = localStream?.getVideoTracks()[0];
+    if (cameraTrack) replaceOutgoingVideoTrack(cameraTrack);
+    if (localStream) setLocalPreviewStream(localStream);
+
+    setIsScreenSharing(false);
+  };
+
+  const startScreenShare = async () => {
+    try {
+      // audio is best-effort: browsers that cannot capture system audio simply
+      // return a stream without an audio track.
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+      screenStreamRef.current = screenStream;
+      const screenTrack = screenStream.getVideoTracks()[0];
+
+      // The browser's own "Stop sharing" bar ends the track. The old handler
+      // called toggleScreenShare(), which closed over isScreenSharing === false
+      // and so started a *second* share instead of stopping.
+      screenTrack.onended = () => stopScreenShareRef.current();
+
+      replaceOutgoingVideoTrack(screenTrack);
+      setLocalPreviewStream(screenStream);
+      setIsScreenSharing(true);
+    } catch (err) {
+      screenStreamRef.current = null;
+      // Dismissing the picker is a normal outcome, not an error worth a toast.
+      if (err instanceof DOMException && err.name === "NotAllowedError") return;
+      console.error("Screen share failed", err);
+      toast({
+        title: "Could not share screen",
+        description: err instanceof Error ? err.message : "Your browser refused the request.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  stopScreenShareRef.current = stopScreenShare;
+
+  const toggleScreenShare = () => (isScreenSharing ? stopScreenShare() : startScreenShare());
+
+  const togglePanel = (tab: "chat" | "participants") => {
+    if (isSidebarOpen && activeTab === tab) {
+      setIsSidebarOpen(false);
+    } else {
+      setIsSidebarOpen(true);
+      setActiveTab(tab);
+    }
+  };
+
+  const endCall = async () => {
+    try {
+      if (meetingId) {
+        const token = await getAuthToken();
+        if (token) {
+          await fetch(`/api/meetings/${meetingId}/status`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ status: "ended" }),
           });
         }
-        setIsScreenSharing(true);
-      } catch (err) {
-        console.error("Screen share failed", err);
+        setLocation(`/summary/${meetingId}`);
+      } else {
+        setLocation("/dashboard");
       }
+    } catch (error) {
+      console.error("Error ending call:", error);
+      setLocation("/dashboard");
     }
   };
 
@@ -1198,7 +1279,8 @@ export default function VideoCall() {
     }
   };
 
-  const _sendReaction = (emoji: string) => {
+  const sendReaction = (emoji: string) => {
+    setShowReactionsMenu(false);
     socket?.emit("call:reaction", { roomId, emoji });
     const id = Date.now().toString() + Math.random();
     const x = Math.random() * 80 + 10;
@@ -1256,7 +1338,7 @@ export default function VideoCall() {
       ? participantsList.length - 1
       : participantsList.length;
 
-    if (pinnedSocketId) return "flex-col md:flex-row";
+    if (pinnedSocketId) return "flex flex-col md:flex-row w-full h-full";
 
     // Mobile Base (Grid)
     let mobileClass = "";
@@ -1278,7 +1360,7 @@ export default function VideoCall() {
   };
 
   return (
-    <div className="h-screen w-full bg-muted/50 overflow-hidden relative font-sans">
+    <div className="h-screen w-full bg-gradient-to-b from-muted/40 via-background to-muted/60 overflow-hidden relative font-sans">
       {/* Outgoing call: waiting for the other side to pick up */}
       {isRinging && (
         <div className="absolute top-20 left-1/2 z-50 -translate-x-1/2">
@@ -1294,42 +1376,32 @@ export default function VideoCall() {
         </div>
       )}
 
-      {/* Smart Pulse (Local User Mood Analysis) */}
-      <div className="absolute top-24 left-4 z-50 hidden md:block">
-        <SmartPulse
-          sentiment={sentiment}
-          engagement={Math.max(20, volume)}
-          userName={user?.displayName || user?.username || "You"}
-          showLabel={true}
-        />
-      </div>
-
       {/* Header */}
       <div className="absolute top-4 md:top-6 left-0 right-0 z-50 flex justify-center items-center pointer-events-none px-4">
-        <div className="pointer-events-auto bg-card/95 backdrop-blur-sm px-4 py-1.5 md:px-5 md:py-2 rounded-full flex gap-3 md:gap-4 text-foreground border border-border items-center shadow-sm overflow-hidden max-w-full">
+        <div className="pointer-events-auto bg-card/90 backdrop-blur-md px-4 py-1.5 md:px-5 md:py-2 rounded-full flex gap-3 md:gap-4 text-foreground border border-border items-center shadow-[0_2px_12px_-4px_rgba(0,0,0,0.12)] overflow-hidden max-w-full">
           <div className="flex items-center gap-2 md:gap-3 shrink-0">
             <span className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
             <span className="font-semibold tracking-wide text-sm md:text-lg truncate max-w-[100px] md:max-w-none">
               {roomId}
             </span>
           </div>
-          <div className="h-4 md:h-5 w-px bg-white/20 shrink-0" />
-          <span className="font-mono text-xs md:text-base opacity-90 shrink-0">
+          <div className="h-4 md:h-5 w-px bg-border shrink-0" />
+          <span className="font-mono text-xs md:text-base text-muted-foreground shrink-0">
             {formatDuration(callDuration)}
           </span>
-          <div className="hidden md:block h-5 w-px bg-white/20 shrink-0" />
+          <div className="hidden md:block h-5 w-px bg-border shrink-0" />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 md:h-9 md:w-9 rounded-full hover:bg-white/10 transition-colors shrink-0"
+                className="h-8 w-8 md:h-9 md:w-9 rounded-full hover:bg-accent transition-colors shrink-0"
                 onClick={copyInviteLink}
               >
                 {copied ? (
-                  <Check className="w-4 h-4 md:w-5 md:h-5 text-green-400" />
+                  <Check className="w-4 h-4 md:w-5 md:h-5 text-emerald-600" />
                 ) : (
-                  <Copy className="w-4 h-4 md:w-5 md:h-5 text-white/90" />
+                  <Copy className="w-4 h-4 md:w-5 md:h-5 text-muted-foreground" />
                 )}
               </Button>
             </TooltipTrigger>
@@ -1340,9 +1412,14 @@ export default function VideoCall() {
         </div>
       </div>
 
-      {/* Video Grid */}
+      {/* Video Grid. Padding is split rather than using the p-* shorthand:
+          pinned mode needs its own top inset so the filmstrip clears the header,
+          and a shorthand would fight it depending on which rule Tailwind emits
+          last. */}
       <div
-        className={`w-full h-full relative overflow-hidden bg-transparent p-2 md:p-4 gap-2 md:gap-3 ${getGridClass()}`}
+        className={`w-full h-full relative overflow-hidden bg-transparent px-2 md:px-4 pb-24 md:pb-32 gap-2 md:gap-3 transition-[padding] duration-300 ${
+          pinnedSocketId ? "pt-20 md:pt-24" : "pt-2 md:pt-4"
+        } ${isSidebarOpen ? "lg:pr-[27rem]" : ""} ${getGridClass()}`}
       >
         <AnimatePresence mode="popLayout">
           {/* Default Grid Mode */}
@@ -1359,20 +1436,22 @@ export default function VideoCall() {
               if (isLocal && !isAlone) {
                 // Local & Others present: Floating PIP (bottom-right)
                 // Stacked higher on mobile to avoid controls
+                // The side panel owns the right edge while it is open, so the
+                // self-view steps aside instead of hiding behind it.
                 containerClass +=
-                  "fixed bottom-24 right-4 w-28 md:bottom-8 md:right-8 md:w-64 aspect-[3/4] md:aspect-video z-[60] rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/50 object-cover";
-              } else if (isAlone) {
-                // Alone: Local User is Full Screen
-                containerClass += "col-span-full row-span-full w-full h-full z-0";
-              } else if (isOneOnOne && !isLocal) {
-                // One-on-One Remote: Full Screen
-                containerClass += "col-span-full row-span-full w-full h-full z-0";
+                  "fixed bottom-24 right-4 w-28 md:bottom-32 md:w-64 md:right-8 aspect-[3/4] md:aspect-video z-[60] rounded-2xl shadow-[0_8px_32px_-8px_rgba(0,0,0,0.35)] ring-1 ring-border object-cover transition-[right] duration-300 " +
+                  (isSidebarOpen ? "lg:right-[27rem] " : "");
+              } else if (isAlone || (isOneOnOne && !isLocal)) {
+                // The only face on screen: centred 16:9 card on desktop, full
+                // bleed on mobile where there is no room to spare.
+                containerClass +=
+                  "col-span-full row-span-full w-full h-full z-0 md:h-auto md:max-h-full md:aspect-video";
               } else if (p.isLocal) {
                 // Fallback for local
                 return null;
               } else {
                 // Group Remote or Fallback: Grid Cell
-                containerClass += "relative w-full h-full bg-zinc-900";
+                containerClass += "relative w-full h-full";
               }
 
               return (
@@ -1392,18 +1471,19 @@ export default function VideoCall() {
           {pinnedSocketId && (
             <>
               {/* Spotlight (Pinned User) */}
-              <div className="flex-1 w-full h-full min-h-0 flex items-center justify-center">
+              <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center">
                 {(() => {
                   const pinnedUser = participantsList.find((p) => p.socketId === pinnedSocketId);
                   if (!pinnedUser) return null;
                   return (
-                    <div className="w-full h-full relative aspect-video max-h-[80vh]">
+                    <div className="relative w-full h-full md:h-auto md:max-h-full md:aspect-video">
                       <RemoteParticipantVideo
                         externalVideoRef={localVideoRef}
                         participant={pinnedUser}
                         onPin={() => setPinnedSocketId(null)} // Unpin
                         isPinned={true}
                         isSpotlightMode={true}
+                        className="w-full h-full object-cover"
                       />
                     </div>
                   );
@@ -1411,19 +1491,17 @@ export default function VideoCall() {
               </div>
 
               {/* Filmstrip (Others) */}
-              <div className="h-32 md:h-full md:w-64 flex md:flex-col gap-4 overflow-auto p-2">
+              <div className="h-28 md:h-auto md:w-56 shrink-0 flex md:flex-col gap-2 md:gap-3 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto p-1">
                 {participantsList
                   .filter((p) => p.socketId !== pinnedSocketId)
                   .map((p) => (
-                    <div
-                      key={p.socketId}
-                      className="min-w-[160px] md:min-w-0 md:w-full aspect-video relative shrink-0"
-                    >
+                    <div key={p.socketId} className="w-40 md:w-full aspect-video relative shrink-0">
                       <RemoteParticipantVideo
                         externalVideoRef={localVideoRef}
                         participant={p}
                         onPin={setPinnedSocketId}
                         isPinned={false}
+                        className="w-full h-full object-cover"
                       />
                     </div>
                   ))}
@@ -1436,21 +1514,19 @@ export default function VideoCall() {
       {/* Captions Overlay Moved to Bottom - duplicate removed */}
 
       {/* Controls */}
-      <div className="absolute bottom-4 md:bottom-10 left-0 right-0 md:left-1/2 md:-translate-x-1/2 z-50 flex justify-center md:gap-4 p-2 pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-1.5 md:gap-2 p-1.5 md:p-2 bg-card/95 backdrop-blur-sm rounded-2xl border border-border shadow-lg overflow-x-auto max-w-[95vw] [&::-webkit-scrollbar]:hidden">
+      <div className="absolute bottom-4 md:bottom-10 left-0 right-0 md:left-1/2 md:-translate-x-1/2 z-50 flex justify-center p-2 pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-1 md:gap-2 p-1.5 md:p-2 bg-card/90 backdrop-blur-md rounded-2xl border border-border shadow-[0_4px_24px_-8px_rgba(0,0,0,0.22)] max-w-[calc(100vw-1rem)]">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant={isMicOn ? "secondary" : "destructive"}
+                variant={isMicOn ? "ghost" : "destructive"}
                 size="icon"
-                className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
+                aria-label={isMicOn ? "Mute microphone" : "Unmute microphone"}
+                aria-pressed={!isMicOn}
+                className={toolbarButton()}
                 onClick={toggleMic}
               >
-                {isMicOn ? (
-                  <Mic className="w-4 h-4 md:w-5 md:h-5" />
-                ) : (
-                  <MicOff className="w-4 h-4 md:w-5 md:h-5" />
-                )}
+                {isMicOn ? <Mic /> : <MicOff />}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -1461,16 +1537,14 @@ export default function VideoCall() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant={isVideoOn ? "secondary" : "destructive"}
+                variant={isVideoOn ? "ghost" : "destructive"}
                 size="icon"
-                className="rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200"
+                aria-label={isVideoOn ? "Turn off camera" : "Turn on camera"}
+                aria-pressed={!isVideoOn}
+                className={toolbarButton()}
                 onClick={toggleVideo}
               >
-                {isVideoOn ? (
-                  <VideoIcon className="w-4 h-4 md:w-5 md:h-5" />
-                ) : (
-                  <VideoOff className="w-4 h-4 md:w-5 md:h-5" />
-                )}
+                {isVideoOn ? <VideoIcon /> : <VideoOff />}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -1478,38 +1552,39 @@ export default function VideoCall() {
             </TooltipContent>
           </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={isScreenSharing ? "secondary" : "ghost"}
-                size="icon"
-                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isScreenSharing ? "bg-blue-500 text-foreground" : ""}`}
-                onClick={toggleScreenShare}
-              >
-                <MonitorUp className="w-4 h-4 md:w-5 md:h-5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{isScreenSharing ? "Stop Sharing" : "Share Screen"}</p>
-            </TooltipContent>
-          </Tooltip>
+          {/* Screen share is unavailable on most mobile browsers, so it lives in
+              the overflow menu there rather than taking a primary slot. */}
+          {canShareScreen && !isCompactToolbar && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={isScreenSharing ? "Stop sharing screen" : "Share screen"}
+                  aria-pressed={isScreenSharing}
+                  className={toolbarButton(isScreenSharing)}
+                  onClick={toggleScreenShare}
+                >
+                  <MonitorUp />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{isScreenSharing ? "Stop Sharing" : "Share Screen"}</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
 
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant={isSidebarOpen && activeTab === "chat" ? "secondary" : "ghost"}
+                variant="ghost"
                 size="icon"
-                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "chat" ? "bg-accent" : ""}`}
-                onClick={() => {
-                  if (isSidebarOpen && activeTab === "chat") {
-                    setIsSidebarOpen(false);
-                  } else {
-                    setIsSidebarOpen(true);
-                    setActiveTab("chat");
-                  }
-                }}
+                aria-label="Chat"
+                aria-pressed={isSidebarOpen && activeTab === "chat"}
+                className={toolbarButton(isSidebarOpen && activeTab === "chat")}
+                onClick={() => togglePanel("chat")}
               >
-                <MessageSquare className="w-4 h-4 md:w-5 md:h-5" />
+                <MessageSquare />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -1520,19 +1595,14 @@ export default function VideoCall() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant={isSidebarOpen && activeTab === "participants" ? "secondary" : "ghost"}
+                variant="ghost"
                 size="icon"
-                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${isSidebarOpen && activeTab === "participants" ? "bg-accent" : ""}`}
-                onClick={() => {
-                  if (isSidebarOpen && activeTab === "participants") {
-                    setIsSidebarOpen(false);
-                  } else {
-                    setIsSidebarOpen(true);
-                    setActiveTab("participants");
-                  }
-                }}
+                aria-label="Participants"
+                aria-pressed={isSidebarOpen && activeTab === "participants"}
+                className={toolbarButton(isSidebarOpen && activeTab === "participants")}
+                onClick={() => togglePanel("participants")}
               >
-                <Users className="w-4 h-4 md:w-5 md:h-5" />
+                <Users />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -1540,143 +1610,132 @@ export default function VideoCall() {
             </TooltipContent>
           </Tooltip>
 
-          {/* Mobile Reactions */}
-          <div className="relative md:hidden shrink-0">
-            <AnimatePresence>
-              {showReactionsMenu && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-4 p-2 bg-background/95 backdrop-blur-xl border border-border rounded-2xl shadow-2xl flex gap-1 min-w-max"
-                >
-                  {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
-                    <button
-                      key={emoji}
-                      onClick={() => {
-                        if (socket && roomId) {
-                          socket.emit("call:reaction", { roomId, emoji });
-                          // Show locally
-                          const id = Date.now().toString() + Math.random();
-                          const x = Math.random() * 80 + 10;
-                          setReactions((prev) => [...prev, { id, emoji, x }]);
-                          setTimeout(
-                            () => setReactions((prev) => prev.filter((r) => r.id !== id)),
-                            2000
-                          );
-                          setShowReactionsMenu(false);
-                        }
-                      }}
-                      className="p-2 hover:bg-accent rounded-xl text-xl transition-transform active:scale-95"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
+          {/* Reactions — available at every width. */}
+          <Popover open={showReactionsMenu} onOpenChange={setShowReactionsMenu}>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`text-foreground hover:bg-accent rounded-xl w-8 h-8 shrink-0 transition-all duration-200 ${showReactionsMenu ? "bg-accent" : ""}`}
-                  onClick={() => setShowReactionsMenu(!showReactionsMenu)}
-                >
-                  <Smile className="w-4 h-4" />
-                </Button>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Send a reaction"
+                    aria-pressed={showReactionsMenu}
+                    className={toolbarButton(showReactionsMenu)}
+                  >
+                    <Smile />
+                  </Button>
+                </PopoverTrigger>
               </TooltipTrigger>
               <TooltipContent>
                 <p>Reactions</p>
               </TooltipContent>
             </Tooltip>
-          </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={showCaptions ? "secondary" : "ghost"}
-                size="icon"
-                className={`text-foreground hover:bg-accent rounded-xl md:rounded-2xl w-8 h-8 md:w-12 md:h-12 shrink-0 transition-all duration-200 ${showCaptions ? "bg-accent" : ""}`}
-                onClick={() => setShowCaptions(!showCaptions)}
-              >
-                <Captions className="w-4 h-4 md:w-5 md:h-5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{showCaptions ? "Hide Captions" : "Show Captions"}</p>
-            </TooltipContent>
-          </Tooltip>
+            <PopoverContent side="top" align="center" className="z-[80] w-auto p-2">
+              <div className="flex gap-1">
+                {REACTION_EMOJI.map((emoji) => (
+                  <button
+                    key={emoji}
+                    aria-label={`React with ${emoji}`}
+                    onClick={() => sendReaction(emoji)}
+                    className="p-2 hover:bg-accent rounded-xl text-xl leading-none transition-transform active:scale-95"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {!isCompactToolbar && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={showCaptions ? "Hide captions" : "Show captions"}
+                  aria-pressed={showCaptions}
+                  className={toolbarButton(showCaptions)}
+                  onClick={() => setShowCaptions(!showCaptions)}
+                >
+                  <Captions />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{showCaptions ? "Hide Captions" : "Show Captions"}</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Everything that does not fit a phone's toolbar. */}
+          {isCompactToolbar && (
+            <Popover>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="More options"
+                      className={toolbarButton()}
+                    >
+                      <MoreHorizontal />
+                    </Button>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>More</p>
+                </TooltipContent>
+              </Tooltip>
+              <PopoverContent side="top" align="end" className="z-[80] w-52 p-1">
+                {canShareScreen && (
+                  <button
+                    onClick={toggleScreenShare}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-accent transition-colors"
+                  >
+                    <MonitorUp className="w-4 h-4 shrink-0" />
+                    {isScreenSharing ? "Stop sharing" : "Share screen"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowCaptions(!showCaptions)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-accent transition-colors"
+                >
+                  <Captions className="w-4 h-4 shrink-0" />
+                  {showCaptions ? "Hide captions" : "Show captions"}
+                </button>
+                <button
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm hover:bg-accent transition-colors"
+                >
+                  <Settings className="w-4 h-4 shrink-0" />
+                  Settings
+                </button>
+              </PopoverContent>
+            </Popover>
+          )}
 
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="destructive"
-                className="rounded-xl md:rounded-2xl px-4 md:px-6 h-8 md:h-12 bg-red-600 hover:bg-red-700 transition-all duration-200 shrink-0"
-                onClick={async () => {
-                  try {
-                    if (meetingId) {
-                      // 1. Attempt to end the meeting on the server
-                      const token = (await auth.currentUser?.getIdToken()) || user?.uid;
-                      if (token) {
-                        await fetch(`/api/meetings/${meetingId}/status`, {
-                          method: "PATCH",
-                          headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${token}`,
-                          },
-                          body: JSON.stringify({ status: "ended" }),
-                        });
-                      }
-                      // 2. Redirect to summary
-                      setLocation(`/summary/${meetingId}`);
-                    } else {
-                      // Fallback if meetingId load failed
-                      setLocation("/dashboard");
-                    }
-                  } catch (error) {
-                    console.error("Error ending call:", error);
-                    setLocation("/dashboard");
-                  }
-                }}
+                aria-label="End call"
+                className="rounded-xl md:rounded-2xl px-3 md:px-6 h-10 md:h-12 shrink-0 md:[&_svg]:size-5"
+                onClick={endCall}
               >
-                <PhoneOff className="mr-2 w-4 h-4 md:w-5 md:h-5" />{" "}
+                <PhoneOff />
                 <span className="hidden md:inline">End</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>End Call & View Summary</p>
+              <p>End Call &amp; View Summary</p>
             </TooltipContent>
           </Tooltip>
         </div>
       </div>
 
-      {/* Right Side Vertical Reaction Bar */}
-      <div
-        className={`absolute right-12 top-1/2 -translate-y-1/2 z-40 hidden md:flex flex-col gap-3 p-2 bg-card/95 backdrop-blur-sm border border-border rounded-full shadow-sm transition-all duration-300 ${isSidebarOpen ? "translate-x-32 opacity-0 pointer-events-none" : "translate-x-0 opacity-100"}`}
-      >
-        {["👍", "❤️", "😂", "😮", "😢", "🎉", "👏", "🔥"].map((emoji) => (
-          <button
-            key={emoji}
-            onClick={() => {
-              if (socket && roomId) {
-                socket.emit("call:reaction", { roomId, emoji });
-                // Show locally
-                const id = Date.now().toString() + Math.random();
-                const x = Math.random() * 80 + 10;
-                setReactions((prev) => [...prev, { id, emoji, x }]);
-                setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2000);
-              }
-            }}
-            className="p-2 hover:bg-accent rounded-full text-2xl transition-transform hover:scale-125 active:scale-95"
-          >
-            {emoji}
-          </button>
-        ))}
-      </div>
-
       {/* Sidebar (Chat & Participants) */}
       {isSidebarOpen && (
-        <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-card md:rounded-2xl border-l md:border border-border flex flex-col z-[70] shadow-lg overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
+        <div className="absolute top-20 md:top-24 right-0 md:right-6 bottom-32 md:bottom-28 w-full md:w-96 bg-card md:rounded-2xl border-l md:border border-border flex flex-col z-[70] shadow-[0_8px_40px_-12px_rgba(0,0,0,0.25)] overflow-hidden animate-in slide-in-from-right-10 fade-in duration-300">
           <div className="p-4 border-b border-border flex justify-between items-center">
             <h3 className="text-foreground font-medium">
               {activeTab === "chat" ? "Group Chat" : "Participants"}
@@ -1710,7 +1769,10 @@ export default function VideoCall() {
               </TabsList>
             </div>
 
-            <TabsContent value="chat" className="flex-1 flex flex-col min-h-0 mt-0">
+            <TabsContent
+              value="chat"
+              className="flex-1 data-[state=active]:flex flex-col min-h-0 mt-0"
+            >
               <div className="flex-1 p-4 overflow-y-auto space-y-4" ref={chatScrollRef}>
                 {chatMessages.length === 0 && (
                   <div className="text-center text-foreground/30 text-sm mt-10">
@@ -1783,20 +1845,34 @@ export default function VideoCall() {
                   >
                     <Avatar className="h-10 w-10 border border-border">
                       <AvatarImage src={p.avatar} />
-                      <AvatarFallback className="bg-primary text-foreground">
+                      <AvatarFallback className="bg-primary text-primary-foreground">
                         {getInitials(p.name)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-foreground truncate">
-                          {p.name} {p.isLocal && "(You)"}
+                          {p.name}
+                          {p.isLocal && p.name !== "You" && " (You)"}
                         </span>
                       </div>
                       <span className="text-xs text-muted-foreground capitalize">
                         {p.isLocal ? "Host" : "Participant"}
                       </span>
                     </div>
+                    {/* The animated mood widget needs room to read, so it lives
+                        here rather than floating over the video. */}
+                    {p.emotion && (
+                      <div className="w-9 h-9 flex items-center justify-center shrink-0">
+                        <div className="scale-[0.55] origin-center">
+                          <SmartPulse
+                            sentiment={p.emotion}
+                            engagement={p.engagement || 0}
+                            showLabel={false}
+                          />
+                        </div>
+                      </div>
+                    )}
                     <div className="flex gap-1">
                       {!p.isAudioOn ? (
                         <div className="p-2 rounded-full bg-red-500/20 text-red-400">
@@ -1882,9 +1958,9 @@ export default function VideoCall() {
             }}
             exit={{ opacity: 0 }}
             transition={{ duration: 2.5, ease: "easeOut" }}
-            className="absolute bottom-32 pointer-events-none text-6xl"
+            className="absolute bottom-28 left-1/2 pointer-events-none text-5xl z-40"
             style={{
-              right: `${(r.x % 15) + 6}%`,
+              marginLeft: `${((r.x % 13) - 6) * 14}px`,
             }}
           >
             {r.emoji}
@@ -1902,7 +1978,7 @@ export default function VideoCall() {
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 10 }}
-            className="absolute bottom-[15%] left-1/2 -translate-x-1/2 z-50 max-w-3xl w-full px-6 flex justify-center pointer-events-none"
+            className="absolute bottom-28 md:bottom-32 left-1/2 -translate-x-1/2 z-40 max-w-3xl w-full px-6 flex justify-center pointer-events-none"
           >
             <div className="bg-black/60 backdrop-blur-md rounded-2xl p-4 text-center border border-white/10 shadow-2xl">
               <div className="flex items-center justify-center gap-2 mb-1">

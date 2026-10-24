@@ -45,3 +45,14 @@ services:
         sync: false
       - key: VITE_TURN_CREDENTIAL
         sync: false
+      # Cloudinary for chat attachments. Leave unset to fall back to GridFS
+      # (stores files in MongoDB and streams them through this service).
+      # Set either CLOUDINARY_URL on its own, or the three parts below.
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

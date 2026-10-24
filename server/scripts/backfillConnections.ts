@@ -19,13 +19,11 @@
  *   npx tsx server/scripts/backfillConnections.ts --apply    # write changes
  */
 
+import "dotenv/config";
 import mongoose from "mongoose";
-import dotenv from "dotenv";
 import { connectToMongoDB } from "../database/mongodb";
 import { Conversation, Connection } from "../models";
 import { logger } from "../utils/logger";
-
-dotenv.config();
 
 const APPLY = process.argv.includes("--apply");
 

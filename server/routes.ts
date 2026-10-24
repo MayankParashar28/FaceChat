@@ -22,6 +22,15 @@ import discoveryRoutes from "./routes/discovery";
 
 import notificationRoutes from "./routes/notification";
 import inviteRoutes from "./routes/invite";
+import attachmentRoutes from "./routes/attachments";
+
+/**
+ * Room ids double as conversation ids for calls started from a chat, but ad-hoc
+ * rooms use free-form names. Only the former can be looked up as a Conversation
+ * — casting anything else throws a CastError. `ObjectId.isValid` is too loose
+ * here, since it accepts any 12-character string (e.g. "team-standup").
+ */
+const isConversationId = (roomId: string): boolean => /^[0-9a-fA-F]{24}$/.test(roomId);
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -115,6 +124,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/discovery", discoveryRoutes);
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/invites", inviteRoutes);
+  // Mounted at /api so it owns both /api/conversations/:id/attachments and
+  // /api/attachments/:fileId.
+  app.use("/api", attachmentRoutes);
 
   io.on("connection", (socket) => {
     logger.debug("Client connected:", socket.id);
@@ -311,7 +323,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     socket.on(
       "message:send",
-      async (data: { conversationId: string; senderId: string; content: string }) => {
+      async (data: {
+        conversationId: string;
+        senderId: string;
+        content: string;
+        messageType?: "text" | "image" | "file";
+        attachment?: {
+          provider: "cloudinary" | "gridfs";
+          storageId: string;
+          resourceType?: string;
+          name: string;
+          size: number;
+          mimeType: string;
+        };
+      }) => {
         try {
           // Get user from MongoDB
           const dbUser = await mongoService.getUserByFirebaseUidCached(data.senderId);
@@ -347,11 +372,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // ---------------------
 
           // Create message in MongoDB
+          // An attachment decides the type; anything else is plain text, so a
+          // client cannot label a bare message as an image.
+          const attachment = data.attachment;
+          const messageType = attachment
+            ? attachment.mimeType.startsWith("image/")
+              ? ("image" as const)
+              : ("file" as const)
+            : ("text" as const);
+
           const message = await mongoService.createMessage({
             conversationId: data.conversationId,
             senderId: dbUser._id.toString(),
             content: data.content,
-            messageType: "text",
+            messageType,
+            attachment,
           });
 
           // Populate sender info (including firebaseUid for client matching)
@@ -389,6 +424,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             conversationId: populatedMessage.conversationId.toString(),
             senderId: senderFirebaseUid, // Use Firebase UID for client matching
             content: populatedMessage.content,
+            messageType: populatedMessage.messageType,
+            attachment: populatedMessage.attachment
+              ? {
+                  provider: populatedMessage.attachment.provider,
+                  storageId: populatedMessage.attachment.storageId,
+                  resourceType: populatedMessage.attachment.resourceType,
+                  name: populatedMessage.attachment.name,
+                  size: populatedMessage.attachment.size,
+                  mimeType: populatedMessage.attachment.mimeType,
+                }
+              : undefined,
             isPinned: populatedMessage.isPinned,
             createdAt: populatedMessage.createdAt,
             sender: {
@@ -724,55 +770,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
         } else {
           try {
-            logger.debug(`🔍 Checking for existing meeting with roomId: ${roomId}`);
-            // Check if meeting already exists for this room
-            const existingMeeting = await mongoService.getMeetingByRoomId(roomId);
-            logger.debug(
-              `   Existing meeting check result: ${existingMeeting ? `Found (${existingMeeting._id})` : "Not found"}`
-            );
-
-            if (!existingMeeting) {
-              // Create a new meeting
-              logger.debug(`📝 Creating new meeting for room: ${roomId}`);
-              logger.debug(`   Host ID: ${dbUser._id} (${typeof dbUser._id})`);
-              logger.debug(`   Host ID string: ${dbUser._id.toString()}`);
-              logger.debug(`   Participants: [${dbUser._id.toString()}]`);
-              logger.debug(`   Room ID: ${roomId}`);
-
-              const meetingData = {
+            // One atomic upsert instead of check-then-create: two sockets
+            // joining the same empty room at once used to both pass the
+            // "not found" check and insert a meeting apiece.
+            const { meeting: roomMeeting, created } =
+              await mongoService.findOrCreateMeetingByRoomId({
                 title: `Call with ${userName || "Participants"}`,
                 hostId: dbUser._id.toString(),
                 participants: [dbUser._id.toString()],
                 startTime: new Date(),
                 roomId: roomId,
-                meetingType: "video" as const,
-                status: "scheduled" as const, // Start as scheduled, active only when 2nd user joins
-              };
+                meetingType: "video",
+                status: "scheduled", // active only once a 2nd user joins
+              });
 
-              logger.debug(`   Meeting data prepared:`, meetingData);
-
-              const newMeeting = await mongoService.createMeeting(meetingData);
-              logger.debug(
-                `✅ Successfully created meeting: ${newMeeting._id} for room: ${roomId}`
-              );
-              logger.debug(`   Meeting saved with ID: ${newMeeting._id}`);
-
-              // Verify it was actually saved
-              const verifyMeeting = await mongoService.getMeetingByRoomId(roomId);
-              if (verifyMeeting) {
-                logger.debug(`✅ Verification: Meeting found in DB: ${verifyMeeting._id}`);
-              } else {
-                logger.error(`❌ Verification FAILED: Meeting not found in DB after creation!`);
-              }
+            if (created) {
+              logger.debug(`✅ Created meeting ${roomMeeting._id} for room: ${roomId}`);
             } else {
-              logger.debug(
-                `ℹ️ Meeting already exists for room: ${roomId}, ID: ${existingMeeting._id}`
-              );
+              logger.debug(`ℹ️ Meeting already exists for room: ${roomId}, ID: ${roomMeeting._id}`);
 
               // CRITICAL FIX: Even if "First Socket", we must add this user to the existing meeting
               // (They might be the 2nd PERSON, but 1st SOCKET due to refresh)
               const updatedMeeting = await mongoService.addParticipantToMeeting(
-                existingMeeting._id.toString(),
+                roomMeeting._id.toString(),
                 dbUser._id.toString()
               );
 
@@ -780,18 +800,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const currentParticipantCount = updatedMeeting.participants.length;
 
                 // Restart if ended
-                if (existingMeeting.status === "ended") {
+                if (roomMeeting.status === "ended") {
                   const newStartTime = new Date();
-                  await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                  await mongoService.updateMeeting(roomMeeting._id.toString(), {
                     status: "active",
                     startTime: newStartTime,
                     endTime: undefined,
                     analytics: {
-                      totalDuration: existingMeeting.analytics?.totalDuration || 0,
+                      totalDuration: roomMeeting.analytics?.totalDuration || 0,
                       participantCount: currentParticipantCount,
-                      engagementScore: existingMeeting.analytics?.engagementScore || 0,
-                      emotionData: existingMeeting.analytics?.emotionData || [],
-                      reactions: existingMeeting.analytics?.reactions,
+                      engagementScore: roomMeeting.analytics?.engagementScore || 0,
+                      emotionData: roomMeeting.analytics?.emotionData || [],
+                      reactions: roomMeeting.analytics?.reactions,
                     },
                   });
                   io.to(`call:${roomId}`).emit("call:meeting-active", {
@@ -799,10 +819,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   });
                 }
                 // ACTIVATE if scheduled and now 2 people
-                else if (existingMeeting.status === "scheduled" && currentParticipantCount === 2) {
+                else if (roomMeeting.status === "scheduled" && currentParticipantCount === 2) {
                   logger.debug(`🚀 Activating meeting (refresh case) ${roomId}`);
                   const newStartTime = new Date();
-                  await mongoService.updateMeeting(existingMeeting._id.toString(), {
+                  await mongoService.updateMeeting(roomMeeting._id.toString(), {
                     status: "active",
                     startTime: newStartTime,
                   });
@@ -1022,9 +1042,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // MISSED CALL DETECTION
           // If only 1 participant was ever in the meeting when it ends (or acts as end)
-          if (existingMeeting && existingMeeting.participants.length === 1) {
+          // Ad-hoc rooms have no conversation behind them, so there is nobody
+          // to notify and nothing to look up.
+          if (
+            existingMeeting &&
+            existingMeeting.participants.length === 1 &&
+            isConversationId(roomId)
+          ) {
             try {
-              // Assuming roomId is conversationId
               const conversation = await Conversation.findById(roomId);
               if (conversation) {
                 const missedCallUserIds = conversation.participants

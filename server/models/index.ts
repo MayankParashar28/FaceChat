@@ -400,12 +400,25 @@ ConversationSchema.index({ isDeleted: 1 });
  *  MESSAGE MODEL
  * ========================================================= */
 
+export interface IMessageAttachment {
+  /** Where the bytes live. Cloudinary when configured, GridFS otherwise. */
+  provider: "cloudinary" | "gridfs";
+  /** Cloudinary public id, or the GridFS file id as a string. */
+  storageId: string;
+  /** Cloudinary only: image | video | raw, needed to build a delivery URL. */
+  resourceType?: string;
+  name: string;
+  size: number;
+  mimeType: string;
+}
+
 export interface IMessage extends Document {
   _id: Types.ObjectId;
   conversationId: Types.ObjectId;
   senderId: Types.ObjectId;
   content: string;
   messageType: "text" | "image" | "file" | "system";
+  attachment?: IMessageAttachment;
   isPinned: boolean;
   isRead: boolean;
   createdAt: Date;
@@ -425,6 +438,22 @@ const MessageSchema = new Schema<IMessage>(
       type: String,
       enum: ["text", "image", "file", "system"],
       default: "text",
+    },
+    // Present only on image/file messages. `content` carries the caption (or
+    // the file name when there is none) so existing list previews still read.
+    attachment: {
+      type: new Schema<IMessageAttachment>(
+        {
+          provider: { type: String, enum: ["cloudinary", "gridfs"], required: true },
+          storageId: { type: String, required: true },
+          resourceType: { type: String, required: false },
+          name: { type: String, required: true },
+          size: { type: Number, required: true },
+          mimeType: { type: String, required: true },
+        },
+        { _id: false }
+      ),
+      required: false,
     },
     isPinned: { type: Boolean, default: false },
     isRead: { type: Boolean, default: false },

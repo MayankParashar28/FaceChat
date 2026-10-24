@@ -483,6 +483,80 @@ export class MongoDBService {
     }
   }
 
+  /**
+   * Atomically fetch the meeting for a room, creating it only if none exists.
+   *
+   * Two people joining the same empty room at the same instant used to run
+   * `getMeetingByRoomId` then `createMeeting` separately, and both could pass
+   * the "not found" check and insert. The upsert closes that window; the
+   * duplicate-key branch covers the residual race that upsert alone leaves
+   * open until `roomId` carries a unique index (see
+   * server/scripts/ensureMeetingRoomIdIndex.ts).
+   */
+  async findOrCreateMeetingByRoomId(meetingData: {
+    title: string;
+    hostId: string;
+    participants: string[];
+    startTime: Date;
+    roomId: string;
+    meetingType?: "video" | "audio" | "screen-share";
+    status?: "scheduled" | "active" | "ended";
+  }): Promise<{ meeting: IMeeting; created: boolean }> {
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error("MongoDB is not connected. ReadyState: " + mongoose.connection.readyState);
+    }
+
+    const hostIdObj = new Types.ObjectId(meetingData.hostId);
+    const participantsObj = meetingData.participants.map((p) => new Types.ObjectId(p));
+
+    const onInsert = {
+      title: meetingData.title,
+      hostId: hostIdObj,
+      participants: participantsObj,
+      startTime: meetingData.startTime,
+      meetingType: meetingData.meetingType || "video",
+      status: meetingData.status || "scheduled",
+      settings: {
+        allowScreenShare: true,
+        allowChat: true,
+        allowRecording: false,
+        maxParticipants: 6,
+      },
+      analytics: {
+        totalDuration: 0,
+        participantCount: participantsObj.length,
+        engagementScore: 0,
+        emotionData: [],
+      },
+      isDeleted: false,
+    };
+
+    try {
+      const result = await Meeting.findOneAndUpdate(
+        { roomId: meetingData.roomId },
+        { $setOnInsert: onInsert },
+        { upsert: true, new: true, includeResultMetadata: true }
+      );
+      return {
+        meeting: result.value as IMeeting,
+        created: !result.lastErrorObject?.updatedExisting,
+      };
+    } catch (error: any) {
+      // Another join won the insert between our upsert's query and write.
+      if (error?.code === 11000) {
+        const existing = await Meeting.findOne({ roomId: meetingData.roomId });
+        if (existing) {
+          logger.debug(
+            `Meeting for room ${meetingData.roomId} was created concurrently; using ${existing._id}`
+          );
+          return { meeting: existing, created: false };
+        }
+      }
+      logger.error("Error in findOrCreateMeetingByRoomId:", error);
+      throw error;
+    }
+  }
+
   async getMeetingById(meetingId: string): Promise<IMeeting | null> {
     try {
       return await Meeting.findById(meetingId)
@@ -1062,6 +1136,16 @@ export class MongoDBService {
           content: msg.content,
           isPinned: msg.isPinned,
           messageType: msg.messageType,
+          attachment: msg.attachment
+            ? {
+                provider: msg.attachment.provider,
+                storageId: msg.attachment.storageId,
+                resourceType: msg.attachment.resourceType,
+                name: msg.attachment.name,
+                size: msg.attachment.size,
+                mimeType: msg.attachment.mimeType,
+              }
+            : undefined,
           createdAt: msg.createdAt,
           sender: sender || { id: senderId, name: "Unknown", username: "unknown" },
           status,
@@ -1082,6 +1166,14 @@ export class MongoDBService {
     senderId: string;
     content: string;
     messageType?: "text" | "image" | "file" | "system";
+    attachment?: {
+      provider: "cloudinary" | "gridfs";
+      storageId: string;
+      resourceType?: string;
+      name: string;
+      size: number;
+      mimeType: string;
+    };
   }): Promise<IMessage> {
     try {
       const message = new Message({
@@ -1089,6 +1181,7 @@ export class MongoDBService {
         senderId: new mongoose.Types.ObjectId(messageData.senderId),
         content: messageData.content,
         messageType: messageData.messageType,
+        attachment: messageData.attachment,
       });
       await message.save();
 

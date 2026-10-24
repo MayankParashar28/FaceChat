@@ -24,8 +24,24 @@ import {
   ArrowLeft,
   Lock,
   Unlock,
+  Loader2,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  ChatAttachment,
+  formatFileSize,
+  type ChatAttachmentData,
+} from "@/components/ChatAttachment";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +57,12 @@ import { User as FirebaseUser } from "firebase/auth";
 import { searchUsers } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
+// Matches MAX_UPLOAD_BYTES in server/routes/attachments.ts.
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+const IMAGE_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
+const FILE_ACCEPT = "application/pdf,text/plain,text/csv,application/zip,.doc,.docx,.xls,.xlsx";
+
 type Message = {
   id: string;
   conversationId: string;
@@ -49,6 +71,7 @@ type Message = {
   isPinned: boolean;
   createdAt: Date;
   messageType?: "text" | "image" | "file" | "system";
+  attachment?: ChatAttachmentData;
   sender: {
     id: string;
     name: string;
@@ -101,6 +124,17 @@ export default function Chats() {
   });
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [uploadingAttachment, setUploadingAttachment] = useState<string | null>(null);
+  // One dialog drives every destructive confirmation here, in place of the
+  // browser's confirm() — which cannot be styled and blocks the page.
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    description: string;
+    confirmLabel: string;
+    run: () => void | Promise<void>;
+  } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set()); // Stores userIds
   const [typingUserNames, setTypingUserNames] = useState<Map<string, string>>(new Map()); // Maps userId -> userName
@@ -153,7 +187,11 @@ export default function Chats() {
     return null;
   }, [firebaseUser, user?.uid]);
 
-  const { data: conversations = [], refetch: refetchConversations } = useQuery<Conversation[]>({
+  const {
+    data: conversations = [],
+    refetch: refetchConversations,
+    isLoading: isLoadingConversations,
+  } = useQuery<Conversation[]>({
     queryKey: ["/api/conversations"],
     queryFn: async () => {
       const token = await getToken();
@@ -849,8 +887,68 @@ export default function Chats() {
     }
   };
 
-  const handleFileAttach = () => {
-    console.log("File attachment clicked");
+  // Upload first, then send the message over the socket so attachments go
+  // through the same FaceLink gate and optimistic-update path as text.
+  const uploadAttachment = async (file: File) => {
+    if (!selectedChat || !user?.uid || !socket) return;
+
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      toast({
+        title: "File too large",
+        description: `${file.name} is ${formatFileSize(file.size)}. The limit is ${formatFileSize(
+          MAX_ATTACHMENT_BYTES
+        )}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setUploadingAttachment(file.name);
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `/api/conversations/${selectedChat}/attachments?name=${encodeURIComponent(
+          file.name
+        )}&type=${encodeURIComponent(file.type)}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": file.type || "application/octet-stream",
+          },
+          body: file,
+        }
+      );
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Upload failed");
+      }
+
+      const attachment = await res.json();
+      socket.emit("message:send", {
+        conversationId: selectedChat,
+        senderId: user.uid,
+        // The caption doubles as the list preview, so name the file there.
+        content: file.name,
+        attachment,
+      });
+    } catch (err) {
+      toast({
+        title: "Could not send attachment",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingAttachment(null);
+    }
+  };
+
+  const handleFilePicked = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Reset so picking the same file twice still fires a change event.
+    event.target.value = "";
+    if (file) void uploadAttachment(file);
   };
 
   const handleStartConversation = async (userId: string) => {
@@ -1010,6 +1108,18 @@ export default function Chats() {
     (newConversation?.id === selectedChat ? newConversation : null);
   const pinnedMessages = messages.filter((m) => m.isPinned);
 
+  // selectedChat is restored from localStorage, so it can point at a
+  // conversation this account cannot see — after signing in as someone else,
+  // or once a conversation is deleted. On mobile both panes key off it, so a
+  // stale id hid the list *and* the thread and left a blank screen.
+  useEffect(() => {
+    if (!selectedChat || isLoadingConversations || selectedConversation) return;
+    setSelectedChat(null);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("facechat_selected_chat");
+    }
+  }, [selectedChat, selectedConversation, isLoadingConversations]);
+
   // Clear newConversation once it appears in the conversations list
   useEffect(() => {
     if (newConversation && conversations.find((c) => c.id === newConversation.id)) {
@@ -1118,10 +1228,17 @@ export default function Chats() {
     });
   };
 
-  const handleDeleteConversation = async (e: React.MouseEvent, conversationId: string) => {
+  const handleDeleteConversation = (e: React.MouseEvent, conversationId: string) => {
     e.stopPropagation(); // Prevent opening the chat
-    if (!confirm("Remove this match from your list?")) return;
+    setConfirmAction({
+      title: "Remove this match?",
+      description: "The conversation disappears from your list. This cannot be undone.",
+      confirmLabel: "Remove",
+      run: () => deleteConversation(conversationId),
+    });
+  };
 
+  const deleteConversation = async (conversationId: string) => {
     try {
       const token = await getToken();
       const res = await fetch(`/api/conversations/${conversationId}`, {
@@ -1184,10 +1301,18 @@ export default function Chats() {
     setLocation(`/call/${roomId}?${query.toString()}`);
   };
 
-  const handleClearChat = async () => {
+  const handleClearChat = () => {
     if (!selectedChat) return;
-    if (!confirm("Are you sure you want to clear the chat history? This cannot be undone.")) return;
+    setConfirmAction({
+      title: "Clear chat history?",
+      description: "Every message in this conversation is removed. This cannot be undone.",
+      confirmLabel: "Clear history",
+      run: clearChat,
+    });
+  };
 
+  const clearChat = async () => {
+    if (!selectedChat) return;
     try {
       const token = await getToken();
       const res = await fetch(`/api/conversations/${selectedChat}/clear`, {
@@ -1216,24 +1341,26 @@ export default function Chats() {
     }
   };
 
-  const handleBlockUser = async () => {
+  const handleBlockUser = () => {
     if (!selectedConversation) return;
 
     // Find the other user
     const otherUser = selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid);
     if (!otherUser) return;
 
-    if (
-      !confirm(
-        `Are you sure you want to block ${otherUser.name}? You will no longer receive messages from them.`
-      )
-    )
-      return;
+    setConfirmAction({
+      title: `Block ${otherUser.name}?`,
+      description: `You will no longer receive messages from ${otherUser.name}, and they cannot start a call with you.`,
+      confirmLabel: "Block",
+      run: () => blockUser(otherUser.id, otherUser.name),
+    });
+  };
 
+  const blockUser = async (otherUserId: string, otherUserName: string) => {
     try {
       const token = await getToken();
-      // Use the MongoDB ID (otherUser.id) for the block endpoint
-      const res = await fetch(`/api/discovery/block/${otherUser.id}`, {
+      // The block endpoint takes the MongoDB id, not the Firebase uid.
+      const res = await fetch(`/api/discovery/block/${otherUserId}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1243,7 +1370,7 @@ export default function Chats() {
       if (res.ok) {
         toast({
           title: "User Blocked",
-          description: `You have blocked ${otherUser.name}.`,
+          description: `You have blocked ${otherUserName}.`,
         });
         // Optionally remove the chat or refresh
         await refetchConversations();
@@ -1271,18 +1398,18 @@ export default function Chats() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] w-full overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl">
+    <div className="flex h-[calc(100dvh-8rem)] w-full overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className="flex-1 flex overflow-hidden">
         {/* Chat List */}
         <div
-          className={`${selectedChat ? "hidden md:flex" : "flex"} w-full md:w-80 border-r border-white/10 flex-col bg-white/5 backdrop-blur-sm h-full`}
+          className={`${selectedChat ? "hidden md:flex" : "flex"} w-full md:w-80 border-r border-border flex-col bg-muted/40 backdrop-blur-sm h-full`}
         >
-          <div className="p-4 border-b border-white/10">
+          <div className="p-4 border-b border-border">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search conversations..."
-                className="pl-10 bg-white/5 border-white/10 focus:bg-white/10 transition-all rounded-full"
+                className="pl-10 bg-muted/40 border-border focus:bg-accent transition-all rounded-full"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -1301,10 +1428,10 @@ export default function Chats() {
                     <div
                       key={searchedUser.id}
                       onClick={() => handleStartConversation(searchedUser.id)}
-                      className="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-white/10 transition-colors"
+                      className="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-accent transition-colors"
                     >
                       <div className="relative">
-                        <Avatar className="h-12 w-12 border border-white/10">
+                        <Avatar className="h-12 w-12 border border-border">
                           {searchedUser.avatar && (
                             <AvatarImage src={searchedUser.avatar} alt={searchedUser.name} />
                           )}
@@ -1335,7 +1462,7 @@ export default function Chats() {
                         ) : (
                           <Badge
                             variant="outline"
-                            className="text-xs border-white/10 bg-white/5 text-muted-foreground gap-1"
+                            className="text-xs border-border bg-muted/40 text-muted-foreground gap-1"
                           >
                             <Lock className="h-3 w-3" />
                             Locked
@@ -1359,6 +1486,18 @@ export default function Chats() {
                 </div>
               )}
 
+              {filteredConversations.length === 0 && !searchQuery && !isLoadingConversations && (
+                <div className="px-4 py-12 text-center">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                    <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <p className="text-sm font-medium text-foreground">No conversations yet</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Search for someone above to start chatting.
+                  </p>
+                </div>
+              )}
+
               {/* Show conversations */}
               {filteredConversations.length > 0 && !searchQuery && (
                 <div>
@@ -1368,12 +1507,12 @@ export default function Chats() {
                       onClick={() => handleSelectChat(conv.id)}
                       className={`group relative flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${
                         selectedChat === conv.id
-                          ? "bg-white/10 border border-white/5 shadow-sm"
-                          : "hover:bg-white/5 border border-transparent"
+                          ? "bg-accent border border-border shadow-sm"
+                          : "hover:bg-accent border border-transparent"
                       }`}
                     >
                       <div className="relative">
-                        <Avatar className="h-12 w-12 border border-white/10">
+                        <Avatar className="h-12 w-12 border border-border">
                           {!conv.isGroup &&
                             conv.participants.find((p) => p.firebaseUid !== user?.uid)?.avatar && (
                               <AvatarImage
@@ -1456,18 +1595,18 @@ export default function Chats() {
             className={`${!selectedChat ? "hidden md:flex" : "flex"} flex-1 flex-col bg-transparent relative w-full h-full`}
           >
             {/* Chat Header */}
-            <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between z-10 shrink-0">
+            <div className="p-4 border-b border-border bg-muted/40 backdrop-blur-sm flex items-center justify-between z-10 shrink-0">
               <div className="flex items-center gap-3">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="md:hidden -ml-2 hover:bg-white/10"
+                  className="md:hidden -ml-2 hover:bg-accent"
                   onClick={() => setSelectedChat(null)}
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
                 <div className="relative">
-                  <Avatar className="h-10 w-10 border border-white/10">
+                  <Avatar className="h-10 w-10 border border-border">
                     {!selectedConversation.isGroup &&
                       selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid)
                         ?.avatar && (
@@ -1522,7 +1661,7 @@ export default function Chats() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="hover:bg-white/10"
+                  className="hover:bg-accent"
                   onClick={() => startCall("audio")}
                 >
                   <Phone className="h-5 w-5" />
@@ -1530,20 +1669,20 @@ export default function Chats() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="hover:bg-white/10"
+                  className="hover:bg-accent"
                   onClick={() => startCall("video")}
                 >
                   <VideoIcon className="h-5 w-5" />
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="hover:bg-white/10">
+                    <Button variant="ghost" size="icon" className="hover:bg-accent">
                       <MoreVertical className="h-5 w-5" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align="end"
-                    className="w-48 bg-background/95 backdrop-blur-xl border-white/10"
+                    className="w-48 bg-background/95 backdrop-blur-xl border-border"
                   >
                     <DropdownMenuItem
                       className="cursor-pointer"
@@ -1565,7 +1704,7 @@ export default function Chats() {
                       <LogOut className="w-4 h-4 mr-2" />
                       Clear Chat
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator className="bg-white/10" />
+                    <DropdownMenuSeparator className="bg-accent" />
                     <DropdownMenuItem
                       className="cursor-pointer text-red-500 focus:text-red-500"
                       onClick={handleBlockUser}
@@ -1579,7 +1718,7 @@ export default function Chats() {
             </div>
 
             {pinnedMessages.length > 0 && (
-              <div className="px-4 py-2 bg-white/5 border-b border-white/10 backdrop-blur-sm">
+              <div className="px-4 py-2 bg-muted/40 border-b border-border backdrop-blur-sm">
                 <div className="flex items-center gap-2 text-sm">
                   <Pin className="h-4 w-4 text-muted-foreground" />
                   <span className="text-muted-foreground">Pinned:</span>
@@ -1593,6 +1732,20 @@ export default function Chats() {
                 {isLoadingOlder && (
                   <div className="flex justify-center py-4">
                     <p className="text-sm text-muted-foreground">Loading older messages...</p>
+                  </div>
+                )}
+                {messages.length === 0 && !isLoadingOlder && (
+                  <div className="flex h-full min-h-[40vh] flex-col items-center justify-center text-center">
+                    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                      <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">No messages yet</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Say hello to {/* p.id is the MongoDB id; user.uid is the Firebase uid. */}
+                      {selectedConversation?.participants.find((p) => p.firebaseUid !== user?.uid)
+                        ?.name || "them"}
+                      .
+                    </p>
                   </div>
                 )}
                 {messages.map((msg) => {
@@ -1610,9 +1763,12 @@ export default function Chats() {
 
                   const isMe = isMessageFromMe(msg, selectedConversation);
                   return (
-                    <div key={msg.id} className="flex gap-3 group/message">
+                    <div
+                      key={msg.id}
+                      className={`flex gap-3 group/message ${isMe ? "flex-row-reverse" : ""}`}
+                    >
                       {!isMe && (
-                        <Avatar className="h-8 w-8 border border-white/10">
+                        <Avatar className="h-8 w-8 border border-border">
                           {selectedConversation.participants.find((p) => p.id === msg.sender.id)
                             ?.avatar && (
                             <AvatarImage
@@ -1635,7 +1791,9 @@ export default function Chats() {
                           </AvatarFallback>
                         </Avatar>
                       )}
-                      <div className="flex flex-col items-start max-w-[70%]">
+                      <div
+                        className={`flex flex-col max-w-[70%] ${isMe ? "items-end" : "items-start"}`}
+                      >
                         {selectedConversation?.isGroup && (
                           <span className="text-xs font-medium text-muted-foreground mb-1">
                             {isMe ? "You" : msg.sender.name}
@@ -1643,9 +1801,19 @@ export default function Chats() {
                         )}
                         <div className="relative">
                           <div className={getMessageBubbleClasses(isMe, msg.isPinned)}>
-                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                              {msg.content}
-                            </p>
+                            {msg.attachment && (
+                              <ChatAttachment
+                                attachment={msg.attachment}
+                                conversationId={msg.conversationId}
+                              />
+                            )}
+                            {/* An attachment's caption defaults to its file name,
+                                which the card above already shows. */}
+                            {!(msg.attachment && msg.content === msg.attachment.name) && (
+                              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                {msg.content}
+                              </p>
+                            )}
                             <div
                               className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${
                                 isMe
@@ -1688,11 +1856,15 @@ export default function Chats() {
                               )}
                             </div>
                           </div>
-                          <div className="absolute -top-2 right-0 -mr-8 opacity-0 group-hover/message:opacity-100 transition-opacity">
+                          <div
+                            className={`absolute -top-2 opacity-0 group-hover/message:opacity-100 transition-opacity ${
+                              isMe ? "left-0 -ml-8" : "right-0 -mr-8"
+                            }`}
+                          >
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-6 w-6 hover:bg-white/10"
+                              className="h-6 w-6 hover:bg-accent"
                               onClick={() => handlePinMessage(msg.id, msg.isPinned)}
                             >
                               <Pin className={`h-3 w-3 ${msg.isPinned ? "fill-current" : ""}`} />
@@ -1708,7 +1880,7 @@ export default function Chats() {
             </ScrollArea>
 
             {isUserTyping() && getTypingUser() && (
-              <div className="px-4 py-2 border-t border-white/10 bg-white/5">
+              <div className="px-4 py-2 border-t border-border bg-muted/40">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <div className="flex gap-1">
                     <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
@@ -1726,10 +1898,16 @@ export default function Chats() {
               </div>
             )}
 
-            <div className="p-4 border-t border-white/10 bg-white/5 backdrop-blur-sm">
+            <div className="p-4 border-t border-border bg-card/60 backdrop-blur-sm">
+              {uploadingAttachment && (
+                <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span className="truncate">Uploading {uploadingAttachment}…</span>
+                </div>
+              )}
               <form
                 onSubmit={handleSendMessage}
-                className="relative flex items-end gap-2 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-lg"
+                className="relative flex items-end gap-2 p-2 rounded-2xl bg-background border border-border shadow-sm"
               >
                 <div className="flex-1 flex flex-col gap-2">
                   <div className="relative">
@@ -1740,12 +1918,28 @@ export default function Chats() {
                       className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
                     />
                     <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={FILE_ACCEPT}
+                        className="hidden"
+                        onChange={handleFilePicked}
+                      />
+                      <input
+                        ref={imageInputRef}
+                        type="file"
+                        accept={IMAGE_ACCEPT}
+                        className="hidden"
+                        onChange={handleFilePicked}
+                      />
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
-                        onClick={handleFileAttach}
+                        aria-label="Attach a file"
+                        disabled={!!uploadingAttachment}
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => fileInputRef.current?.click()}
                       >
                         <Paperclip className="h-4 w-4" />
                       </Button>
@@ -1753,8 +1947,10 @@ export default function Chats() {
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
-                        onClick={handleFileAttach}
+                        aria-label="Attach an image"
+                        disabled={!!uploadingAttachment}
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => imageInputRef.current?.click()}
                       >
                         <ImageIcon className="h-4 w-4" />
                       </Button>
@@ -1764,13 +1960,13 @@ export default function Chats() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                            className="h-8 w-8 hover:bg-accent text-muted-foreground hover:text-foreground"
                           >
                             <Smile className="h-4 w-4" />
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent
-                          className="w-auto p-2 bg-background/95 backdrop-blur-xl border-white/10"
+                          className="w-auto p-2 bg-background/95 backdrop-blur-xl border-border"
                           align="end"
                         >
                           <div className="grid grid-cols-4 gap-1">
@@ -1779,7 +1975,7 @@ export default function Chats() {
                                 key={i}
                                 variant="ghost"
                                 size="icon"
-                                className="h-10 w-10 text-xl hover:bg-white/10"
+                                className="h-10 w-10 text-xl hover:bg-accent"
                                 onClick={() => handleEmojiSelect(emoji)}
                               >
                                 {emoji}
@@ -1800,7 +1996,7 @@ export default function Chats() {
         ) : (
           <div className="hidden md:flex flex-1 items-center justify-center text-muted-foreground">
             <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted/40 flex items-center justify-center animate-pulse">
                 <MessageSquare className="h-10 w-10 opacity-50" />
               </div>
               <p className="text-xl font-semibold mb-2">Select a conversation</p>
@@ -1809,6 +2005,28 @@ export default function Chats() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const action = confirmAction;
+                setConfirmAction(null);
+                void action?.run();
+              }}
+            >
+              {confirmAction?.confirmLabel}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
