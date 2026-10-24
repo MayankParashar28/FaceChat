@@ -209,6 +209,16 @@ export default function Chats() {
     enabled: !!user?.uid,
   });
 
+  const refetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedRefetchConversations = useCallback(() => {
+    if (refetchDebounceRef.current) {
+      clearTimeout(refetchDebounceRef.current);
+    }
+    refetchDebounceRef.current = setTimeout(() => {
+      refetchConversations();
+    }, 400);
+  }, [refetchConversations]);
+
   useEffect(() => {
     const newSocket = io(window.location.origin, {
       transports: ["websocket", "polling"],
@@ -374,7 +384,7 @@ export default function Chats() {
         }
       }
 
-      refetchConversations();
+      debouncedRefetchConversations();
     });
 
     newSocket.on("message:status", ({ messageId, status }) => {
@@ -413,8 +423,6 @@ export default function Chats() {
           return true;
         });
       });
-
-      refetchConversations();
     });
 
     newSocket.on("message:error", ({ error, tempId }: { error: string; tempId?: string }) => {
@@ -514,16 +522,19 @@ export default function Chats() {
     });
 
     newSocket.on("conversation:updated", () => {
-      // Refetch conversations to update the list
-      refetchConversations();
+      // Debounced refetch to avoid multiple rapid requests
+      debouncedRefetchConversations();
     });
 
     setSocket(newSocket);
 
     return () => {
       newSocket.close();
+      if (refetchDebounceRef.current) {
+        clearTimeout(refetchDebounceRef.current);
+      }
     };
-  }, [refetchConversations, firebaseUser]);
+  }, [debouncedRefetchConversations, firebaseUser]);
 
   useEffect(() => {
     // Clear typing state when conversation changes
@@ -583,12 +594,10 @@ export default function Chats() {
           setMessages(normalizedMessages);
           setHasMoreMessages(messagesArray.length === 30); // If we got 30 messages, there might be more
 
-          // Mark all messages from others as seen
-          normalizedMessages.forEach((msg) => {
-            if (msg.senderId !== user?.uid) {
-              socket.emit("message:seen", { messageId: msg.id, userId: user.uid });
-            }
-          });
+          // Mark all messages from others as read in one batch
+          if (user?.uid && normalizedMessages.some((msg) => msg.senderId !== user.uid)) {
+            socket.emit("mark:read", { conversationId: currentChatId, userId: user.uid });
+          }
 
           // Gently scroll to show recent messages, but not force to absolute bottom
           // This allows users to see the conversation naturally and scroll up for older messages

@@ -290,10 +290,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
               unreadCount,
             };
 
-            // Broadcast to all participants using Firebase UID
+            // Broadcast to conversation room and participant user rooms
+            io.to(`conversation:${conversation._id.toString()}`).emit(
+              "conversation:updated",
+              formattedConv
+            );
             conversation.participants.forEach((p: any) => {
               if (p.firebaseUid) {
-                io.emit("conversation:updated", formattedConv);
+                io.to(`user:${p.firebaseUid}`).emit("conversation:updated", formattedConv);
+              }
+              if (p._id) {
+                io.to(`user:${p._id.toString()}`).emit("conversation:updated", formattedConv);
               }
             });
           }
