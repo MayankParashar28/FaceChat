@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { auth } from "@/lib/firebase";
+import { getAuthToken } from "@/lib/queryClient";
 
 type Notification = {
   _id: string;
@@ -24,30 +24,10 @@ export default function Notifications() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
 
-  const getToken = async (): Promise<string | null> => {
-    if (auth.currentUser) {
-      try {
-        const tok = await auth.currentUser.getIdToken();
-        if (tok) return tok;
-      } catch (e) {}
-    }
-    if (user?.uid) return user.uid;
-    if (typeof window !== "undefined") {
-      const rawMock = localStorage.getItem("facechat_mock_user");
-      if (rawMock) {
-        try {
-          const parsed = JSON.parse(rawMock);
-          if (parsed?.uid) return parsed.uid;
-        } catch (e) {}
-      }
-    }
-    return null;
-  };
-
   const { data: notifications = [], isLoading } = useQuery<Notification[]>({
     queryKey: ["notifications"],
     queryFn: async () => {
-      const token = await getToken();
+      const token = await getAuthToken();
       if (!token) return [];
       const res = await fetch("/api/notifications", {
         headers: { Authorization: `Bearer ${token}` },
@@ -59,40 +39,44 @@ export default function Notifications() {
     refetchInterval: 10000, // Poll every 10s
   });
 
+  // A fetch that resolves is not a fetch that succeeded: these all ignored the
+  // response, so a 403 or 500 still ran onSuccess and the UI claimed the action
+  // had worked until the next refetch put the row back.
+  const notificationRequest = async (path: string, method: "PUT" | "DELETE") => {
+    const token = await getAuthToken();
+    const res = await fetch(`/api/notifications${path}`, {
+      method,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed (${res.status})`);
+    }
+    return res.json().catch(() => ({}));
+  };
+
+  const showError = (error: Error) =>
+    toast({ variant: "destructive", title: "Something went wrong", description: error.message });
+
   const markReadMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const token = await getToken();
-      await fetch(`/api/notifications/${id}/read`, {
-        method: "PUT",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    },
+    mutationFn: (id: string) => notificationRequest(`/${id}/read`, "PUT"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+    onError: showError,
   });
 
   const markAllReadMutation = useMutation({
-    mutationFn: async () => {
-      const token = await getToken();
-      await fetch(`/api/notifications/read-all`, {
-        method: "PUT",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    },
+    mutationFn: () => notificationRequest(`/read-all`, "PUT"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+    onError: showError,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const token = await getToken();
-      await fetch(`/api/notifications/${id}`, {
-        method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    },
+    mutationFn: (id: string) => notificationRequest(`/${id}`, "DELETE"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       toast({ title: "Notification removed" });
     },
+    onError: showError,
   });
 
   const handleAction = (notif: Notification) => {
@@ -133,7 +117,7 @@ export default function Notifications() {
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Notifications</h1>
           <p className="text-muted-foreground">Manage your alerts and new matches.</p>
@@ -141,6 +125,7 @@ export default function Notifications() {
         {notifications.length > 0 && (
           <Button
             variant="outline"
+            className="self-start shrink-0 sm:self-auto"
             onClick={() => markAllReadMutation.mutate()}
             disabled={markAllReadMutation.isPending}
           >

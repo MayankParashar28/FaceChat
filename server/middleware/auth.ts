@@ -47,13 +47,24 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     let emailVerified = true;
     let dbUser: any = null;
 
-    // 1. Try to find user directly in MongoDB by token (firebaseUid / _id)
+    // 1. An existing account, looked up by the identifier the client holds.
+    //    Email/password signups get a generated `user_<ts>_<rand>` firebaseUid
+    //    (see routes/auth.ts), so they resolve here; the id forms cover clients
+    //    that kept a MongoDB id instead.
     try {
       dbUser = await mongoService.getUserByFirebaseUid(token);
       if (!dbUser && mongoose.Types.ObjectId.isValid(token)) {
         dbUser = await mongoService.getUserById(token);
       }
-    } catch (err) {}
+      if (!dbUser && token.startsWith("user_")) {
+        const candidate = token.slice("user_".length);
+        if (mongoose.Types.ObjectId.isValid(candidate)) {
+          dbUser = await mongoService.getUserById(candidate);
+        }
+      }
+    } catch (err) {
+      logger.error("Error looking up user during authentication:", err);
+    }
 
     if (dbUser) {
       uid = dbUser.firebaseUid || dbUser._id.toString();
@@ -61,7 +72,8 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       name = dbUser.name;
       emailVerified = dbUser.isEmailVerified ?? true;
     } else {
-      // 2. Try Firebase token verification if available
+      // 2. A Firebase ID token. Its uid may not have a MongoDB row yet — that
+      //    is normal right after sign-up, and routes handle a missing dbUser.
       try {
         const decodedToken = await verifyFirebaseToken(token);
         uid = decodedToken.uid;
@@ -71,20 +83,14 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
 
         dbUser = await mongoService.getUserByFirebaseUid(uid);
       } catch (err) {
-        // 3. Fallback for custom user tokens (e.g. user_... or mock-...)
-        uid = token;
-        name = token.startsWith("mock-") ? token.replace("mock-", "") : token;
-        email = `${name.toLowerCase()}@demo.local`;
-
-        try {
-          dbUser = await mongoService.createOrUpdateUser({
-            firebaseUid: uid,
-            email,
-            name,
-            username: name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "user",
-            isEmailVerified: true,
-          });
-        } catch (createErr) {}
+        // Anything else is simply not a valid credential.
+        //
+        // This used to fall through to creating an account from whatever
+        // string arrived, so any value in the Authorization header became a
+        // real, usable identity — unauthenticated requests were silently
+        // promoted to authenticated ones under a brand new user.
+        logger.warn("Rejected an unrecognised authentication token");
+        return res.status(401).json({ error: "Invalid or expired credentials" });
       }
     }
 
@@ -99,8 +105,10 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
 
     next();
   } catch (error: any) {
+    // Previously this called next() without a user, so an internal failure
+    // looked like an anonymous request rather than an error.
     logger.error("Authentication error:", error);
-    next();
+    res.status(500).json({ error: "Authentication failed" });
   }
 }
 

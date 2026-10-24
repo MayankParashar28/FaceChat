@@ -362,6 +362,7 @@ export class MongoDBService {
     hostId: string;
     participants: string[];
     startTime: Date;
+    endTime?: Date;
     roomId: string;
     meetingType?: "video" | "audio" | "screen-share";
     settings?: any;
@@ -433,6 +434,9 @@ export class MongoDBService {
       // Add optional fields only if provided
       if (meetingData.description) {
         meetingDataToSave.description = meetingData.description;
+      }
+      if (meetingData.endTime) {
+        meetingDataToSave.endTime = meetingData.endTime;
       }
 
       logger.info("Creating Meeting instance with data:", {
@@ -750,6 +754,7 @@ export class MongoDBService {
       const oid = new mongoose.Types.ObjectId(userId);
       const now = new Date();
       const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
       const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
       const pipeline = [
@@ -820,6 +825,12 @@ export class MongoDBService {
                   duration: { $sum: "$duration" },
                 },
               },
+            ],
+            // This week vs the week before, for the dashboard's trend line.
+            callsThisWeek: [{ $match: { startTime: { $gte: oneWeekAgo } } }, { $count: "count" }],
+            callsPreviousWeek: [
+              { $match: { startTime: { $gte: twoWeeksAgo, $lt: oneWeekAgo } } },
+              { $count: "count" },
             ],
             // Stats from last month for comparison
             lastMonthTotals: [
@@ -899,7 +910,13 @@ export class MongoDBService {
       }));
 
       // Calculate trends (naive)
-      const currentTotals = data.totals[0] || { totalCalls: 0, totalDuration: 0, avgEngagement: 0 };
+      // avgEngagement defaults to null, not 0: with no calls there is nothing to
+      // average, and a displayed "0" reads as a measured score of zero.
+      const currentTotals = data.totals[0] || {
+        totalCalls: 0,
+        totalDuration: 0,
+        avgEngagement: null,
+      };
 
       // Format reactions
       const topReactions = (data.reactions || []).map((r: any) => ({
@@ -907,20 +924,28 @@ export class MongoDBService {
         count: r.count,
       }));
 
+      // The most common emotion actually recorded, or null when there is
+      // nothing to go on. This used to be the constant string "Positive".
+      const dominantEmotion =
+        emotionData.length > 0
+          ? emotionData.reduce((a: any, b: any) => (b.value > a.value ? b : a)).name
+          : null;
+
       return {
         totalCalls: currentTotals.totalCalls,
         totalDuration: currentTotals.totalDuration,
         uniqueParticipants: data.participants[0]?.count || 0,
-        avgSentiment: "Positive", // Placeholder until sentiment analysis is better
+        // Null rather than 0 so the UI can tell "no calls yet" apart from
+        // "measured, and it is zero".
+        avgEngagement:
+          currentTotals.avgEngagement != null ? Math.round(currentTotals.avgEngagement) : null,
+        callsThisWeek: data.callsThisWeek[0]?.count || 0,
+        callsPreviousWeek: data.callsPreviousWeek[0]?.count || 0,
+        avgSentiment: dominantEmotion,
         activityData: activityDataMonFirst,
-        emotionData:
-          emotionData.length > 0
-            ? emotionData
-            : [
-                { name: "Happy", value: 30 },
-                { name: "Neutral", value: 50 },
-                { name: "Surprised", value: 20 },
-              ],
+        // Previously fell back to an invented Happy/Neutral/Surprised split
+        // when there was no data, which read as a real measurement.
+        emotionData,
         topReactions,
       };
     } catch (error) {

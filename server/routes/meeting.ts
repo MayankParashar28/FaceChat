@@ -1,10 +1,24 @@
 import { logger } from "../utils/logger";
 import { Router } from "express";
+import { randomUUID } from "crypto";
 import { authenticate } from "../middleware/auth";
 import { apiRateLimiter } from "../middleware/rateLimiter";
 import { mongoService } from "../services/mongodb";
 
 const router = Router();
+
+/**
+ * A room id with enough entropy that meeting links cannot be guessed.
+ *
+ * The previous `Math.random().toString(36).substring(7)` produced 3-9
+ * characters — measured over 200k samples it was usually 5 or 6, and sometimes
+ * only 3, which is about 46k possibilities. Anyone could have enumerated room
+ * ids and walked into calls. It also risked collisions against the unique
+ * index on `roomId`.
+ */
+function generateRoomId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 20);
+}
 
 // Validate meeting room by ID
 router.get("/validate/:roomId", async (req, res) => {
@@ -37,18 +51,29 @@ router.post("/", apiRateLimiter, authenticate, async (req, res) => {
       return res.status(404).json({ error: "User not found in database" });
     }
 
-    const { firebaseToken, ...meetingData } = req.body;
+    // Only the fields a client is allowed to set. Spreading the body let a
+    // caller set anything on the document, including status and analytics.
+    const { title, startTime, endTime, description, meetingType, status, participants } = req.body;
 
-    // Generate a random room ID if not provided
-    const roomId = meetingData.roomId || Math.random().toString(36).substring(7);
+    if (typeof title !== "string" || !title.trim()) {
+      return res.status(400).json({ error: "A meeting title is required" });
+    }
 
-    // Ensure participants is an array
-    const participants = meetingData.participants || [];
+    const start = startTime ? new Date(startTime) : new Date();
+    if (Number.isNaN(start.getTime())) {
+      return res.status(400).json({ error: "Invalid startTime" });
+    }
 
     const meeting = await mongoService.createMeeting({
-      ...meetingData,
-      roomId,
-      participants,
+      title: title.trim(),
+      description: typeof description === "string" ? description : undefined,
+      startTime: start,
+      endTime: endTime ? new Date(endTime) : undefined,
+      roomId: generateRoomId(),
+      meetingType:
+        meetingType === "audio" || meetingType === "screen-share" ? meetingType : "video",
+      status: status === "active" || status === "ended" ? status : "scheduled",
+      participants: Array.isArray(participants) ? participants : [],
       hostId: dbUser._id.toString(), // Use MongoDB ObjectId, not Firebase UID
     });
 

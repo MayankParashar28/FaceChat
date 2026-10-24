@@ -124,7 +124,7 @@ export default function Meetings() {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden relative">
-      <header className="flex items-center justify-between gap-4 p-6 border-b border-white/5 bg-white/[0.02] backdrop-blur-sm z-10">
+      <header className="flex items-center justify-between gap-4 p-6 border-b border-border bg-card/60 backdrop-blur-sm z-10">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold">Meetings</h1>
         </div>
@@ -136,7 +136,7 @@ export default function Meetings() {
                 Schedule meeting
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px] glass-panel border-white/10">
+            <DialogContent className="sm:max-w-[425px] glass-panel border-border">
               <DialogHeader>
                 <DialogTitle>Schedule meeting</DialogTitle>
                 <DialogDescription>Create a new meeting event.</DialogDescription>
@@ -150,7 +150,7 @@ export default function Meetings() {
                     id="title"
                     value={newMeetingTitle}
                     onChange={(e) => setNewMeetingTitle(e.target.value)}
-                    className="col-span-1 md:col-span-3 bg-white/5 border-white/10"
+                    className="col-span-1 md:col-span-3"
                     placeholder="Team Sync"
                   />
                 </div>
@@ -163,17 +163,25 @@ export default function Meetings() {
                     type="time"
                     value={newMeetingTime}
                     onChange={(e) => setNewMeetingTime(e.target.value)}
-                    className="col-span-1 md:col-span-3 bg-white/5 border-white/10"
+                    className="col-span-1 md:col-span-3"
                   />
                 </div>
               </div>
               <DialogFooter>
                 <Button
                   onClick={() => {
+                    if (!newMeetingTitle.trim()) {
+                      toast({
+                        variant: "destructive",
+                        title: "Title required",
+                        description: "Give the meeting a name so you can recognise it later.",
+                      });
+                      return;
+                    }
                     if (!date) {
                       toast({
                         variant: "destructive",
-                        title: "Error",
+                        title: "Date required",
                         description: "Please select a date.",
                       });
                       return;
@@ -183,11 +191,11 @@ export default function Meetings() {
                     selectedDate.setHours(hours, minutes);
 
                     createMeetingMutation.mutate({
-                      title: newMeetingTitle,
+                      title: newMeetingTitle.trim(),
                       startTime: selectedDate.toISOString(),
                     });
                   }}
-                  disabled={createMeetingMutation.isPending}
+                  disabled={createMeetingMutation.isPending || !newMeetingTitle.trim()}
                 >
                   {createMeetingMutation.isPending && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -265,7 +273,7 @@ export default function Meetings() {
                         className="group relative overflow-hidden rounded-xl p-4 hover:bg-accent/30 transition-all cursor-pointer flex items-center justify-between border-b border-border/20 last:border-0"
                       >
                         <div className="flex items-center gap-4">
-                          <div className="flex flex-col items-center justify-center w-16 h-16 rounded-lg bg-white/5 border border-white/10">
+                          <div className="flex flex-col items-center justify-center w-16 h-16 rounded-lg bg-muted/40 border border-border">
                             <span className="text-sm font-bold text-primary">
                               {format(new Date(meeting.startTime), "h:mm")}
                             </span>

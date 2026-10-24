@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useChartTheme } from "@/hooks/useChartTheme";
 import { getQueryFn } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -31,13 +32,15 @@ interface AnalyticsData {
   totalCalls: number;
   totalDuration: number;
   uniqueParticipants: number;
-  avgSentiment: string;
+  /** Null until at least one call has recorded emotion data. */
+  avgSentiment: string | null;
   activityData: { name: string; calls: number; duration: number }[];
   emotionData: { name: string; value: number }[];
   topReactions: { emoji: string; count: number }[];
 }
 
 export default function Analytics() {
+  const chart = useChartTheme();
   const {
     data: analytics,
     isLoading,
@@ -182,16 +185,16 @@ export default function Analytics() {
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={safeActivityData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
                   <XAxis
                     dataKey="name"
-                    stroke="#888888"
+                    stroke={chart.axis}
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
                   />
                   <YAxis
-                    stroke="#888888"
+                    stroke={chart.axis}
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
@@ -199,12 +202,12 @@ export default function Analytics() {
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "rgba(0,0,0,0.8)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      backgroundColor: chart.tooltipBg,
+                      border: `1px solid ${chart.tooltipBorder}`,
                       borderRadius: "8px",
                     }}
-                    itemStyle={{ color: "#fff" }}
-                    cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                    itemStyle={{ color: chart.tooltipText }}
+                    cursor={{ fill: chart.cursor }}
                   />
                   <Bar dataKey="calls" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -232,22 +235,22 @@ export default function Analytics() {
                       <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
                   <XAxis
                     dataKey="name"
-                    stroke="#888888"
+                    stroke={chart.axis}
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
                   />
-                  <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke={chart.axis} fontSize={12} tickLine={false} axisLine={false} />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "rgba(0,0,0,0.8)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      backgroundColor: chart.tooltipBg,
+                      border: `1px solid ${chart.tooltipBorder}`,
                       borderRadius: "8px",
                     }}
-                    itemStyle={{ color: "#fff" }}
+                    itemStyle={{ color: chart.tooltipText }}
                   />
                   <Area
                     type="monotone"
@@ -277,34 +280,41 @@ export default function Analytics() {
               <CardDescription>Overall sentiment across all meetings</CardDescription>
             </CardHeader>
             <CardContent className="h-[270px] flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={analytics?.emotionData || []}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {(analytics?.emotionData || []).map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8"][index % 5]}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "rgba(0,0,0,0.8)",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: "8px",
-                    }}
-                    itemStyle={{ color: "#fff" }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+              {(analytics?.emotionData || []).length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-muted-foreground">
+                  <span className="text-4xl mb-2 opacity-50">🫥</span>
+                  <p>No emotion data yet</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={analytics?.emotionData || []}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {(analytics?.emotionData || []).map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8"][index % 5]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: chart.tooltipBg,
+                        border: `1px solid ${chart.tooltipBorder}`,
+                        borderRadius: "8px",
+                      }}
+                      itemStyle={{ color: chart.tooltipText }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -325,7 +335,7 @@ export default function Analytics() {
                 {(analytics?.topReactions || []).map((reaction, index) => (
                   <div
                     key={index}
-                    className="flex flex-col items-center justify-center p-4 bg-white/5 rounded-2xl min-w-[100px] border border-white/10 hover:bg-white/10 transition-colors"
+                    className="flex flex-col items-center justify-center p-4 bg-muted/40 rounded-2xl min-w-[100px] border border-border hover:bg-accent transition-colors"
                   >
                     <span className="text-4xl mb-2 filter drop-shadow-lg">{reaction.emoji}</span>
                     <span className="text-sm font-medium text-muted-foreground">

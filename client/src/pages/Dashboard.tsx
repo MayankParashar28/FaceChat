@@ -45,6 +45,13 @@ interface UserProfile {
 
 type MeetingParticipant = string | { _id?: string; name?: string; email?: string };
 
+interface DashboardStats {
+  callsThisWeek: number;
+  callsPreviousWeek: number;
+  /** 0-100, or null when no call has been scored yet. */
+  avgEngagement: number | null;
+}
+
 interface UserMeeting {
   _id: string;
   hostId: string | { _id?: string; name?: string; email?: string };
@@ -168,7 +175,9 @@ const ActionButton = ({
     <div
       className={`p-2 rounded-full ${variant === "primary" ? "bg-white/20" : "bg-primary/5 text-primary"}`}
     >
-      <Icon className={`w-5 h-5 ${variant === "primary" ? "text-white" : "text-primary"}`} />
+      <Icon
+        className={`w-5 h-5 ${variant === "primary" ? "text-primary-foreground" : "text-primary"}`}
+      />
     </div>
     <span className="font-medium text-xs">{label}</span>
     {variant === "primary" && (
@@ -194,6 +203,16 @@ export default function Dashboard() {
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: !!user?.uid,
     staleTime: 30000,
+  });
+
+  // Stats come from the server aggregation rather than the meetings list
+  // below: that list is capped at 10, so counting a week from it would be
+  // wrong for anyone with more calls than that.
+  const { data: stats } = useQuery<DashboardStats>({
+    queryKey: ["/api/meetings/analytics"],
+    queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !!user,
+    staleTime: 60000,
   });
 
   const {
@@ -358,7 +377,23 @@ export default function Dashboard() {
 
   const quickActionInviteIds = topCollaborators.map((c) => c.id).filter(Boolean);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const weeklyMeetings = filteredMeetings.filter((m) => new Date(m.startTime) >= weekAgo).length;
+  const weeklyMeetings =
+    stats?.callsThisWeek ?? filteredMeetings.filter((m) => new Date(m.startTime) >= weekAgo).length;
+
+  // Plain counts rather than a percentage: going from 0 to 1 call is not
+  // "+100%", and with numbers this small a percentage reads as false precision.
+  const weeklyTrend = (() => {
+    if (!stats) return "In the last 7 days";
+    const diff = stats.callsThisWeek - stats.callsPreviousWeek;
+    if (stats.callsPreviousWeek === 0 && stats.callsThisWeek === 0) return "No calls yet";
+    if (stats.callsPreviousWeek === 0) return "First week with calls";
+    if (diff === 0) return "Same as last week";
+    return `${diff > 0 ? "+" : ""}${diff} vs last week`;
+  })();
+
+  const engagementValue = stats?.avgEngagement != null ? String(stats.avgEngagement) : "—";
+  const engagementTrend =
+    stats?.avgEngagement != null ? "Average score across your calls" : "No calls scored yet";
   const totalDuration = filteredMeetings.reduce(
     (acc, m) =>
       acc + getDurationMinutes(new Date(m.startTime), m.endTime ? new Date(m.endTime) : undefined),
@@ -411,7 +446,7 @@ export default function Dashboard() {
           icon={Video}
           label="Weekly Calls"
           value={weeklyMeetings}
-          trend="+12% vs last week"
+          trend={weeklyTrend}
           delay={0.1}
         />
         <StatCard
@@ -431,8 +466,8 @@ export default function Dashboard() {
         <StatCard
           icon={Activity}
           label="Engagement"
-          value="High"
-          trend="Top 10% engagement among users"
+          value={engagementValue}
+          trend={engagementTrend}
           delay={0.4}
         />
       </div>
@@ -463,7 +498,7 @@ export default function Dashboard() {
                   />
                 </div>
               </DialogTrigger>
-              <DialogContent className="w-[90vw] max-w-[400px] glass-panel border-white/10">
+              <DialogContent className="w-[90vw] max-w-[400px] glass-panel border-border">
                 <DialogHeader>
                   <DialogTitle>Join a room</DialogTitle>
                   <DialogDescription>Enter a room code to jump into a meeting.</DialogDescription>
@@ -507,7 +542,7 @@ export default function Dashboard() {
                   />
                 </div>
               </DialogTrigger>
-              <DialogContent className="w-[90vw] max-w-[420px] glass-panel border-white/10">
+              <DialogContent className="w-[90vw] max-w-[420px] glass-panel border-border">
                 <DialogHeader>
                   <DialogTitle>Schedule a Meeting</DialogTitle>
                   <DialogDescription>
@@ -596,7 +631,7 @@ export default function Dashboard() {
                 variant="ghost"
                 size="sm"
                 onClick={() => refetch()}
-                className="hover:bg-white/5"
+                className="hover:bg-accent"
               >
                 <RefreshCw className={`w-4 h-4 ${meetingsLoading ? "animate-spin" : ""}`} />
               </Button>
@@ -656,7 +691,7 @@ export default function Dashboard() {
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.1 }}
-                        className="group relative overflow-hidden rounded-xl p-3 md:p-4 hover:bg-accent/30 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between border border-border/10 bg-white/5 gap-3"
+                        className="group relative overflow-hidden rounded-xl p-3 md:p-4 hover:bg-accent/30 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between border border-border/60 bg-muted/40 gap-3"
                         onClick={() => setLocation(`/summary/${meeting._id}`)}
                       >
                         <div className="flex items-center gap-3 md:gap-4">
@@ -745,7 +780,7 @@ export default function Dashboard() {
                     className="flex items-center justify-between group py-3 px-2 rounded-lg hover:bg-accent/30 transition-colors border-b border-border/20 last:border-0"
                   >
                     <div className="flex items-center gap-3">
-                      <Avatar className="h-9 w-9 border border-white/10">
+                      <Avatar className="h-9 w-9 border border-border">
                         <AvatarImage src={collab.avatar} />
                         <AvatarFallback className="bg-primary/10 text-primary text-xs">
                           {getInitials(collab.name)}
@@ -763,7 +798,7 @@ export default function Dashboard() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      className="h-7 text-xs px-3 bg-white/5 hover:bg-primary/20 hover:text-primary border-white/5"
+                      className="h-7 text-xs px-3 bg-muted/40 hover:bg-primary/10 hover:text-primary border-border"
                       onClick={() => startQuickAction("invite")}
                     >
                       Invite
