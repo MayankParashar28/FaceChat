@@ -431,6 +431,12 @@ export class MongoDBService {
         isDeleted: false,
       };
 
+      // A meeting created as already running started now; durations are
+      // measured from this, never from the scheduled startTime.
+      if (meetingDataToSave.status === "active") {
+        meetingDataToSave.actualStartTime = new Date();
+      }
+
       // Add optional fields only if provided
       if (meetingData.description) {
         meetingDataToSave.description = meetingData.description;
@@ -518,6 +524,7 @@ export class MongoDBService {
       hostId: hostIdObj,
       participants: participantsObj,
       startTime: meetingData.startTime,
+      ...(meetingData.status === "active" ? { actualStartTime: new Date() } : {}),
       meetingType: meetingData.meetingType || "video",
       status: meetingData.status || "scheduled",
       settings: {
@@ -597,11 +604,84 @@ export class MongoDBService {
     }
   }
 
+  /**
+   * Totals for the Meetings page: how many meetings are still ahead, and how
+   * much time has actually been spent in calls.
+   *
+   * Aggregated in the database rather than summed on the client, which could
+   * only ever see the page of meetings it had fetched.
+   */
+  async getUserMeetingTotals(userId: string): Promise<{ upcoming: number; totalMinutes: number }> {
+    try {
+      const objectId = new mongoose.Types.ObjectId(userId);
+      const mine = { $or: [{ hostId: objectId }, { participants: objectId }] };
+
+      const [upcoming, spent] = await Promise.all([
+        Meeting.countDocuments({
+          ...mine,
+          status: { $ne: "ended" },
+          startTime: { $gt: new Date() },
+        }),
+        // Same precedence as getUserMeetingAnalytics, so the figure here and
+        // the one on the Analytics page cannot disagree: the duration measured
+        // when the call ended, falling back to the span between its times.
+        //
+        // The span runs from actualStartTime — when the call really began —
+        // and only from the scheduled startTime for meetings that ended before
+        // that field existed.
+        Meeting.aggregate([
+          { $match: { ...mine, status: "ended" } },
+          {
+            $addFields: {
+              realStart: { $ifNull: ["$actualStartTime", "$startTime"] },
+            },
+          },
+          {
+            $addFields: {
+              minutes: {
+                $cond: {
+                  if: { $gt: ["$analytics.totalDuration", 0] },
+                  then: "$analytics.totalDuration",
+                  else: {
+                    $max: [
+                      0,
+                      {
+                        $divide: [
+                          { $subtract: [{ $ifNull: ["$endTime", "$realStart"] }, "$realStart"] },
+                          1000 * 60,
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+          { $group: { _id: null, totalMinutes: { $sum: "$minutes" } } },
+        ]),
+      ]);
+
+      const totalMinutes = spent[0]?.totalMinutes ?? 0;
+      return {
+        upcoming,
+        // Negative would mean a corrupt endTime; report nothing rather than a
+        // figure that cannot be true.
+        totalMinutes: totalMinutes > 0 ? Math.round(totalMinutes) : 0,
+      };
+    } catch (error) {
+      logger.error("Error getting meeting totals:", error);
+      throw error;
+    }
+  }
+
   async updateMeetingStatus(
     meetingId: string,
     status: "scheduled" | "active" | "ended"
   ): Promise<IMeeting | null> {
     try {
+      if (status === "active") {
+        return await this.activateMeeting(meetingId);
+      }
       const updateData: any = { status };
       if (status === "ended") {
         updateData.endTime = new Date();
@@ -609,6 +689,44 @@ export class MongoDBService {
       return await Meeting.findByIdAndUpdate(meetingId, updateData, { new: true });
     } catch (error) {
       logger.error("Error updating meeting status:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark a meeting as running and stamp when the call actually began.
+   *
+   * `startTime` is the slot the meeting was booked for and is left alone — it
+   * is what the calendar shows. `actualStartTime` is what durations are
+   * measured from, so it must be the moment the first participant was really
+   * in the room: participants join one after another and each join reaches
+   * here, so the stamp is written only when it is missing. The update is a
+   * single pipeline so two simultaneous joins cannot both win it.
+   *
+   * `restart` is for a meeting that had already ended and is being started
+   * again. That is a new call, not a continuation, so it takes a fresh stamp
+   * and drops the old endTime.
+   */
+  async activateMeeting(
+    meetingId: string,
+    options: { restart?: boolean } = {}
+  ): Promise<IMeeting | null> {
+    try {
+      const now = new Date();
+      const pipeline: Record<string, unknown>[] = [
+        {
+          $set: {
+            status: "active",
+            actualStartTime: options.restart ? now : { $ifNull: ["$actualStartTime", now] },
+          },
+        },
+      ];
+      if (options.restart) {
+        pipeline.push({ $unset: "endTime" });
+      }
+      return await Meeting.findByIdAndUpdate(meetingId, pipeline, { new: true });
+    } catch (error) {
+      logger.error("Error activating meeting:", error);
       throw error;
     }
   }
@@ -765,6 +883,13 @@ export class MongoDBService {
           },
         },
         {
+          // When the call really began. Only meetings that ended before
+          // actualStartTime existed fall back to the scheduled startTime.
+          $addFields: {
+            realStart: { $ifNull: ["$actualStartTime", "$startTime"] },
+          },
+        },
+        {
           $addFields: {
             calculatedDuration: {
               $cond: {
@@ -776,9 +901,14 @@ export class MongoDBService {
                 },
                 then: "$analytics.totalDuration",
                 else: {
-                  $divide: [
-                    { $subtract: [{ $ifNull: ["$endTime", new Date()] }, "$startTime"] },
-                    1000 * 60, // Convert ms to minutes
+                  $max: [
+                    0,
+                    {
+                      $divide: [
+                        { $subtract: [{ $ifNull: ["$endTime", new Date()] }, "$realStart"] },
+                        1000 * 60, // Convert ms to minutes
+                      ],
+                    },
                   ],
                 },
               },
@@ -805,16 +935,18 @@ export class MongoDBService {
               { $group: { _id: "$participants" } },
               { $count: "count" },
             ],
-            // Weekly activity (Last 7 days)
+            // Weekly activity (Last 7 days). Bucketed by when each call
+            // happened — a meeting booked last month and held today belongs to
+            // today.
             weeklyActivity: [
               {
                 $match: {
-                  startTime: { $gte: oneWeekAgo },
+                  realStart: { $gte: oneWeekAgo },
                 },
               },
               {
                 $project: {
-                  dayOfWeek: { $dayOfWeek: "$startTime" }, // 1=Sun, 2=Mon...
+                  dayOfWeek: { $dayOfWeek: "$realStart" }, // 1=Sun, 2=Mon...
                   duration: "$calculatedDuration",
                 },
               },
@@ -827,16 +959,16 @@ export class MongoDBService {
               },
             ],
             // This week vs the week before, for the dashboard's trend line.
-            callsThisWeek: [{ $match: { startTime: { $gte: oneWeekAgo } } }, { $count: "count" }],
+            callsThisWeek: [{ $match: { realStart: { $gte: oneWeekAgo } } }, { $count: "count" }],
             callsPreviousWeek: [
-              { $match: { startTime: { $gte: twoWeeksAgo, $lt: oneWeekAgo } } },
+              { $match: { realStart: { $gte: twoWeeksAgo, $lt: oneWeekAgo } } },
               { $count: "count" },
             ],
             // Stats from last month for comparison
             lastMonthTotals: [
               {
                 $match: {
-                  startTime: { $gte: oneMonthAgo, $lt: now },
+                  realStart: { $gte: oneMonthAgo, $lt: now },
                 },
               },
               {
@@ -1004,6 +1136,16 @@ export class MongoDBService {
       logger.info("Found raw conversations:", conversations.length);
       const convIds = conversations.map((c) => c._id);
 
+      // Where this user has cleared a conversation, everything up to the mark
+      // is gone for them — it must not show as a preview or count as unread.
+      const clearedFor = new Map<string, Date>();
+      conversations.forEach((conv) => {
+        const marks: any = (conv as any).clearedAt;
+        if (!marks) return;
+        const mark = marks instanceof Map ? marks.get(userId) : marks[userId];
+        if (mark) clearedFor.set(conv._id.toString(), new Date(mark));
+      });
+
       // Single aggregate query to get unread counts for all conversations in one batch
       const unreadMap = new Map<string, number>();
       if (convIds.length > 0 && mongoose.Types.ObjectId.isValid(userId)) {
@@ -1011,7 +1153,12 @@ export class MongoDBService {
           const unreadCounts = await Message.aggregate([
             {
               $match: {
-                conversationId: { $in: convIds },
+                $or: convIds.map((id) => {
+                  const cutoff = clearedFor.get(id.toString());
+                  return cutoff
+                    ? { conversationId: id, createdAt: { $gt: cutoff } }
+                    : { conversationId: id };
+                }),
                 senderId: { $ne: new mongoose.Types.ObjectId(userId) },
                 isRead: false,
               },
@@ -1031,8 +1178,13 @@ export class MongoDBService {
       const formattedConversations = conversations.map((conv) => {
         const lastMessage: any = conv.lastMessage;
         const convIdStr = conv._id.toString();
+        const cutoff = clearedFor.get(convIdStr);
         const hasValidSender =
-          lastMessage && typeof lastMessage === "object" && lastMessage.senderId;
+          lastMessage &&
+          typeof lastMessage === "object" &&
+          lastMessage.senderId &&
+          // A cleared conversation shows no preview until someone writes again.
+          !(cutoff && lastMessage.createdAt && new Date(lastMessage.createdAt) <= cutoff);
 
         return {
           id: convIdStr,
@@ -1104,6 +1256,20 @@ export class MongoDBService {
     }
   }
 
+  /** When this viewer last cleared the conversation, if they ever did. */
+  async getClearedAt(conversationId: string, viewerId: string): Promise<Date | null> {
+    try {
+      const conv = await Conversation.findById(conversationId).select("clearedAt").lean();
+      const marks = (conv as any)?.clearedAt;
+      if (!marks) return null;
+      const mark = marks instanceof Map ? marks.get(viewerId) : marks[viewerId];
+      return mark ? new Date(mark) : null;
+    } catch (error) {
+      logger.error("Error reading cleared mark:", error);
+      return null;
+    }
+  }
+
   async getConversationMessages(
     conversationId: string,
     viewerId?: string,
@@ -1118,6 +1284,12 @@ export class MongoDBService {
       // If beforeDate is provided, only get messages before that date (for pagination)
       if (beforeDate) {
         query.createdAt = { $lt: beforeDate };
+      }
+
+      // Anything the viewer cleared is gone for them, and only for them.
+      const clearedAt = viewerId ? await this.getClearedAt(conversationId, viewerId) : null;
+      if (clearedAt) {
+        query.createdAt = { ...(query.createdAt || {}), $gt: clearedAt };
       }
 
       const messages = await Message.find(query)

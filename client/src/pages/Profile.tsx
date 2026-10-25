@@ -10,7 +10,6 @@ import {
   User,
   Mail,
   Calendar,
-  Phone,
   Edit2,
   Save,
   Camera,
@@ -56,14 +55,10 @@ interface UserProfile {
   updatedAt: string;
 }
 
-type MeetingParticipant = string | { _id?: string; name?: string; email?: string };
-
-interface UserMeeting {
-  _id: string;
-  hostId: string | { _id?: string };
-  participants: MeetingParticipant[];
-  startTime: string;
-  status?: string;
+interface ProfileStats {
+  friends: number;
+  groups: number;
+  meetingsHosted: number;
 }
 
 export default function Profile() {
@@ -79,10 +74,6 @@ export default function Profile() {
     github: false,
   });
   const [isPhoneVerified, setIsPhoneVerified] = useState(false);
-  const [isSendingPhoneCode, setIsSendingPhoneCode] = useState(false);
-  const [isVerifyingPhoneCode, setIsVerifyingPhoneCode] = useState(false);
-  const [phoneCode, setPhoneCode] = useState("");
-  const [phoneVerificationId, setPhoneVerificationId] = useState<string | null>(null);
 
   // Invite System State
   const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -248,83 +239,37 @@ export default function Profile() {
     refreshLinkedProviders();
   }, [authUser?.uid]);
 
+  // Counted server-side. See GET /api/users/me/stats — this used to pull down
+  // every meeting the user had ever joined just to estimate three numbers.
   const {
-    data: userMeetings,
-    isLoading: isMeetingsLoading,
-    isFetching: isMeetingsFetching,
-  } = useQuery<UserMeeting[]>({
-    queryKey: ["/api/users", profile?._id, "meetings"],
+    data: stats,
+    isLoading: isStatsLoading,
+    isFetching: isStatsFetching,
+  } = useQuery<ProfileStats>({
+    queryKey: ["/api/users/me/stats"],
     queryFn: async () => {
       const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
 
-      const response = await fetch(`/api/users/${profile?._id}/meetings`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const response = await fetch("/api/users/me/stats", {
+        headers: { Authorization: `Bearer ${token}` },
         credentials: "include",
       });
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || "Failed to fetch meetings");
+        throw new Error(error.error || "Failed to fetch profile stats");
       }
 
       return response.json();
     },
     enabled: !!profile?._id,
     refetchOnWindowFocus: true,
-    refetchOnMount: true,
     staleTime: 30000,
     refetchInterval: 60000,
   });
 
-  const extractId = (value: string | { _id?: string } | null | undefined): string => {
-    if (!value) return "";
-    if (typeof value === "string") return value;
-    return value._id || "";
-  };
-
-  const computedStats = useMemo(() => {
-    if (!profile?._id || !userMeetings) {
-      return { friends: 0, groups: 0, meetingsHosted: 0 };
-    }
-
-    const userId = profile._id;
-    const friendIds = new Set<string>();
-    let groupCount = 0;
-    let hostedCount = 0;
-
-    userMeetings.forEach((meeting) => {
-      const hostId = extractId(meeting.hostId);
-      if (hostId === userId) {
-        hostedCount += 1;
-      }
-
-      const participantIds = (meeting.participants || [])
-        .map((participant) => extractId(participant as MeetingParticipant))
-        .filter((id) => id && id !== userId);
-
-      participantIds.forEach((id) => friendIds.add(id));
-
-      const uniqueOthers = new Set(participantIds);
-      if (hostId && hostId !== userId) {
-        uniqueOthers.add(hostId);
-      }
-
-      if (uniqueOthers.size >= 2) {
-        groupCount += 1;
-      }
-    });
-
-    return {
-      friends: friendIds.size,
-      groups: groupCount,
-      meetingsHosted: hostedCount,
-    };
-  }, [profile?._id, userMeetings]);
-
-  const statsLoading = (isMeetingsLoading || isMeetingsFetching) && !userMeetings;
+  const statsLoading = (isStatsLoading || isStatsFetching) && !stats;
 
   const getBaseAvatarUrl = () => {
     return (
@@ -448,148 +393,6 @@ export default function Profile() {
     setPhoneError(null);
   };
 
-  const normalizePhone = (raw: string) => raw.replace(/[^\d+]/g, "");
-
-  const handleSendPhoneCode = async () => {
-    const rawPhone = formData.phone.trim();
-    if (!rawPhone) {
-      setPhoneError("Phone number is required before verification.");
-      toast({
-        title: "Phone number required",
-        description: "Please enter your mobile number first.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Basic normalization: keep + and digits only
-    const normalized = normalizePhone(rawPhone);
-
-    // Validate simple E.164 format: + followed by 8-15 digits
-    if (!/^\+\d{8,15}$/.test(normalized)) {
-      setPhoneError(
-        "Invalid phone format. Use full international format like +14155552671 or +919876543210."
-      );
-      toast({
-        title: "Invalid phone number",
-        description: "Please enter your full number with country code, e.g. +14155552671.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const current = auth.currentUser;
-    if (!current) {
-      toast({
-        title: "Not signed in",
-        description: "You must be signed in to verify your phone number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      setIsSendingPhoneCode(true);
-      setPhoneError(null);
-      const token = await current.getIdToken();
-      const response = await fetch("/api/auth/phone/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include",
-        body: JSON.stringify({ phone: normalized }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to send verification code.");
-      }
-
-      // Use a dummy ID just to toggle the UI for entering the code
-      setPhoneVerificationId("twilio");
-      setPhoneCode("");
-
-      toast({
-        title: "Code sent",
-        description: "We sent a verification code via SMS to your mobile number.",
-      });
-    } catch (error: any) {
-      console.error("Error sending phone verification code:", error);
-      setPhoneError(error?.message || "Failed to send verification code. Please try again.");
-      toast({
-        title: "Failed to send code",
-        description:
-          error?.message || "Could not send SMS. Please check your number and try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSendingPhoneCode(false);
-    }
-  };
-
-  const handleVerifyPhoneCode = async () => {
-    if (!phoneVerificationId) {
-      setPhoneError("Please request a verification code first.");
-      return;
-    }
-    if (!phoneCode.trim()) {
-      setPhoneError("Enter the verification code you received.");
-      return;
-    }
-
-    const current = auth.currentUser;
-    if (!current) {
-      toast({
-        title: "Not signed in",
-        description: "You must be signed in to verify your phone number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      setIsVerifyingPhoneCode(true);
-      setPhoneError(null);
-      const token = await current.getIdToken();
-      const normalized = normalizePhone(formData.phone.trim());
-
-      const response = await fetch("/api/auth/phone/verify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include",
-        body: JSON.stringify({ phone: normalized, code: phoneCode.trim() }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to verify phone number.");
-      }
-
-      setIsPhoneVerified(true);
-      setPhoneVerificationId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/users/me"] });
-      toast({
-        title: "Phone verified",
-        description: "Your mobile number has been verified successfully.",
-      });
-    } catch (error: any) {
-      console.error("Error verifying phone code:", error);
-      setPhoneError(error?.message || "Invalid or expired code. Please try again.");
-      toast({
-        title: "Verification failed",
-        description: error?.message || "Invalid or expired code. Please request a new one.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsVerifyingPhoneCode(false);
-    }
-  };
-
   const handleLinkProvider = async (provider: "google" | "github") => {
     setLinkingProvider(provider);
     try {
@@ -629,12 +432,10 @@ export default function Profile() {
     (isEditing ? formData.avatar : profile?.avatar) ||
     authUser?.photoURL ||
     getAvatarUrl(authUser?.photoURL, authUser?.uid, authUser?.email);
-  const statsReady = !!userMeetings;
-  const profileStats = computedStats;
   const statsCards = [
-    { label: "Friends", value: statsReady ? profileStats.friends : "—" },
-    { label: "Groups", value: statsReady ? profileStats.groups : "—" },
-    { label: "Meetings Hosted", value: statsReady ? profileStats.meetingsHosted : "—" },
+    { label: "Friends", value: stats ? stats.friends : "—" },
+    { label: "Groups", value: stats ? stats.groups : "—" },
+    { label: "Meetings Hosted", value: stats ? stats.meetingsHosted : "—" },
   ];
 
   const memberSinceText = profile?.createdAt
@@ -681,10 +482,10 @@ export default function Profile() {
           {isLoading ? (
             <div className="space-y-8 animate-pulse">
               {/* Profile Header Skeleton */}
-              <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-8">
+              <div className="relative overflow-hidden rounded-3xl border border-border bg-muted/40 p-8">
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
                   <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 w-full">
-                    <Skeleton className="h-32 w-32 rounded-full border-4 border-white/10" />
+                    <Skeleton className="h-32 w-32 rounded-full border-4 border-border" />
                     <div className="space-y-4 text-center sm:text-left w-full max-w-md">
                       <Skeleton className="h-10 w-48 mx-auto sm:mx-0" />
                       <Skeleton className="h-6 w-32 mx-auto sm:mx-0" />
@@ -701,9 +502,9 @@ export default function Profile() {
                 </div>
 
                 {/* Stats Grid Skeleton */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-white/10">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-border">
                   {[1, 2, 3].map((i) => (
-                    <div key={i} className="rounded-2xl border border-white/5 bg-white/5 p-4">
+                    <div key={i} className="rounded-2xl border border-border bg-muted/40 p-4">
                       <Skeleton className="h-4 w-20 mb-2" />
                       <Skeleton className="h-8 w-12" />
                     </div>
@@ -713,7 +514,7 @@ export default function Profile() {
 
               <div className="grid gap-8 lg:grid-cols-3">
                 {/* Profile Details Form Skeleton */}
-                <div className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/5 p-6 md:p-8">
+                <div className="lg:col-span-2 rounded-3xl border border-border bg-muted/40 p-6 md:p-8">
                   <div className="flex justify-between mb-8">
                     <Skeleton className="h-8 w-40" />
                     <Skeleton className="h-6 w-24" />
@@ -748,13 +549,13 @@ export default function Profile() {
 
                 {/* Sidebar Skeleton */}
                 <div className="space-y-6">
-                  <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                  <div className="rounded-3xl border border-border bg-muted/40 p-6 space-y-4">
                     <Skeleton className="h-6 w-32 mb-4" />
                     <Skeleton className="h-20 w-full rounded-2xl" />
                     <Skeleton className="h-20 w-full rounded-2xl" />
                     <Skeleton className="h-40 w-full rounded-2xl" />
                   </div>
-                  <div className="rounded-3xl border border-white/10 bg-white/5 p-6 space-y-4">
+                  <div className="rounded-3xl border border-border bg-muted/40 p-6 space-y-4">
                     <Skeleton className="h-6 w-32 mb-4" />
                     <Skeleton className="h-12 w-full rounded-xl" />
                     <Skeleton className="h-12 w-full rounded-xl" />
@@ -792,7 +593,7 @@ export default function Profile() {
               {/* Profile Header Card */}
               <motion.div
                 variants={itemVariants}
-                className="relative overflow-hidden rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-3xl p-4 md:p-8 shadow-2xl"
+                className="relative overflow-hidden rounded-xl md:rounded-3xl border border-border bg-muted/40 backdrop-blur-3xl p-4 md:p-8 shadow-2xl"
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent opacity-50 pointer-events-none" />
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
@@ -801,7 +602,7 @@ export default function Profile() {
                   <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
                     <div className="relative group mx-auto sm:mx-0">
                       <div className="absolute inset-0 bg-primary/30 blur-xl rounded-full opacity-70 group-hover:opacity-100 transition-opacity" />
-                      <Avatar className="relative h-24 w-24 md:h-32 md:w-32 border-4 border-white/10 shadow-2xl">
+                      <Avatar className="relative h-24 w-24 md:h-32 md:w-32 border-4 border-border shadow-2xl">
                         <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
                         <AvatarFallback className="text-3xl bg-background/50 backdrop-blur">
                           {getInitials(displayName, displayEmail)}
@@ -842,7 +643,7 @@ export default function Profile() {
                   <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
                     <Button
                       variant="outline"
-                      className="gap-2 border-white/10 hover:bg-white/10 bg-transparent backdrop-blur-sm"
+                      className="gap-2 border-border hover:bg-accent bg-transparent backdrop-blur-sm"
                       onClick={handleAvatarRefresh}
                       disabled={!profile}
                     >
@@ -962,7 +763,7 @@ export default function Profile() {
                           variant="ghost"
                           onClick={handleCancel}
                           disabled={isSaving}
-                          className="hover:bg-white/10"
+                          className="hover:bg-accent"
                         >
                           Cancel
                         </Button>
@@ -984,11 +785,11 @@ export default function Profile() {
                 </div>
 
                 {/* Stats Grid */}
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mt-8 pt-8 border-t border-white/10">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mt-8 pt-8 border-t border-border">
                   {statsCards.map((stat) => (
                     <div
                       key={stat.label}
-                      className="group relative overflow-hidden rounded-xl md:rounded-2xl border border-white/5 bg-white/5 p-3 md:p-4 hover:bg-white/10 transition-all duration-300"
+                      className="group relative overflow-hidden rounded-xl md:rounded-2xl border border-border bg-muted/40 p-3 md:p-4 hover:bg-accent transition-all duration-300"
                     >
                       <div className="relative z-10">
                         <p className="text-[10px] md:text-xs font-medium uppercase tracking-wider text-muted-foreground truncate">
@@ -1013,7 +814,7 @@ export default function Profile() {
                 {/* Profile Details Form */}
                 <motion.div
                   variants={itemVariants}
-                  className="lg:col-span-2 rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-4 md:p-8"
+                  className="lg:col-span-2 rounded-xl md:rounded-3xl border border-border bg-muted/40 backdrop-blur-md p-4 md:p-8"
                 >
                   <div className="flex items-center justify-between mb-8">
                     <div>
@@ -1047,7 +848,7 @@ export default function Profile() {
                             id="name"
                             value={formData.name}
                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                            className="bg-white/5 border-white/10 focus:border-primary/50"
+                            className="bg-muted/40 border-border focus:border-primary/50"
                           />
                         ) : (
                           <p className="text-lg font-medium">{profile?.name || "Not set"}</p>
@@ -1064,7 +865,7 @@ export default function Profile() {
                             onChange={(e) =>
                               setFormData({ ...formData, username: e.target.value.toLowerCase() })
                             }
-                            className="bg-white/5 border-white/10 focus:border-primary/50"
+                            className="bg-muted/40 border-border focus:border-primary/50"
                           />
                         ) : (
                           <p className="text-lg font-medium">@{profile?.username || "username"}</p>
@@ -1081,7 +882,7 @@ export default function Profile() {
                           id="bio"
                           value={formData.bio}
                           onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                          className="bg-white/5 border-white/10 focus:border-primary/50 min-h-[100px]"
+                          className="bg-muted/40 border-border focus:border-primary/50 min-h-[100px]"
                           placeholder="Tell us about yourself..."
                         />
                       ) : (
@@ -1117,7 +918,7 @@ export default function Profile() {
                               setPhoneError(null);
                             }
                           }}
-                          className="bg-white/5 border-white/10 focus:border-primary/50"
+                          className="bg-muted/40 border-border focus:border-primary/50"
                           placeholder="+1 (555) 000-0000"
                         />
                       ) : (
@@ -1131,59 +932,6 @@ export default function Profile() {
                       {isEditing && phoneError && (
                         <p className="text-xs text-red-500 mt-1">{phoneError}</p>
                       )}
-                      {!isPhoneVerified && formData.phone && (
-                        <div className="mt-3 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="border-white/20 hover:bg-white/10"
-                              onClick={handleSendPhoneCode}
-                              disabled={isSendingPhoneCode}
-                            >
-                              {isSendingPhoneCode ? (
-                                <>
-                                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                  Sending code...
-                                </>
-                              ) : (
-                                <>
-                                  <Phone className="w-3 h-3 mr-1" />
-                                  Send verification code
-                                </>
-                              )}
-                            </Button>
-                          </div>
-                          {phoneVerificationId && (
-                            <div className="flex flex-col sm:flex-row gap-2">
-                              <Input
-                                type="text"
-                                inputMode="numeric"
-                                maxLength={6}
-                                placeholder="Enter 6-digit code"
-                                value={phoneCode}
-                                onChange={(e) => setPhoneCode(e.target.value)}
-                                className="bg-white/5 border-white/10 focus:border-primary/50"
-                              />
-                              <Button
-                                size="sm"
-                                onClick={handleVerifyPhoneCode}
-                                disabled={isVerifyingPhoneCode}
-                                className="min-w-[110px]"
-                              >
-                                {isVerifyingPhoneCode ? (
-                                  <>
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                    Verifying...
-                                  </>
-                                ) : (
-                                  "Verify"
-                                )}
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -1191,13 +939,13 @@ export default function Profile() {
                 {/* Sidebar */}
                 <motion.div variants={itemVariants} className="space-y-6">
                   {/* Account Snapshot */}
-                  <div className="rounded-xl md:rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md p-4 md:p-6">
+                  <div className="rounded-xl md:rounded-3xl border border-border bg-muted/40 backdrop-blur-md p-4 md:p-6">
                     <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
                       <Shield className="w-5 h-5 text-emerald-500" />
                       Account Status
                     </h3>
                     <div className="space-y-4">
-                      <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
+                      <div className="p-4 rounded-2xl bg-muted/40 border border-border">
                         <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                           Membership
                         </p>
@@ -1214,7 +962,7 @@ export default function Profile() {
                           </p>
                         </div>
                       )}
-                      <div className="p-4 rounded-2xl bg-white/5 border border-white/5">
+                      <div className="p-4 rounded-2xl bg-muted/40 border border-border">
                         <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                           Last Active
                         </p>
@@ -1224,7 +972,7 @@ export default function Profile() {
                             : "Just now"}
                         </p>
                       </div>
-                      <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-3">
+                      <div className="p-4 rounded-2xl bg-muted/40 border border-border space-y-3">
                         <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                           Connected Accounts
                         </p>
@@ -1242,7 +990,7 @@ export default function Profile() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="border-white/20 hover:bg-white/10"
+                                className="border-border hover:bg-accent"
                                 onClick={() => handleLinkProvider("google")}
                                 disabled={linkingProvider === "google"}
                               >
@@ -1270,7 +1018,7 @@ export default function Profile() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="border-white/20 hover:bg-white/10"
+                                className="border-border hover:bg-accent"
                                 onClick={() => handleLinkProvider("github")}
                                 disabled={linkingProvider === "github"}
                               >

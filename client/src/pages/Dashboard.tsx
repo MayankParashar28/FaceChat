@@ -64,6 +64,7 @@ interface Meeting {
   title: string;
   participants: string[] | { _id: string; name: string }[];
   startTime: string | Date;
+  actualStartTime?: string | Date;
   endTime?: string | Date;
   analytics?: {
     emotionData?: {
@@ -86,6 +87,14 @@ function formatTimeAgo(date: Date): string {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays === 1) return "Yesterday";
   return `${diffDays}d ago`;
+}
+
+/**
+ * When the call began. `startTime` is only the slot the meeting was booked
+ * for, so a meeting held hours after it appeared hours long.
+ */
+function callStart(meeting: Pick<Meeting, "startTime" | "actualStartTime">): Date {
+  return new Date(meeting.actualStartTime ?? meeting.startTime);
 }
 
 function calculateDuration(startTime: Date, endTime?: Date): string {
@@ -395,8 +404,7 @@ export default function Dashboard() {
   const engagementTrend =
     stats?.avgEngagement != null ? "Average score across your calls" : "No calls scored yet";
   const totalDuration = filteredMeetings.reduce(
-    (acc, m) =>
-      acc + getDurationMinutes(new Date(m.startTime), m.endTime ? new Date(m.endTime) : undefined),
+    (acc, m) => acc + getDurationMinutes(callStart(m), m.endTime ? new Date(m.endTime) : undefined),
     0
   );
   const avgDuration = filteredMeetings.length
@@ -719,13 +727,12 @@ export default function Dashboard() {
                             </h3>
                             <div className="flex items-center gap-3 text-xs text-muted-foreground font-medium">
                               <span className="flex items-center gap-1">
-                                <Calendar className="w-3 h-3" />{" "}
-                                {formatTimeAgo(new Date(meeting.startTime))}
+                                <Calendar className="w-3 h-3" /> {formatTimeAgo(callStart(meeting))}
                               </span>
                               <span className="flex items-center gap-1">
                                 <Clock className="w-3 h-3" />{" "}
                                 {calculateDuration(
-                                  new Date(meeting.startTime),
+                                  callStart(meeting),
                                   meeting.endTime ? new Date(meeting.endTime) : undefined
                                 )}
                               </span>

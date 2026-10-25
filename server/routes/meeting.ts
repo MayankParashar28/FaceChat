@@ -99,10 +99,24 @@ router.get("/", authenticate, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Get limit and skip from query params
-    const limit = parseInt(req.query.limit as string) || 10;
-    const skip = parseInt(req.query.skip as string) || 0;
     const status = req.query.status as string | undefined; // Optional filter by status
+    const skip = parseInt(req.query.skip as string) || 0;
+
+    // An optional [from, to) window on startTime, for the calendar: it needs
+    // the month it is showing, which has nothing to do with which meetings are
+    // most recent.
+    const from = req.query.from ? new Date(req.query.from as string) : null;
+    const to = req.query.to ? new Date(req.query.to as string) : null;
+    if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
+      return res.status(400).json({ error: "Invalid from/to date" });
+    }
+
+    // The default of 10 suits "recent calls" and nothing else. A windowed
+    // request is already bounded by its dates, so it gets a cap high enough to
+    // hold a busy month rather than silently returning the first ten.
+    const requested = parseInt(req.query.limit as string);
+    const fallback = from || to ? 500 : 10;
+    const limit = Math.min(Number.isNaN(requested) ? fallback : requested, 1000);
 
     let meetings = await mongoService.getUserMeetings(dbUser._id.toString());
 
@@ -113,6 +127,9 @@ router.get("/", authenticate, async (req, res) => {
       // If no status filter, show all meetings (active, ended, and scheduled)
       // This allows Recent Calls to show all meetings, not just ended ones
     }
+
+    if (from) meetings = meetings.filter((m) => m.startTime >= from);
+    if (to) meetings = meetings.filter((m) => m.startTime < to);
 
     // Sort by endTime (if exists) or startTime, most recent first
     meetings = meetings
@@ -147,6 +164,37 @@ router.get("/analytics", authenticate, async (req, res) => {
   } catch (error) {
     logger.error("Error fetching analytics:", error);
     res.status(500).json({ error: "Failed to fetch analytics" });
+  }
+});
+
+/**
+ * The two figures beside the calendar.
+ *
+ * Counted over every meeting the user has, which is the point: the list
+ * endpoint returns a page (ten by default), and totalling that page produced
+ * an "Upcoming" count and a "Total Hours" figure that silently described the
+ * ten most recent meetings rather than all of them.
+ *
+ * Only a meeting with an endTime contributes hours. endTime is written when a
+ * call actually ends, so scheduled and in-progress meetings count for nothing
+ * until they do.
+ */
+router.get("/stats", authenticate, async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    const dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(req.user.uid));
+    if (!dbUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const stats = await mongoService.getUserMeetingTotals(dbUser._id.toString());
+    res.json(stats);
+  } catch (error) {
+    logger.error("Error fetching meeting stats:", error);
+    res.status(500).json({ error: "Failed to fetch meeting stats" });
   }
 });
 

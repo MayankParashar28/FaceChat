@@ -366,18 +366,21 @@ router.post("/:conversationId/clear", authenticate, async (req, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // Soft delete all messages in this conversation
-    // In a real app with "Clear Chat for Me", we would track deletedBy users array on message
-    // For efficiency/MVP, we'll mark them as deleted (which deletes for everyone) OR implement a 'clearedAt' timestamp on the conversation-user relationship.
-    // Given existing schema limitations, let's mark messages as deleted:
-    // OPTION A: Delete for everyone (simple but maybe not what user expects)
-    // OPTION B: We can't do "Clear for me" without schema change.
-    // Let's assume "Clear Chat" means "Delete all messages" for now, or we can use `isDeleted` on messages.
+    // Clear for this caller only: record where they cleared up to, and hide
+    // everything at or before it when building their view. The other
+    // participant keeps the conversation intact — it is their history too.
+    //
+    // This used to be `Message.updateMany(..., { isDeleted: true })`. Message
+    // has no isDeleted path and the schema is strict, so Mongoose dropped the
+    // field and the update wrote nothing: the endpoint returned success, the
+    // client emptied its local array, and every message came back on reload.
+    await Conversation.updateOne(
+      { _id: conversation._id },
+      { $set: { [`clearedAt.${dbUser._id.toString()}`]: new Date() } }
+    );
 
-    // BETTER APPROACH for MVP: just delete them `isDeleted: true`.
-    await Message.updateMany({ conversationId: conversation._id }, { isDeleted: true });
-
-    await invalidateConversationLists(conversation.participants);
+    // Only this user's list changes; nobody else's view moved.
+    await invalidateConversationLists([dbUser._id]);
 
     res.json({ success: true });
   } catch (error) {

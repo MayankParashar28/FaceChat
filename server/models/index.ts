@@ -47,6 +47,19 @@ export interface IUser extends Document {
       showOnlineStatus?: boolean;
       allowPublicProfile?: boolean;
     };
+    /**
+     * Call preferences from the Settings page. Device ids are deliberately
+     * absent: which camera or microphone to use is a property of the machine
+     * you are sitting at, not of the account, so those stay in localStorage.
+     */
+    call?: {
+      autoJoinAudio?: boolean;
+      autoJoinVideo?: boolean;
+      backgroundBlur?: boolean;
+      emotionDetection?: boolean;
+      videoQuality?: "sd" | "hd" | "full-hd";
+      audioQuality?: "standard" | "high" | "studio";
+    };
   };
   onboarding?: {
     hasCompleted?: boolean;
@@ -150,6 +163,18 @@ const UserSchema = new Schema<IUser>(
         showOnlineStatus: { type: Boolean, default: true },
         allowPublicProfile: { type: Boolean, default: true },
       },
+      call: {
+        autoJoinAudio: { type: Boolean, default: false },
+        autoJoinVideo: { type: Boolean, default: false },
+        backgroundBlur: { type: Boolean, default: false },
+        emotionDetection: { type: Boolean, default: true },
+        videoQuality: { type: String, enum: ["sd", "hd", "full-hd"], default: "hd" },
+        audioQuality: {
+          type: String,
+          enum: ["standard", "high", "studio"],
+          default: "high",
+        },
+      },
     },
     onboarding: {
       hasCompleted: { type: Boolean, default: false },
@@ -199,6 +224,17 @@ export interface IMeeting extends Document {
   hostId: Types.ObjectId;
   participants: Types.ObjectId[];
   startTime: Date;
+  /**
+   * When the call actually began, as opposed to the slot it was booked for.
+   *
+   * `startTime` is the scheduled time: a meeting booked for 10:00 and held at
+   * 14:00 still carries 10:00, which is what the calendar should show. Every
+   * duration is measured from `actualStartTime` instead — it is stamped the
+   * first time the meeting goes "active" and left alone as further
+   * participants join. Meetings that ended before this field existed do not
+   * have it, so readers fall back to `startTime`.
+   */
+  actualStartTime?: Date;
   endTime?: Date;
   status: "scheduled" | "active" | "ended";
   roomId: string;
@@ -238,11 +274,14 @@ const MeetingSchema = new Schema<IMeeting>(
     hostId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     participants: [{ type: Schema.Types.ObjectId, ref: "User" }],
     startTime: { type: Date, required: true },
+    actualStartTime: { type: Date },
     endTime: {
       type: Date,
       validate: {
         validator: function (this: IMeeting, value: Date) {
-          return !value || value >= this.startTime;
+          // Against the real start, not the scheduled one: a meeting booked
+          // for 10:00 but held (and ended) at 09:30 is perfectly ordinary.
+          return !value || value >= (this.actualStartTime ?? this.startTime);
         },
         message: "End time must be after start time.",
       },
@@ -375,6 +414,18 @@ export interface IConversation extends Document {
   lastMessage?: Types.ObjectId;
   createdBy: Types.ObjectId;
   isDeleted: boolean;
+  /**
+   * When each participant last cleared this conversation, keyed by their user
+   * id. Messages at or before someone's mark are hidden from them and from
+   * their unread count; everybody else still sees the whole history.
+   *
+   * Clearing used to run `Message.updateMany(..., { isDeleted: true })`, but
+   * Message has no isDeleted path and the schema is strict, so the field was
+   * dropped and nothing was written — the history reappeared on reload. Had it
+   * worked it would have been worse, since it would have erased the
+   * conversation for the other person too.
+   */
+  clearedAt?: Map<string, Date>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -387,6 +438,7 @@ const ConversationSchema = new Schema<IConversation>(
     lastMessage: { type: Schema.Types.ObjectId, ref: "Message" },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     isDeleted: { type: Boolean, default: false },
+    clearedAt: { type: Map, of: Date, default: undefined },
   },
   { timestamps: true }
 );

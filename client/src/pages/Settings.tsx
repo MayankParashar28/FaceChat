@@ -62,8 +62,8 @@ export default function Settings() {
 
         <motion.div variants={itemVariants} className="grid gap-6">
           {/* Video Settings */}
-          <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md overflow-hidden">
-            <div className="p-6 border-b border-white/10 bg-white/5">
+          <div className="rounded-3xl border border-border bg-muted/40 backdrop-blur-md overflow-hidden">
+            <div className="p-6 border-b border-border bg-muted/40">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-blue-500/10 text-blue-500">
                   <Camera className="w-6 h-6" />
@@ -121,11 +121,11 @@ export default function Settings() {
                 >
                   <SelectTrigger
                     id="video-quality"
-                    className="h-12 bg-white/5 border-white/10 focus:ring-blue-500/20 rounded-xl"
+                    className="h-12 bg-muted/40 border-border focus:ring-blue-500/20 rounded-xl"
                   >
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-background/95 backdrop-blur-xl border-white/10">
+                  <SelectContent className="bg-background/95 backdrop-blur-xl border-border">
                     <SelectItem value="sd">Standard Definition (480p)</SelectItem>
                     <SelectItem value="hd">High Definition (720p)</SelectItem>
                     <SelectItem value="full-hd">Full HD (1080p)</SelectItem>
@@ -136,8 +136,8 @@ export default function Settings() {
           </div>
 
           {/* Audio Settings */}
-          <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md overflow-hidden">
-            <div className="p-6 border-b border-white/10 bg-white/5">
+          <div className="rounded-3xl border border-border bg-muted/40 backdrop-blur-md overflow-hidden">
+            <div className="p-6 border-b border-border bg-muted/40">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-500">
                   <Mic className="w-6 h-6" />
@@ -195,11 +195,11 @@ export default function Settings() {
                 >
                   <SelectTrigger
                     id="audio-quality"
-                    className="h-12 bg-white/5 border-white/10 focus:ring-emerald-500/20 rounded-xl"
+                    className="h-12 bg-muted/40 border-border focus:ring-emerald-500/20 rounded-xl"
                   >
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-background/95 backdrop-blur-xl border-white/10">
+                  <SelectContent className="bg-background/95 backdrop-blur-xl border-border">
                     <SelectItem value="standard">Standard</SelectItem>
                     <SelectItem value="high">High Quality</SelectItem>
                     <SelectItem value="studio">Studio Quality</SelectItem>
@@ -210,8 +210,8 @@ export default function Settings() {
           </div>
 
           {/* AI Features */}
-          <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md overflow-hidden">
-            <div className="p-6 border-b border-white/10 bg-white/5">
+          <div className="rounded-3xl border border-border bg-muted/40 backdrop-blur-md overflow-hidden">
+            <div className="p-6 border-b border-border bg-muted/40">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-purple-500/10 text-purple-500">
                   <Sparkles className="w-6 h-6" />
@@ -256,8 +256,8 @@ export default function Settings() {
           </div>
 
           {/* Appearance */}
-          <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-md overflow-hidden">
-            <div className="p-6 border-b border-white/10 bg-white/5">
+          <div className="rounded-3xl border border-border bg-muted/40 backdrop-blur-md overflow-hidden">
+            <div className="p-6 border-b border-border bg-muted/40">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-orange-500/10 text-orange-500">
                   <Palette className="w-6 h-6" />

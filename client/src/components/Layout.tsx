@@ -30,8 +30,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import IncomingCallManager from "@/components/IncomingCallManager";
 import { useAuth } from "@/lib/auth";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import { auth } from "@/lib/firebase";
+import { countUnread, useNotifications } from "@/hooks/useNotifications";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -41,41 +40,10 @@ export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
 
-  // Fetch notifications to get unread count
-  const { data: notifications = [] } = useQuery({
-    queryKey: ["notifications"],
-    queryFn: async () => {
-      let token: string | null = null;
-      if (auth.currentUser) {
-        try {
-          token = await auth.currentUser.getIdToken();
-        } catch (e) {}
-      }
-      if (!token && user?.uid) {
-        token = user.uid;
-      }
-      if (!token && typeof window !== "undefined") {
-        const rawMock = localStorage.getItem("facechat_mock_user");
-        if (rawMock) {
-          try {
-            const parsed = JSON.parse(rawMock);
-            if (parsed?.uid) token = parsed.uid;
-          } catch (e) {}
-        }
-      }
-      if (!token) return [];
-
-      const res = await fetch("/api/notifications", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!user,
-    refetchInterval: 10000, // Poll every 10s
-  });
-
-  const unreadCount = notifications.filter((n: any) => !n.isRead).length;
+  // Shared with the Notifications page, so the badge and the list cannot
+  // disagree about what is unread.
+  const { data: notifications = [] } = useNotifications(!!user);
+  const unreadCount = countUnread(notifications);
 
   const sidebarItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard" },
@@ -98,7 +66,7 @@ export default function Layout({ children }: LayoutProps) {
         </div>
 
         <Sidebar
-          className="border-r border-white/5 bg-white/[0.03] backdrop-blur-2xl"
+          className="border-r border-border bg-card backdrop-blur-2xl"
           collapsible="offcanvas"
         >
           <SidebarContent className="p-4 md:p-6">
@@ -123,7 +91,7 @@ export default function Layout({ children }: LayoutProps) {
                       <SidebarMenuButton
                         asChild
                         isActive={location === item.url}
-                        className="hover:bg-white/[0.08] hover:shadow-sm transition-all duration-200 rounded-xl p-3 group-data-[state=expanded]:w-full data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+                        className="hover:bg-accent hover:shadow-sm transition-all duration-200 rounded-xl p-3 group-data-[state=expanded]:w-full data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                         tooltip={item.title}
                       >
                         <a href={item.url} className="flex items-center gap-3 relative">
@@ -144,8 +112,8 @@ export default function Layout({ children }: LayoutProps) {
               </SidebarGroupContent>
             </SidebarGroup>
 
-            <div className="mt-auto pt-6 border-t border-white/10 group-data-[collapsible=icon]:hidden">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 transition-colors cursor-pointer group">
+            <div className="mt-auto pt-6 border-t border-border group-data-[collapsible=icon]:hidden">
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 border border-border hover:bg-accent transition-colors cursor-pointer group">
                 <Avatar className="h-9 w-9 md:h-10 md:w-10 border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
                   <AvatarImage src={getAvatarUrl(user?.photoURL, user?.uid, user?.email)} />
                   <AvatarFallback>{getInitials(user?.displayName, user?.email)}</AvatarFallback>
@@ -168,14 +136,14 @@ export default function Layout({ children }: LayoutProps) {
         </Sidebar>
 
         <div className="flex flex-col flex-1 h-full overflow-hidden relative">
-          <header className="flex items-center justify-between gap-4 p-4 md:p-6 border-b border-white/5 bg-white/[0.02] backdrop-blur-sm z-10 h-16 md:h-auto">
+          <header className="flex items-center justify-between gap-4 p-4 md:p-6 border-b border-border bg-card/60 backdrop-blur-sm z-10 h-16 md:h-auto">
             <div className="flex items-center gap-4">
               <SidebarTrigger />
               <div className="relative hidden md:block w-72 lg:w-96 group">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                 <Input
                   placeholder="Search..."
-                  className="pl-11 bg-white/[0.02] border-white/10 focus:bg-white/5 transition-all rounded-full h-9 md:h-10 text-sm"
+                  className="pl-11 bg-muted/40 border-border focus:bg-accent transition-all rounded-full h-9 md:h-10 text-sm"
                 />
               </div>
             </div>

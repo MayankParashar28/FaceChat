@@ -25,6 +25,10 @@ import {
   Lock,
   Unlock,
   Loader2,
+  MapPin,
+  Link2,
+  Briefcase,
+  BadgeCheck,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -49,6 +53,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
@@ -107,6 +118,20 @@ type SearchedUser = {
   connectionStatus?: "connected" | "discovered" | "none";
 };
 
+/** The public half of a user, as `GET /api/users/:id` returns it. */
+type ViewedProfile = {
+  id: string;
+  name: string;
+  username: string;
+  avatar?: string | null;
+  bio?: string;
+  location?: string;
+  website?: string;
+  professional?: { title?: string; company?: string } | null;
+  isVerified?: boolean;
+  createdAt?: string | null;
+};
+
 export default function Chats() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -133,6 +158,8 @@ export default function Chats() {
     confirmLabel: string;
     run: () => void | Promise<void>;
   } | null>(null);
+  // Set to the other participant's MongoDB id while their profile is open.
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -147,6 +174,8 @@ export default function Chats() {
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  /** Message ids already reported as seen, so the observer never re-emits. */
+  const seenReportedRef = useRef<Set<string>>(new Set());
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [newConversation, setNewConversation] = useState<Conversation | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set()); // Stores firebaseUids
@@ -373,12 +402,17 @@ export default function Chats() {
           setTimeout(() => scrollToBottom(), 100);
         }
 
-        // If message is from another user and we're viewing the chat, mark as seen
+        // An incoming message counts as seen only while the window is really
+        // in front. This fired unconditionally, so a message arriving in a
+        // background tab was reported as read half a second later.
         if (
           newMessage.senderId !== currentUser?.uid &&
           (normalizedMessage.sender as any)?.firebaseUid !== currentUser?.uid
         ) {
           setTimeout(() => {
+            if (document.visibilityState !== "visible") return;
+            if (seenReportedRef.current.has(newMessage.id)) return;
+            seenReportedRef.current.add(newMessage.id);
             newSocket.emit("message:seen", { messageId: newMessage.id, userId: currentUser?.uid });
           }, 500);
         }
@@ -552,8 +586,13 @@ export default function Chats() {
       // Join the conversation room
       socket.emit("join:conversation", currentChatId);
 
-      // Mark all messages as read
-      socket.emit("mark:read", { conversationId: currentChatId, userId: user.uid });
+      // Opening a conversation no longer marks it read. It used to emit
+      // "mark:read", which flips every unread message in the conversation to
+      // read in one update — so opening a chat with a backlog told the sender
+      // you had read messages you never scrolled to. Messages are now reported
+      // seen individually as they actually appear on screen (see the observer
+      // below).
+      seenReportedRef.current.clear();
 
       let isActive = true;
 
@@ -594,11 +633,6 @@ export default function Chats() {
           setMessages(normalizedMessages);
           setHasMoreMessages(messagesArray.length === 30); // If we got 30 messages, there might be more
 
-          // Mark all messages from others as read in one batch
-          if (user?.uid && normalizedMessages.some((msg) => msg.senderId !== user.uid)) {
-            socket.emit("mark:read", { conversationId: currentChatId, userId: user.uid });
-          }
-
           // Gently scroll to show recent messages, but not force to absolute bottom
           // This allows users to see the conversation naturally and scroll up for older messages
           setTimeout(() => {
@@ -631,6 +665,72 @@ export default function Chats() {
       };
     }
   }, [selectedChat, socket, user?.uid]);
+
+  /**
+   * Report a message as seen once it has actually been on screen.
+   *
+   * A read receipt is a claim made to another person, so it is only sent when
+   * it is true: the bubble has to be inside the scrolling area and the window
+   * has to be in front. Opening a conversation reports nothing by itself.
+   *
+   * Measured with getBoundingClientRect rather than IntersectionObserver.
+   * The observer is the tidier API, but when it does not fire — some embedded
+   * and headless browsers never deliver its callbacks — it fails silently, and
+   * the failure mode is messages that stay unread forever with no way to clear
+   * them. Geometry on a throttled scroll handler always runs.
+   */
+  useEffect(() => {
+    if (!socket || !user?.uid || !selectedChat) return;
+
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    // The element that actually scrolls; the bubbles are clipped to it.
+    const scroller =
+      (container.closest("[data-radix-scroll-area-viewport]") as HTMLElement | null) ??
+      (container.parentElement as HTMLElement | null);
+
+    const reportVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const bounds = scroller?.getBoundingClientRect();
+      const top = bounds ? bounds.top : 0;
+      const bottom = bounds ? bounds.bottom : window.innerHeight;
+
+      messagesContainerRef.current
+        ?.querySelectorAll<HTMLElement>("[data-unread-message]")
+        .forEach((el) => {
+          const id = el.dataset.messageId;
+          if (!id || seenReportedRef.current.has(id)) return;
+          const box = el.getBoundingClientRect();
+          // Most of the bubble inside the visible strip, not just an edge.
+          const shown = Math.min(box.bottom, bottom) - Math.max(box.top, top);
+          if (shown <= 0 || shown < box.height * 0.6) return;
+          seenReportedRef.current.add(id);
+          socket.emit("message:seen", { messageId: id, userId: user.uid });
+        });
+    };
+
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        reportVisible();
+      });
+    };
+
+    schedule();
+    scroller?.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    document.addEventListener("visibilitychange", schedule);
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      scroller?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      document.removeEventListener("visibilitychange", schedule);
+    };
+  }, [socket, user?.uid, selectedChat, messages]);
 
   const scrollToBottom = (smooth: boolean = true) => {
     if (scrollRef.current) {
@@ -1115,6 +1215,21 @@ export default function Chats() {
   const selectedConversation =
     conversations.find((c) => c.id === selectedChat) ||
     (newConversation?.id === selectedChat ? newConversation : null);
+
+  // What the other person chose to show: whatever they filled in on their own
+  // profile page, and nothing more. The endpoint returns these fields only.
+  const { data: viewedProfile, isLoading: profileLoading } = useQuery<ViewedProfile>({
+    queryKey: ["chatProfile", profileUserId],
+    enabled: !!profileUserId,
+    queryFn: async () => {
+      const token = await getToken();
+      const res = await fetch(`/api/users/${profileUserId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to load profile");
+      return res.json();
+    },
+  });
   const pinnedMessages = messages.filter((m) => m.isPinned);
 
   // selectedChat is restored from localStorage, so it can point at a
@@ -1288,17 +1403,6 @@ export default function Chats() {
     const roomId =
       Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
 
-    // Ring the other participant so they get an incoming-call prompt.
-    socket?.emit("call:invite", {
-      toUserId: other.firebaseUid,
-      fromUserId: user?.uid,
-      fromName: user?.displayName || user?.username,
-      fromAvatar: user?.photoURL,
-      roomId,
-      callType,
-      conversationId: selectedChat,
-    });
-
     // Carry the call context so the call screen can show "Ringing…",
     // cancel the invite on hang-up, and react to a decline.
     const query = new URLSearchParams({
@@ -1307,14 +1411,59 @@ export default function Chats() {
       type: callType,
       name: other.name || "",
     });
-    setLocation(`/call/${roomId}?${query.toString()}`);
+    const goToCall = () => setLocation(`/call/${roomId}?${query.toString()}`);
+
+    if (!socket) {
+      goToCall();
+      return;
+    }
+
+    // The server decides whether this call may ring at all — it refuses one to
+    // somebody who blocked you. Wait for that answer before leaving the page,
+    // or the call screen would sit on "Ringing…" with nobody ringing. An
+    // answer that never comes must not strand the caller either, so a short
+    // timeout carries on regardless.
+    let settled = false;
+    const proceed = () => {
+      if (settled) return;
+      settled = true;
+      goToCall();
+    };
+    const timer = window.setTimeout(proceed, 4000);
+
+    socket.emit(
+      "call:invite",
+      {
+        toUserId: other.firebaseUid,
+        fromUserId: user?.uid,
+        fromName: user?.displayName || user?.username,
+        fromAvatar: user?.photoURL,
+        roomId,
+        callType,
+        conversationId: selectedChat,
+      },
+      (result?: { ok: boolean; message?: string }) => {
+        window.clearTimeout(timer);
+        if (result && result.ok === false) {
+          settled = true;
+          toast({
+            variant: "destructive",
+            title: "Can't start call",
+            description: result.message || "This call could not be started.",
+          });
+          return;
+        }
+        proceed();
+      }
+    );
   };
 
   const handleClearChat = () => {
     if (!selectedChat) return;
     setConfirmAction({
       title: "Clear chat history?",
-      description: "Every message in this conversation is removed. This cannot be undone.",
+      description:
+        "This hides every message so far from your side of the conversation. The other person keeps their copy, and new messages still arrive. This cannot be undone.",
       confirmLabel: "Clear history",
       run: clearChat,
     });
@@ -1334,8 +1483,8 @@ export default function Chats() {
       if (res.ok) {
         setMessages([]); // Clear local messages immediately
         toast({
-          title: "Chat Cleared",
-          description: "History cleared for this session.",
+          title: "Chat cleared",
+          description: "These messages are hidden from your side of the conversation.",
         });
       } else {
         throw new Error("Failed to clear chat");
@@ -1693,21 +1842,22 @@ export default function Chats() {
                     align="end"
                     className="w-48 bg-background/95 backdrop-blur-xl border-border"
                   >
+                    {!selectedConversation.isGroup && (
+                      <DropdownMenuItem
+                        className="cursor-pointer"
+                        onClick={() => {
+                          const other = selectedConversation.participants.find(
+                            (p) => p.firebaseUid !== user?.uid
+                          );
+                          if (other?.id) setProfileUserId(other.id);
+                        }}
+                      >
+                        <User className="w-4 h-4 mr-2" />
+                        View Profile
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
-                      className="cursor-pointer"
-                      onClick={() => {
-                        // TODO: Implement navigation to user profile when available
-                        toast({
-                          title: "Profile View",
-                          description: "This feature is coming soon!",
-                        });
-                      }}
-                    >
-                      <User className="w-4 h-4 mr-2" />
-                      View Profile
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="cursor-pointer text-orange-500 focus:text-orange-500"
+                      className="cursor-pointer text-chart-4 focus:text-chart-4"
                       onClick={handleClearChat}
                     >
                       <LogOut className="w-4 h-4 mr-2" />
@@ -1715,7 +1865,7 @@ export default function Chats() {
                     </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-accent" />
                     <DropdownMenuItem
-                      className="cursor-pointer text-red-500 focus:text-red-500"
+                      className="cursor-pointer text-destructive focus:text-destructive"
                       onClick={handleBlockUser}
                     >
                       <Lock className="w-4 h-4 mr-2" />
@@ -1771,9 +1921,14 @@ export default function Chats() {
                   }
 
                   const isMe = isMessageFromMe(msg, selectedConversation);
+                  // Marked for the read-receipt observer: only somebody else's
+                  // message, and only while it is still unread.
+                  const needsSeenReport = !isMe && msg.status !== "seen" && !msg.isOptimistic;
                   return (
                     <div
                       key={msg.id}
+                      data-message-id={msg.id}
+                      {...(needsSeenReport ? { "data-unread-message": "true" } : {})}
                       className={`flex gap-3 group/message ${isMe ? "flex-row-reverse" : ""}`}
                     >
                       {!isMe && (
@@ -2014,6 +2169,94 @@ export default function Chats() {
           </div>
         )}
       </div>
+
+      <Dialog open={!!profileUserId} onOpenChange={(open) => !open && setProfileUserId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Profile</DialogTitle>
+            <DialogDescription>
+              What this person has filled in on their own profile.
+            </DialogDescription>
+          </DialogHeader>
+          {profileLoading ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : viewedProfile ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Avatar className="h-14 w-14 border border-border">
+                  {viewedProfile.avatar && (
+                    <AvatarImage src={viewedProfile.avatar} alt={viewedProfile.name} />
+                  )}
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    {(viewedProfile.name || viewedProfile.username || "?").charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold truncate">{viewedProfile.name || "User"}</p>
+                    {viewedProfile.isVerified && (
+                      <BadgeCheck className="h-4 w-4 text-primary shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground truncate">
+                    @{viewedProfile.username}
+                  </p>
+                </div>
+              </div>
+
+              {viewedProfile.bio && <p className="text-sm text-foreground">{viewedProfile.bio}</p>}
+
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {(viewedProfile.professional?.title || viewedProfile.professional?.company) && (
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {[viewedProfile.professional?.title, viewedProfile.professional?.company]
+                        .filter(Boolean)
+                        .join(" at ")}
+                    </span>
+                  </div>
+                )}
+                {viewedProfile.location && (
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{viewedProfile.location}</span>
+                  </div>
+                )}
+                {viewedProfile.website && (
+                  <div className="flex items-center gap-2">
+                    <Link2 className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{viewedProfile.website}</span>
+                  </div>
+                )}
+                {viewedProfile.createdAt && (
+                  <p>
+                    Joined{" "}
+                    {new Date(viewedProfile.createdAt).toLocaleDateString(undefined, {
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </p>
+                )}
+              </div>
+
+              {!viewedProfile.bio &&
+                !viewedProfile.location &&
+                !viewedProfile.website &&
+                !viewedProfile.professional?.title &&
+                !viewedProfile.professional?.company && (
+                  <p className="text-sm text-muted-foreground">
+                    They haven't added anything else to their profile yet.
+                  </p>
+                )}
+            </div>
+          ) : (
+            <p className="py-6 text-sm text-muted-foreground">This profile could not be loaded.</p>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
         <AlertDialogContent>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { getAuthToken } from "@/lib/queryClient";
 
 export interface UserSettings {
   autoJoinAudio: boolean;
@@ -55,35 +56,108 @@ function saveSettings(settings: UserSettings): void {
   }
 }
 
+/**
+ * Which settings belong to the account rather than to this machine.
+ *
+ * Device ids are excluded on purpose: "use the Logitech webcam" is true of the
+ * desk you are sitting at, not of you, and syncing it would select a camera
+ * that does not exist on your next device.
+ */
+const ACCOUNT_KEYS = [
+  "autoJoinAudio",
+  "autoJoinVideo",
+  "backgroundBlur",
+  "emotionDetection",
+  "videoQuality",
+  "audioQuality",
+] as const;
+
+type AccountSettings = Pick<UserSettings, (typeof ACCOUNT_KEYS)[number]>;
+
+function accountPart(settings: UserSettings): AccountSettings {
+  return ACCOUNT_KEYS.reduce((acc, key) => {
+    (acc as any)[key] = settings[key];
+    return acc;
+  }, {} as AccountSettings);
+}
+
+/**
+ * Push the account-level settings to the user's profile so the choice follows
+ * them to their next browser or device.
+ *
+ * Failure is deliberately not surfaced: the localStorage copy has already been
+ * written, so the setting works here regardless.
+ */
+async function syncAccountSettings(settings: UserSettings): Promise<void> {
+  try {
+    const token = await getAuthToken();
+    if (!token) return;
+    await fetch("/api/users/me", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ preferences: { call: accountPart(settings) } }),
+    });
+  } catch (error) {
+    console.warn("Could not sync settings to your account:", error);
+  }
+}
+
 export function useSettings() {
+  // localStorage is read first so the UI renders with the right values
+  // immediately, then the account copy arrives and wins.
   const [settings, setSettingsState] = useState<UserSettings>(loadSettings);
 
-  // Load settings on mount
   useEffect(() => {
-    setSettingsState(loadSettings());
-  }, []);
+    let cancelled = false;
 
-  // Save settings whenever they change
-  useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
+    (async () => {
+      try {
+        const token = await getAuthToken();
+        if (!token) return;
+        const res = await fetch("/api/users/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const user = await res.json();
+        const remote = user?.preferences?.call;
+        if (cancelled || !remote) return;
+
+        setSettingsState((prev) => {
+          // Device ids stay local; everything else comes from the account.
+          const merged = { ...prev, ...remote };
+          saveSettings(merged);
+          return merged;
+        });
+      } catch {
+        // Offline or signed out: the localStorage copy is still correct.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const updateSettings = useCallback((updates: Partial<UserSettings>) => {
+    let next: UserSettings | null = null;
     setSettingsState((prev) => {
-      const newSettings = { ...prev, ...updates };
-      saveSettings(newSettings);
-      return newSettings;
+      next = { ...prev, ...updates };
+      saveSettings(next);
+      return next;
     });
-  }, []);
 
-  const resetSettings = useCallback(() => {
-    setSettingsState(DEFAULT_SETTINGS);
-    saveSettings(DEFAULT_SETTINGS);
+    // Only worth a request when an account-level key actually changed; picking
+    // a camera should not cost a round trip.
+    if (next && ACCOUNT_KEYS.some((k) => k in updates)) {
+      void syncAccountSettings(next);
+    }
   }, []);
 
   return {
     settings,
     updateSettings,
-    resetSettings,
   };
 }

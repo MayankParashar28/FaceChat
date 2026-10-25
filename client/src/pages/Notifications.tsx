@@ -1,43 +1,39 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Bell, Heart, PhoneMissed, Check, Trash2, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { getAuthToken } from "@/lib/queryClient";
-
-type Notification = {
-  _id: string;
-  type: "match" | "missed_call" | "system";
-  title: string;
-  message: string;
-  relatedId?: string;
-  isRead: boolean;
-  createdAt: string;
-};
+import {
+  countUnread,
+  useNotifications,
+  useRefreshNotifications,
+  type Notification,
+} from "@/hooks/useNotifications";
 
 export default function Notifications() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
+  const refreshNotifications = useRefreshNotifications();
   const [, setLocation] = useLocation();
+  const [pendingDelete, setPendingDelete] = useState<Notification | null>(null);
 
-  const { data: notifications = [], isLoading } = useQuery<Notification[]>({
-    queryKey: ["notifications"],
-    queryFn: async () => {
-      const token = await getAuthToken();
-      if (!token) return [];
-      const res = await fetch("/api/notifications", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-    enabled: !!user,
-    refetchInterval: 10000, // Poll every 10s
-  });
+  const { data: notifications = [], isLoading } = useNotifications(!!user);
+  const unreadCount = countUnread(notifications);
 
   // A fetch that resolves is not a fetch that succeeded: these all ignored the
   // response, so a 403 or 500 still ran onSuccess and the UI claimed the action
@@ -60,40 +56,39 @@ export default function Notifications() {
 
   const markReadMutation = useMutation({
     mutationFn: (id: string) => notificationRequest(`/${id}/read`, "PUT"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+    onSuccess: () => refreshNotifications(),
     onError: showError,
   });
 
   const markAllReadMutation = useMutation({
     mutationFn: () => notificationRequest(`/read-all`, "PUT"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+    onSuccess: () => refreshNotifications(),
     onError: showError,
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => notificationRequest(`/${id}`, "DELETE"),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      refreshNotifications();
       toast({ title: "Notification removed" });
     },
     onError: showError,
   });
 
-  const handleAction = (notif: Notification) => {
-    // Mark as read first
-    if (!notif.isRead) markReadMutation.mutate(notif._id);
+  /**
+   * Both a new match and a missed call are answered in the same place: the
+   * chat list. The notification carries a relatedId — a Connection for a
+   * match, a Meeting for a missed call — but neither maps to a conversation
+   * without an endpoint that does not exist yet, so the list is as specific as
+   * this can honestly be. A "system" notification has nowhere to go at all,
+   * which is why only the other two are given a cursor.
+   */
+  const isActionable = (notif: Notification) =>
+    notif.type === "match" || notif.type === "missed_call";
 
-    if (notif.type === "match") {
-      // Go to chat? Or profile?
-      // Ideally go to chat with this connection.
-      // We don't have connectionId -> conversationId mapping direct here easily without lookup.
-      // But usually we can just go to /chats
-      setLocation("/chats");
-    }
-    // For missed call, maybe go to chats too or callback?
-    if (notif.type === "missed_call") {
-      setLocation("/chats");
-    }
+  const handleAction = (notif: Notification) => {
+    if (!notif.isRead) markReadMutation.mutate(notif._id);
+    if (isActionable(notif)) setLocation("/chats");
   };
 
   const getIcon = (type: string) => {
@@ -120,16 +115,27 @@ export default function Notifications() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Notifications</h1>
-          <p className="text-muted-foreground">Manage your alerts and new matches.</p>
+          <p className="text-muted-foreground">
+            {unreadCount > 0
+              ? `${unreadCount} unread`
+              : notifications.length > 0
+                ? "You are all caught up."
+                : "New matches and missed calls show up here."}
+          </p>
         </div>
-        {notifications.length > 0 && (
+        {/* Nothing to mark when nothing is unread. */}
+        {unreadCount > 0 && (
           <Button
             variant="outline"
             className="self-start shrink-0 sm:self-auto"
             onClick={() => markAllReadMutation.mutate()}
             disabled={markAllReadMutation.isPending}
           >
-            <Check className="mr-2 h-4 w-4" />
+            {markAllReadMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="mr-2 h-4 w-4" />
+            )}
             Mark all as read
           </Button>
         )}
@@ -159,8 +165,13 @@ export default function Notifications() {
                 {getIcon(notif.type)}
               </div>
 
-              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleAction(notif)}>
-                <div className="flex items-center justify-between gap-2 mb-1">
+              <div
+                className={`flex-1 min-w-0 ${isActionable(notif) ? "cursor-pointer" : ""}`}
+                onClick={() => handleAction(notif)}
+              >
+                {/* Wraps rather than squeezing: the timestamp is nowrap, so on a
+                    narrow screen a fixed row crushed the title into three lines. */}
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2 mb-1">
                   <h3
                     className={`font-semibold text-sm ${notif.isRead ? "text-muted-foreground" : "text-foreground"}`}
                   >
@@ -183,7 +194,7 @@ export default function Notifications() {
                 className="opacity-0 group-hover:opacity-100 transition-opacity -mr-2 text-muted-foreground hover:text-destructive"
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteMutation.mutate(notif._id);
+                  setPendingDelete(notif);
                 }}
               >
                 <Trash2 className="h-4 w-4" />
@@ -196,6 +207,30 @@ export default function Notifications() {
           ))
         )}
       </div>
+
+      <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this notification?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete ? `"${pendingDelete.title}" will be removed for good.` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const target = pendingDelete;
+                setPendingDelete(null);
+                if (target) deleteMutation.mutate(target._id);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import { mongoService } from "./services/mongodb";
 import { verifyFirebaseToken, setUserOnlineStatus } from "./firebase/admin";
 import { mongoHealthCheck } from "./database/mongodb";
 import { Message, Conversation, User, Meeting, ChatMessage, Notification } from "./models";
+import type { IMeeting } from "./models";
 import { authenticate } from "./middleware/auth";
 
 import { transcriptionService } from "./services/transcription";
@@ -32,6 +33,16 @@ import { CacheKeys, cacheDelete } from "./services/cache";
  * here, since it accepts any 12-character string (e.g. "team-standup").
  */
 const isConversationId = (roomId: string): boolean => /^[0-9a-fA-F]{24}$/.test(roomId);
+
+/**
+ * When a call began, for the timer every client in the room counts from.
+ *
+ * `actualStartTime` is stamped the moment a meeting goes active;
+ * `startTime` is only the slot it was booked for, and counting from that
+ * showed a call held hours after its scheduled time as hours old.
+ */
+const callStartedAt = (meeting: IMeeting | null): string =>
+  (meeting?.actualStartTime ?? meeting?.startTime ?? new Date()).toISOString();
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -374,7 +385,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               );
               if (!connected) {
                 socket.emit("message:error", {
-                  error: "Messaging locked. You must both discover each other first.",
+                  error:
+                    "Messaging is locked. You are not connected, or one of you blocked the other.",
                 });
                 return;
               }
@@ -610,47 +622,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Firebase UIDs; each socket joins user:<firebaseUid> on connect.
     socket.on(
       "call:invite",
-      (data: {
-        toUserId: string;
-        fromUserId: string;
-        fromName?: string;
-        fromAvatar?: string;
-        roomId: string;
-        callType: "audio" | "video";
-        conversationId?: string;
-      }) => {
-        if (!data?.toUserId || !data?.roomId) return;
+      async (
+        data: {
+          toUserId: string;
+          fromUserId: string;
+          fromName?: string;
+          fromAvatar?: string;
+          roomId: string;
+          callType: "audio" | "video";
+          conversationId?: string;
+        },
+        ack?: (result: { ok: boolean; message?: string }) => void
+      ) => {
+        if (!data?.toUserId || !data?.roomId) {
+          ack?.({ ok: false, message: "Could not start the call." });
+          return;
+        }
         // Don't let a user ring themselves.
-        if (data.toUserId === data.fromUserId) return;
+        if (data.toUserId === data.fromUserId) {
+          ack?.({ ok: false, message: "You can't call yourself." });
+          return;
+        }
 
-        const session = {
-          conversationId: data.conversationId,
-          callerUid: data.fromUserId,
-          calleeUid: data.toUserId,
-          callerName: data.fromName || "Someone",
-          calleeName: "Someone",
-          callType: data.callType,
-          answered: false,
-          ended: false,
+        // The caller never gets to say who they are: that comes from whatever
+        // this socket authenticated as. The id in the payload is only a
+        // fallback for a socket that never sent `user:online`. The caller is
+        // told why over the ack, since they leave this page for the call
+        // screen as soon as the invite goes out.
+        const refuse = (message: string) => {
+          socket.emit("call:error", { message });
+          ack?.({ ok: false, message });
         };
-        callSessions.set(data.roomId, session);
 
-        // Ring immediately, then fill in real display names for the chat log.
-        io.to(`user:${data.toUserId}`).emit("call:incoming", data);
+        try {
+          const callerMongoId = socketUserMap.get(socket.id);
+          const [caller, callee] = await Promise.all([
+            callerMongoId
+              ? mongoService.getUserById(callerMongoId)
+              : mongoService.getUserByFirebaseUidCached(data.fromUserId),
+            mongoService.getUserByFirebaseUidCached(data.toUserId),
+          ]);
 
-        mongoService
-          .getUserByFirebaseUidCached(data.toUserId)
-          .then((calleeUser) => {
-            if (calleeUser?.name) session.calleeName = calleeUser.name;
-          })
-          .catch(() => {});
-        if (!data.fromName) {
-          mongoService
-            .getUserByFirebaseUidCached(data.fromUserId)
-            .then((callerUser) => {
-              if (callerUser?.name) session.callerName = callerUser.name;
-            })
-            .catch(() => {});
+          if (!caller) return refuse("Sign in again to start a call.");
+          if (!callee) return refuse("That person could not be found.");
+          if (caller._id.toString() === callee._id.toString()) {
+            return refuse("You can't call yourself.");
+          }
+
+          // The same gate messaging uses: a 1-on-1 call needs an active mutual
+          // connection, so blocking someone also stops them ringing you. Group
+          // calls are exempt, as group messages are.
+          let isGroup = false;
+          if (data.conversationId && mongoose.Types.ObjectId.isValid(data.conversationId)) {
+            const conversation = await Conversation.findById(data.conversationId).select("isGroup");
+            isGroup = !!conversation?.isGroup;
+          }
+          if (!isGroup) {
+            const connected = await mongoService.areConnected(
+              caller._id.toString(),
+              callee._id.toString()
+            );
+            if (!connected) {
+              return refuse(
+                "You can't call this person. You are not connected, or one of you blocked the other."
+              );
+            }
+          }
+
+          const callerUid = caller.firebaseUid || caller._id.toString();
+          const session = {
+            conversationId: data.conversationId,
+            callerUid,
+            calleeUid: callee.firebaseUid || data.toUserId,
+            callerName: caller.name || data.fromName || "Someone",
+            calleeName: callee.name || "Someone",
+            callType: data.callType,
+            answered: false,
+            ended: false,
+          };
+          callSessions.set(data.roomId, session);
+
+          // Ring with the caller's own name and avatar rather than the ones the
+          // payload carried, so an incoming call cannot claim to be from
+          // someone else.
+          io.to(`user:${session.calleeUid}`).emit("call:incoming", {
+            ...data,
+            fromUserId: callerUid,
+            fromName: session.callerName,
+            fromAvatar: caller.avatar || data.fromAvatar,
+          });
+          ack?.({ ok: true });
+        } catch (error) {
+          logger.error("Error ringing callee:", error);
+          refuse("Could not start the call. Try again.");
         }
       }
     );
@@ -823,11 +887,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
                 // Restart if ended
                 if (roomMeeting.status === "ended") {
-                  const newStartTime = new Date();
+                  const restarted = await mongoService.activateMeeting(roomMeeting._id.toString(), {
+                    restart: true,
+                  });
                   await mongoService.updateMeeting(roomMeeting._id.toString(), {
-                    status: "active",
-                    startTime: newStartTime,
-                    endTime: undefined,
                     analytics: {
                       totalDuration: roomMeeting.analytics?.totalDuration || 0,
                       participantCount: currentParticipantCount,
@@ -837,19 +900,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     },
                   });
                   io.to(`call:${roomId}`).emit("call:meeting-active", {
-                    startTime: newStartTime.toISOString(),
+                    startTime: callStartedAt(restarted),
                   });
                 }
                 // ACTIVATE if scheduled and now 2 people
                 else if (roomMeeting.status === "scheduled" && currentParticipantCount === 2) {
                   logger.debug(`🚀 Activating meeting (refresh case) ${roomId}`);
-                  const newStartTime = new Date();
-                  await mongoService.updateMeeting(roomMeeting._id.toString(), {
-                    status: "active",
-                    startTime: newStartTime,
-                  });
+                  const activated = await mongoService.activateMeeting(roomMeeting._id.toString());
                   io.to(`call:${roomId}`).emit("call:meeting-active", {
-                    startTime: newStartTime.toISOString(),
+                    startTime: callStartedAt(activated),
                   });
                 }
               }
@@ -905,11 +964,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
               // logic: if status is 'ended', restart it
               if (existingMeeting.status === "ended") {
-                const newStartTime = new Date();
+                const restarted = await mongoService.activateMeeting(
+                  existingMeeting._id.toString(),
+                  { restart: true }
+                );
                 await mongoService.updateMeeting(existingMeeting._id.toString(), {
-                  status: "active",
-                  startTime: newStartTime,
-                  endTime: undefined,
                   analytics: {
                     totalDuration: 0,
                     participantCount: currentParticipantCount,
@@ -919,21 +978,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 });
                 // Broadcast restart
                 io.to(`call:${roomId}`).emit("call:meeting-active", {
-                  startTime: newStartTime.toISOString(),
+                  startTime: callStartedAt(restarted),
                 });
               }
               // logic: if status is 'scheduled' and we now have 2 people, ACTIVATE
               else if (existingMeeting.status === "scheduled" && currentParticipantCount === 2) {
                 logger.debug(`🚀 Activating scheduled meeting ${roomId} - 2nd participant joined`);
-                const newStartTime = new Date();
-                await mongoService.updateMeeting(existingMeeting._id.toString(), {
-                  status: "active",
-                  startTime: newStartTime,
-                });
+                const activated = await mongoService.activateMeeting(
+                  existingMeeting._id.toString()
+                );
 
                 // Broadcast start
                 io.to(`call:${roomId}`).emit("call:meeting-active", {
-                  startTime: newStartTime.toISOString(),
+                  startTime: callStartedAt(activated),
                 });
               }
             }
@@ -985,12 +1042,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      // Get current meeting start time if active
+      // Get current meeting start time if active. The timer in the call counts
+      // from when the call began, not from the slot it was booked for.
       let meetingStartTime = null;
       try {
         const m = await mongoService.getMeetingByRoomId(roomId);
-        if (m && m.status === "active" && m.startTime) {
-          meetingStartTime = m.startTime.toISOString();
+        if (m && m.status === "active") {
+          meetingStartTime = callStartedAt(m);
         }
       } catch (e) {
         logger.error("Error fetching start time", e);
@@ -1101,8 +1159,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           if (existingMeeting && existingMeeting.status === "active") {
             const endTime = new Date();
-            const startTime = existingMeeting.startTime;
-            const durationMs = endTime.getTime() - startTime.getTime();
+            // Measured from when the call actually began. Using the scheduled
+            // startTime reported the gap since the booking instead: a meeting
+            // booked weeks earlier and then held for a minute recorded weeks.
+            const startTime = existingMeeting.actualStartTime ?? existingMeeting.startTime;
+            const durationMs = Math.max(0, endTime.getTime() - startTime.getTime());
             // Ensure at least 1 minute if duration is very sort, or ceil
             const durationMinutes = Math.max(1, Math.ceil(durationMs / (1000 * 60)));
 

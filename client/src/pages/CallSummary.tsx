@@ -54,6 +54,7 @@ interface MeetingDetail {
   _id: string;
   title: string;
   startTime: string;
+  actualStartTime?: string;
   endTime?: string;
   status: "scheduled" | "active" | "ended";
   roomId: string;
@@ -123,12 +124,15 @@ export default function CallSummary() {
       ? Math.round((attendedCount / participantCount) * 100)
       : 0;
 
-    const startTime = meeting.startTime ? new Date(meeting.startTime) : null;
+    // When the call actually began. `startTime` is only the slot it was booked
+    // for, and measuring from that reported the wait rather than the call.
+    const begun = meeting.actualStartTime ?? meeting.startTime;
+    const callBegan = begun ? new Date(begun) : null;
     const endTime = meeting.endTime ? new Date(meeting.endTime) : undefined;
     const durationMinutes = (() => {
       // 1. If we have explicit start and end times, calculate from them
-      if (startTime && endTime) {
-        return Math.max(1, Math.ceil((endTime.getTime() - startTime.getTime()) / (1000 * 60)));
+      if (callBegan && endTime) {
+        return Math.max(1, Math.ceil((endTime.getTime() - callBegan.getTime()) / (1000 * 60)));
       }
 
       // 2. If we have a stored total duration > 0, use it
@@ -137,8 +141,8 @@ export default function CallSummary() {
       }
 
       // 3. If active/no end time, calculate from now
-      if (startTime) {
-        return Math.max(1, Math.ceil((new Date().getTime() - startTime.getTime()) / (1000 * 60)));
+      if (callBegan) {
+        return Math.max(1, Math.ceil((new Date().getTime() - callBegan.getTime()) / (1000 * 60)));
       }
 
       return 0;
@@ -176,8 +180,10 @@ export default function CallSummary() {
 
     return {
       title: meeting.title || "Call Summary",
-      date: startTime
-        ? startTime.toLocaleDateString(undefined, {
+      // The day the call happened, which for a meeting held later than booked
+      // is not the day it was scheduled for.
+      date: callBegan
+        ? callBegan.toLocaleDateString(undefined, {
             weekday: "long",
             month: "long",
             day: "numeric",

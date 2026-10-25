@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download, FileText, ImageOff, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { getAuthToken } from "@/lib/queryClient";
 
 export type ChatAttachmentData = {
@@ -90,6 +91,7 @@ export function ChatAttachment({
   conversationId: string;
 }) {
   const { url, failed } = useAttachmentUrl(attachment, conversationId);
+  const [isOpen, setIsOpen] = useState(false);
   const isImage = attachment.mimeType.startsWith("image/");
 
   if (failed) {
@@ -111,15 +113,52 @@ export function ChatAttachment({
   }
 
   if (isImage) {
+    // Opened in place rather than with <a target="_blank">. Following the link
+    // navigated away from the chat and put the signed Cloudinary URL in the
+    // address bar and browser history — a credential-bearing link to someone
+    // else's private photo, sitting in history long after the signature
+    // expires and the image stops loading.
     return (
-      <a href={url} target="_blank" rel="noreferrer" className="mb-2 block">
-        <img
-          src={url}
-          alt={attachment.name}
-          loading="lazy"
-          className="max-h-64 w-auto rounded-lg border border-border object-cover"
-        />
-      </a>
+      <>
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="mb-2 block cursor-zoom-in rounded-lg"
+          aria-label={`View ${attachment.name}`}
+        >
+          <img
+            src={url}
+            alt={attachment.name}
+            loading="lazy"
+            className="max-h-64 w-auto rounded-lg border border-border object-cover"
+          />
+        </button>
+
+        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+          <DialogContent className="max-w-4xl border-border bg-background p-2 sm:p-4">
+            {/* Radix requires a title; the filename is shown below instead. */}
+            <DialogTitle className="sr-only">{attachment.name}</DialogTitle>
+            <img
+              src={url}
+              alt={attachment.name}
+              className="max-h-[75vh] w-full rounded-md object-contain"
+            />
+            <div className="flex items-center justify-between gap-3 px-1 pt-1">
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {attachment.name} · {formatFileSize(attachment.size)}
+              </span>
+              <a
+                href={url}
+                download={attachment.name}
+                className="flex shrink-0 items-center gap-2 text-sm font-medium text-primary hover:underline"
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </a>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   }
 
