@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,21 +7,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
-  User,
-  Mail,
   Calendar,
-  Edit2,
-  Save,
-  Camera,
   CheckCircle2,
-  Loader2,
-  Shield,
-  Share2,
-  Download,
-  Clock,
   Copy,
+  Edit2,
+  Loader2,
   Plus,
   QrCode,
+  Save,
+  Share2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getAvatarUrl, getInitials } from "@/lib/utils";
@@ -30,6 +24,7 @@ import { auth } from "@/lib/firebase";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
+import { QRCodeSVG } from "qrcode.react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -48,9 +43,9 @@ interface UserProfile {
   avatar?: string;
   bio?: string;
   phone?: string;
-  dateOfBirth?: string;
+  location?: string;
+  website?: string;
   isEmailVerified: boolean;
-  isPhoneVerified?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,114 +56,92 @@ interface ProfileStats {
   meetingsHosted: number;
 }
 
+/** The fields this page edits, in the order they appear. */
+interface ProfileForm {
+  name: string;
+  username: string;
+  bio: string;
+  location: string;
+  website: string;
+  phone: string;
+}
+
+const PROVIDERS = [
+  { id: "google", label: "Google" },
+  { id: "github", label: "GitHub" },
+] as const;
+
+const EMPTY_FORM: ProfileForm = {
+  name: "",
+  username: "",
+  bio: "",
+  location: "",
+  website: "",
+  phone: "",
+};
+
+function formToState(profile: UserProfile | undefined): ProfileForm {
+  if (!profile) return EMPTY_FORM;
+  return {
+    name: profile.name || "",
+    username: profile.username || "",
+    bio: profile.bio || "",
+    location: profile.location || "",
+    website: profile.website || "",
+    phone: profile.phone || "",
+  };
+}
+
+function describeMembership(createdAt: string | undefined): string {
+  if (!createdAt) return "Member";
+  const diffDays = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86_400_000);
+  if (diffDays < 1) return "Joined today";
+  if (diffDays === 1) return "Joined yesterday";
+  if (diffDays < 30) return `Joined ${diffDays} days ago`;
+  const months = Math.floor(diffDays / 30);
+  if (months < 12) return `Joined ${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(months / 12);
+  return `Joined ${years} year${years === 1 ? "" : "s"} ago`;
+}
+
+/** A read-only field in the details card. */
+function ReadField({ label, value, href }: { label: string; value?: string; href?: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      {value ? (
+        href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 block truncate text-sm text-primary hover:underline"
+          >
+            {value}
+          </a>
+        ) : (
+          <p className="mt-1 truncate text-sm text-foreground">{value}</p>
+        )
+      ) : (
+        <p className="mt-1 text-sm text-muted-foreground">Not set</p>
+      )}
+    </div>
+  );
+}
+
 export default function Profile() {
   const { user: authUser, linkGoogleAccount, linkGithubAccount } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isEditing, setIsEditing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [phoneError, setPhoneError] = useState<string | null>(null);
-  const [linkingProvider, setLinkingProvider] = useState<"google" | "github" | null>(null);
-  const [linkedProviders, setLinkedProviders] = useState({
-    google: false,
-    github: false,
-  });
-  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
 
-  // Invite System State
+  const [isEditing, setIsEditing] = useState(false);
+  const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
+  const [linkingProvider, setLinkingProvider] = useState<"google" | "github" | null>(null);
+  const [linkedProviders, setLinkedProviders] = useState({ google: false, github: false });
+
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
-  const [isGeneratingInvite, setIsGeneratingInvite] = useState(false);
 
-  const generateInviteMutation = useMutation({
-    mutationFn: async () => {
-      const token = await getAuthToken();
-      if (!token) throw new Error("Not authenticated");
-      const response = await fetch("/api/invites/generate", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to generate invite");
-      return response.json();
-    },
-    onSuccess: (data) => {
-      setInviteCode(data.code);
-      setInviteExpiresAt(data.expiresAt);
-      toast({ title: "Invite Generated", description: "Share this code or link with a friend." });
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: error.message || "Could not generate invite.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleGenerateInvite = () => {
-    setIsGeneratingInvite(true);
-    generateInviteMutation.mutate(undefined, {
-      onSettled: () => setIsGeneratingInvite(false),
-    });
-  };
-
-  const inviteUrl = inviteCode ? `${window.location.origin}/invite/${inviteCode}` : "";
-
-  const copyInviteToClipboard = () => {
-    if (inviteUrl) {
-      navigator.clipboard.writeText(inviteUrl);
-      toast({ title: "Copied!", description: "Invite link copied to clipboard." });
-    }
-  };
-
-  const handleShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: "Join me on FaceCallAI",
-          text: "Connect with me instantly!",
-          url: inviteUrl,
-        });
-      } catch (err) {
-        console.error("Error sharing:", err);
-      }
-    } else {
-      copyInviteToClipboard();
-    }
-  };
-
-  const handleDownloadQR = async () => {
-    try {
-      const response = await fetch(
-        `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(inviteUrl)}`
-      );
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `facecall-invite-${inviteCode}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      toast({ title: "Downloaded", description: "QR Code saved to downloads." });
-    } catch (err) {
-      toast({ title: "Error", description: "Could not download QR code", variant: "destructive" });
-    }
-  };
-
-  const timeLeft = useMemo(() => {
-    if (!inviteExpiresAt) return null;
-    const expires = new Date(inviteExpiresAt).getTime();
-    const now = Date.now();
-    const diff = expires - now;
-    if (diff <= 0) return "Expired";
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    return `${hours}h ${minutes}m left`;
-  }, [inviteExpiresAt]);
-
-  // Fetch user profile from MongoDB with real-time updates
   const {
     data: profile,
     isLoading,
@@ -178,219 +151,77 @@ export default function Profile() {
     queryKey: ["/api/users/me"],
     queryFn: getQueryFn({ on401: "throw" }),
     enabled: !!authUser?.uid,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-    staleTime: 30000,
-    refetchInterval: 60000,
+    staleTime: 30_000,
     retry: 2,
     retryDelay: 1000,
   });
 
-  // Log errors for debugging
-  useEffect(() => {
-    if (error) {
-      console.error("[Profile] Error fetching profile:", error);
-    }
-  }, [error]);
-
-  // Form state
-  const [formData, setFormData] = useState({
-    name: "",
-    username: "",
-    bio: "",
-    phone: "",
-    dateOfBirth: "",
-    avatar: "",
-  });
-
-  // Update form data when profile loads
-  useEffect(() => {
-    if (profile) {
-      setFormData({
-        name: profile.name || "",
-        username: profile.username || "",
-        bio: profile.bio || "",
-        phone: profile.phone || "",
-        dateOfBirth: profile.dateOfBirth
-          ? new Date(profile.dateOfBirth).toISOString().split("T")[0]
-          : "",
-        avatar: profile.avatar || "",
-      });
-      setPhoneError(null);
-      setIsPhoneVerified(!!profile.isPhoneVerified);
-    }
-  }, [profile]);
-
-  // Track linked auth providers from Firebase user
-  useEffect(() => {
-    const refreshLinkedProviders = () => {
-      const current = auth.currentUser;
-      if (!current) {
-        setLinkedProviders({ google: false, github: false });
-        return;
-      }
-      const ids = (current.providerData || []).map((p) => p?.providerId).filter(Boolean);
-      setLinkedProviders({
-        google: ids.includes("google.com"),
-        github: ids.includes("github.com"),
-      });
-    };
-
-    refreshLinkedProviders();
-  }, [authUser?.uid]);
-
   // Counted server-side. See GET /api/users/me/stats — this used to pull down
   // every meeting the user had ever joined just to estimate three numbers.
-  const {
-    data: stats,
-    isLoading: isStatsLoading,
-    isFetching: isStatsFetching,
-  } = useQuery<ProfileStats>({
+  const { data: stats } = useQuery<ProfileStats>({
     queryKey: ["/api/users/me/stats"],
     queryFn: async () => {
       const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
-
       const response = await fetch("/api/users/me/stats", {
         headers: { Authorization: `Bearer ${token}` },
         credentials: "include",
       });
-
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || "Failed to fetch profile stats");
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to fetch profile stats");
       }
-
       return response.json();
     },
     enabled: !!profile?._id,
-    refetchOnWindowFocus: true,
-    staleTime: 30000,
-    refetchInterval: 60000,
+    staleTime: 30_000,
   });
 
-  const statsLoading = (isStatsLoading || isStatsFetching) && !stats;
+  useEffect(() => {
+    if (profile) setForm(formToState(profile));
+  }, [profile]);
 
-  const getBaseAvatarUrl = () => {
-    return (
-      formData.avatar ||
-      profile?.avatar ||
-      authUser?.photoURL ||
-      getAvatarUrl(authUser?.photoURL, authUser?.uid, authUser?.email) ||
-      `https://api.dicebear.com/7.x/initials/svg?seed=${profile?.username || profile?._id || "user"}`
-    );
-  };
+  // Which sign-in providers Firebase has on this account.
+  useEffect(() => {
+    const current = auth.currentUser;
+    const ids = (current?.providerData || []).map((p) => p?.providerId).filter(Boolean);
+    setLinkedProviders({
+      google: ids.includes("google.com"),
+      github: ids.includes("github.com"),
+    });
+  }, [authUser?.uid]);
 
-  const handleAvatarRefresh = () => {
-    const baseUrl = getBaseAvatarUrl();
-    const randomToken = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-
-    let updatedUrl = baseUrl;
-    try {
-      const url = new URL(baseUrl);
-      url.searchParams.set("refresh", randomToken);
-      updatedUrl = url.toString();
-    } catch {
-      updatedUrl = baseUrl.includes("?")
-        ? `${baseUrl}&refresh=${randomToken}`
-        : `${baseUrl}?refresh=${randomToken}`;
-    }
-
-    setFormData((prev) => ({
-      ...prev,
-      avatar: updatedUrl,
-    }));
-  };
-
-  // Update profile mutation
   const updateProfileMutation = useMutation({
-    mutationFn: async (data: Partial<UserProfile>) => {
+    mutationFn: async (data: ProfileForm) => {
       const token = await getAuthToken();
       if (!token) throw new Error("Not authenticated");
-
       const response = await fetch("/api/users/me", {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         credentials: "include",
         body: JSON.stringify(data),
       });
-
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to update profile");
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update profile");
       }
-
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users/me"] });
       setIsEditing(false);
-      toast({
-        title: "Profile updated",
-        description: "Your profile has been successfully updated.",
-      });
+      toast({ title: "Profile updated", description: "Your changes have been saved." });
     },
-    onError: (error: Error) => {
-      toast({
-        title: "Update failed",
-        description: error.message,
-        variant: "destructive",
-      });
+    onError: (err: Error) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
     },
   });
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      // Require phone number before saving to encourage stronger account security
-      if (!formData.phone.trim()) {
-        setPhoneError("Phone number is required for account security.");
-        toast({
-          title: "Phone number required",
-          description: "Please add your mobile number to continue.",
-          variant: "destructive",
-        });
-        setIsSaving(false);
-        return;
-      } else {
-        setPhoneError(null);
-      }
-
-      await updateProfileMutation.mutateAsync({
-        name: formData.name,
-        username: formData.username,
-        bio: formData.bio,
-        phone: formData.phone,
-        dateOfBirth: formData.dateOfBirth
-          ? new Date(formData.dateOfBirth).toISOString()
-          : undefined,
-        avatar: formData.avatar,
-      });
-    } catch (error) {
-      console.error("Error updating profile:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const handleSave = () => updateProfileMutation.mutate(form);
 
   const handleCancel = () => {
-    if (profile) {
-      setFormData({
-        name: profile.name || "",
-        username: profile.username || "",
-        bio: profile.bio || "",
-        phone: profile.phone || "",
-        dateOfBirth: profile.dateOfBirth
-          ? new Date(profile.dateOfBirth).toISOString().split("T")[0]
-          : "",
-        avatar: profile.avatar || "",
-      });
-    }
+    setForm(formToState(profile));
     setIsEditing(false);
-    setPhoneError(null);
   };
 
   const handleLinkProvider = async (provider: "google" | "github") => {
@@ -401,24 +232,20 @@ export default function Profile() {
       } else {
         await linkGithubAccount();
       }
-      // Reload Firebase user to get updated providerData
       await auth.currentUser?.reload();
-      const current = auth.currentUser;
-      if (current) {
-        const ids = (current.providerData || []).map((p) => p?.providerId).filter(Boolean);
-        setLinkedProviders({
-          google: ids.includes("google.com"),
-          github: ids.includes("github.com"),
-        });
-      }
+      const ids = (auth.currentUser?.providerData || []).map((p) => p?.providerId).filter(Boolean);
+      setLinkedProviders({
+        google: ids.includes("google.com"),
+        github: ids.includes("github.com"),
+      });
       toast({
         title: "Account linked",
-        description: `Your ${provider === "google" ? "Google" : "GitHub"} account has been linked successfully.`,
+        description: `Your ${provider === "google" ? "Google" : "GitHub"} account is connected.`,
       });
-    } catch (error: any) {
+    } catch (err: any) {
       toast({
         title: "Linking failed",
-        description: error?.message || "Failed to link account.",
+        description: err?.message || "Could not link that account.",
         variant: "destructive",
       });
     } finally {
@@ -426,624 +253,459 @@ export default function Profile() {
     }
   };
 
+  const generateInviteMutation = useMutation({
+    mutationFn: async () => {
+      const token = await getAuthToken();
+      if (!token) throw new Error("Not authenticated");
+      const response = await fetch("/api/invites/generate", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "standard" }),
+      });
+      if (!response.ok) throw new Error("Failed to generate invite");
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setInviteCode(data.code);
+      setInviteExpiresAt(data.expiresAt);
+      toast({ title: "Invite created", description: "Share this link with someone." });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Error",
+        description: err.message || "Could not generate an invite.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // GhostLinks are created from the chat page; this dialog only makes the
+  // standard, lasting invite.
+  const handleGenerateInvite = () => generateInviteMutation.mutate();
+
+  const inviteUrl = inviteCode ? `${window.location.origin}/invite/${inviteCode}` : "";
+
+  const copyInviteToClipboard = () => {
+    if (!inviteUrl) return;
+    navigator.clipboard.writeText(inviteUrl);
+    toast({ title: "Copied", description: "Invite link copied to your clipboard." });
+  };
+
+  const handleShare = async () => {
+    if (!inviteUrl) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Join me on AI Meet", url: inviteUrl });
+        return;
+      } catch {
+        // Dismissed, or sharing is unavailable — fall back to the clipboard.
+      }
+    }
+    copyInviteToClipboard();
+  };
+
   const displayName = profile?.name || authUser?.displayName || "User";
   const displayEmail = profile?.email || authUser?.email || "";
   const avatarUrl =
-    (isEditing ? formData.avatar : profile?.avatar) ||
-    authUser?.photoURL ||
-    getAvatarUrl(authUser?.photoURL, authUser?.uid, authUser?.email);
-  const statsCards = [
-    { label: "Friends", value: stats ? stats.friends : "—" },
-    { label: "Groups", value: stats ? stats.groups : "—" },
-    { label: "Meetings Hosted", value: stats ? stats.meetingsHosted : "—" },
+    profile?.avatar || authUser?.photoURL || getAvatarUrl(authUser?.photoURL, authUser?.uid);
+  const membership = describeMembership(profile?.createdAt);
+
+  const statCards = [
+    { label: "Connections", value: stats?.friends },
+    { label: "Group chats", value: stats?.groups },
+    { label: "Meetings hosted", value: stats?.meetingsHosted },
   ];
 
-  const memberSinceText = profile?.createdAt
-    ? (() => {
-        const diffMs = Date.now() - new Date(profile.createdAt).getTime();
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        if (diffDays < 1) return "Joined today";
-        if (diffDays === 1) return "Joined yesterday";
-        if (diffDays < 30) return `Joined ${diffDays} days ago`;
-        const diffMonths = Math.floor(diffDays / 30);
-        if (diffMonths < 12) return `Joined ${diffMonths} month${diffMonths > 1 ? "s" : ""} ago`;
-        const diffYears = Math.floor(diffMonths / 12);
-        return `Joined ${diffYears} year${diffYears > 1 ? "s" : ""} ago`;
-      })()
-    : "Member";
+  const websiteHref = profile?.website
+    ? /^https?:\/\//i.test(profile.website)
+      ? profile.website
+      : `https://${profile.website}`
+    : undefined;
 
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.1,
-      },
-    },
-  };
+  if (isLoading) {
+    return (
+      <div className="mx-auto w-full max-w-7xl space-y-6">
+        <Skeleton className="h-8 w-32" />
+        <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <Skeleton className="h-20 w-20 shrink-0 rounded-full" />
+            <div className="w-full space-y-2">
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-4 w-32" />
+            </div>
+          </div>
+          <div className="mt-6 grid grid-cols-3 gap-3 border-t border-border/60 pt-6">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-16 rounded-xl" />
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Skeleton className="h-80 rounded-2xl lg:col-span-2" />
+          <Skeleton className="h-36 rounded-2xl" />
+        </div>
+      </div>
+    );
+  }
 
-  const itemVariants = {
-    hidden: { y: 20, opacity: 0 },
-    visible: {
-      y: 0,
-      opacity: 1,
-      transition: {
-        type: "spring",
-        stiffness: 100,
-        damping: 15,
-      },
-    },
-  };
+  if (error) {
+    return (
+      <div className="mx-auto w-full max-w-7xl">
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col items-start gap-3">
+            <span>{error instanceof Error ? error.message : "Could not load your profile."}</span>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Try again
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex-1 overflow-auto p-0 sm:p-6 md:p-10">
-      <main className="flex-1 overflow-auto p-2 sm:p-6 md:p-10">
-        <div className="max-w-5xl mx-auto space-y-4 md:space-y-8">
-          {isLoading ? (
-            <div className="space-y-8 animate-pulse">
-              {/* Profile Header Skeleton */}
-              <div className="relative overflow-hidden rounded-3xl border border-border bg-muted/40 p-8">
-                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
-                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 w-full">
-                    <Skeleton className="h-32 w-32 rounded-full border-4 border-border" />
-                    <div className="space-y-4 text-center sm:text-left w-full max-w-md">
-                      <Skeleton className="h-10 w-48 mx-auto sm:mx-0" />
-                      <Skeleton className="h-6 w-32 mx-auto sm:mx-0" />
-                      <div className="flex justify-center sm:justify-start gap-4 pt-2">
-                        <Skeleton className="h-5 w-40" />
-                        <Skeleton className="h-5 w-32" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-3 w-full lg:w-auto justify-center lg:justify-end">
-                    <Skeleton className="h-10 w-32" />
-                    <Skeleton className="h-10 w-32" />
-                  </div>
-                </div>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="mx-auto w-full max-w-7xl space-y-6"
+    >
+      <header>
+        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          How you appear to the people you connect with.
+        </p>
+      </header>
 
-                {/* Stats Grid Skeleton */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-8 border-t border-border">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="rounded-2xl border border-border bg-muted/40 p-4">
-                      <Skeleton className="h-4 w-20 mb-2" />
-                      <Skeleton className="h-8 w-12" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid gap-8 lg:grid-cols-3">
-                {/* Profile Details Form Skeleton */}
-                <div className="lg:col-span-2 rounded-3xl border border-border bg-muted/40 p-6 md:p-8">
-                  <div className="flex justify-between mb-8">
-                    <Skeleton className="h-8 w-40" />
-                    <Skeleton className="h-6 w-24" />
-                  </div>
-                  <div className="space-y-8">
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Skeleton className="h-5 w-20" />
-                        <Skeleton className="h-10 w-full" />
-                      </div>
-                      <div className="space-y-2">
-                        <Skeleton className="h-5 w-20" />
-                        <Skeleton className="h-10 w-full" />
-                      </div>
-                    </div>
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Skeleton className="h-5 w-24" />
-                        <Skeleton className="h-10 w-full" />
-                      </div>
-                      <div className="space-y-2">
-                        <Skeleton className="h-5 w-24" />
-                        <Skeleton className="h-10 w-full" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Skeleton className="h-5 w-16" />
-                      <Skeleton className="h-32 w-full" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Sidebar Skeleton */}
-                <div className="space-y-6">
-                  <div className="rounded-3xl border border-border bg-muted/40 p-6 space-y-4">
-                    <Skeleton className="h-6 w-32 mb-4" />
-                    <Skeleton className="h-20 w-full rounded-2xl" />
-                    <Skeleton className="h-20 w-full rounded-2xl" />
-                    <Skeleton className="h-40 w-full rounded-2xl" />
-                  </div>
-                  <div className="rounded-3xl border border-border bg-muted/40 p-6 space-y-4">
-                    <Skeleton className="h-6 w-32 mb-4" />
-                    <Skeleton className="h-12 w-full rounded-xl" />
-                    <Skeleton className="h-12 w-full rounded-xl" />
-                    <Skeleton className="h-12 w-full rounded-xl" />
-                  </div>
-                </div>
-              </div>
+      {/* Identity. The name, handle and join date live here and nowhere else:
+          repeating them in a sidebar card only made the page look fuller. */}
+      <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar className="h-20 w-20 shrink-0 border border-border">
+              <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
+              <AvatarFallback className="text-xl">
+                {getInitials(displayName, displayEmail)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 space-y-1">
+              <h2 className="truncate text-xl font-semibold tracking-tight">{displayName}</h2>
+              <p className="truncate text-sm text-muted-foreground">
+                @{profile?.username || "username"}
+              </p>
+              <p className="flex items-center gap-1.5 truncate text-sm text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {membership}
+              </p>
             </div>
-          ) : error ? (
-            <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-200">
-              <AlertDescription>
-                <div className="space-y-2">
-                  <p className="font-semibold">
-                    {error instanceof Error
-                      ? error.message
-                      : "Failed to load profile. Please try again."}
-                  </p>
+          </div>
+
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="shrink-0 gap-2">
+                <QrCode className="h-4 w-4" aria-hidden="true" />
+                Create invite
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Share an invite</DialogTitle>
+                <DialogDescription>
+                  Anyone who opens this link connects with you for good. The link can be opened for
+                  24 hours.
+                </DialogDescription>
+              </DialogHeader>
+
+              {!inviteCode ? (
+                <Button
+                  onClick={handleGenerateInvite}
+                  disabled={generateInviteMutation.isPending}
+                  className="gap-2"
+                >
+                  {generateInviteMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Generate invite link
+                </Button>
+              ) : (
+                <div className="space-y-4">
+                  {/* Drawn here, not fetched. This used to be an <img> at
+                      api.qrserver.com with the invite URL in the query string,
+                      which handed every invite anyone generated to a third
+                      party — and put it in that service's logs — to render a
+                      picture the browser can draw itself.
+
+                      White stays hardcoded: a QR needs a light quiet zone to
+                      scan, so inverting it in dark mode would break it. */}
+                  <div className="flex justify-center">
+                    <div className="rounded-lg border border-border bg-white p-3">
+                      <QRCodeSVG
+                        value={inviteUrl}
+                        size={152}
+                        level="M"
+                        marginSize={0}
+                        title={`QR code for ${inviteUrl}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Invite link
+                    </Label>
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted p-1.5">
+                      <span className="flex-1 select-all truncate px-2 text-sm">{inviteUrl}</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 shrink-0"
+                        onClick={copyInviteToClipboard}
+                        aria-label="Copy invite link"
+                      >
+                        <Copy className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Button className="w-full gap-2" onClick={handleShare}>
+                    <Share2 className="h-4 w-4" aria-hidden="true" />
+                    Share
+                  </Button>
+
+                  {/* A fixed expiry rather than a countdown: the old one was
+                      computed once and sat there going stale. */}
+                  {inviteExpiresAt && (
+                    <p className="text-center text-xs text-muted-foreground">
+                      Can be opened until{" "}
+                      {new Date(inviteExpiresAt).toLocaleString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  )}
+
                   <Button
-                    onClick={() => refetch()}
-                    variant="outline"
-                    className="mt-2 border-red-500/30 hover:bg-red-500/20"
+                    variant="ghost"
+                    className="h-8 w-full text-xs text-muted-foreground"
+                    onClick={() => {
+                      setInviteCode(null);
+                      setInviteExpiresAt(null);
+                    }}
                   >
-                    Retry
+                    Create another
                   </Button>
                 </div>
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <motion.div
-              variants={containerVariants}
-              initial="hidden"
-              animate="visible"
-              className="space-y-8"
-            >
-              {/* Profile Header Card */}
-              <motion.div
-                variants={itemVariants}
-                className="relative overflow-hidden rounded-xl md:rounded-3xl border border-border bg-muted/40 backdrop-blur-3xl p-4 md:p-8 shadow-2xl"
-              >
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent opacity-50 pointer-events-none" />
-                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
-
-                <div className="relative flex flex-col lg:flex-row lg:items-start lg:justify-between gap-8">
-                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
-                    <div className="relative group mx-auto sm:mx-0">
-                      <div className="absolute inset-0 bg-primary/30 blur-xl rounded-full opacity-70 group-hover:opacity-100 transition-opacity" />
-                      <Avatar className="relative h-24 w-24 md:h-32 md:w-32 border-4 border-border shadow-2xl">
-                        <AvatarImage src={avatarUrl} alt={displayName} className="object-cover" />
-                        <AvatarFallback className="text-3xl bg-background/50 backdrop-blur">
-                          {getInitials(displayName, displayEmail)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="absolute -bottom-2 -right-2 h-6 w-6 rounded-full border-2 border-background bg-emerald-500 shadow-lg ring-2 ring-background/50 animate-pulse" />
-                    </div>
-
-                    <div className="text-center sm:text-left space-y-2">
-                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3">
-                        <h1 className="text-4xl font-bold tracking-tight">{displayName}</h1>
-                        {profile?.isEmailVerified && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          >
-                            <CheckCircle2 className="w-3 h-3 mr-1" />
-                            Verified
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-lg text-muted-foreground">
-                        @{profile?.username || "username"}
-                      </p>
-                      <div className="flex items-center justify-center sm:justify-start gap-4 text-sm text-muted-foreground/80 pt-2">
-                        <span className="flex items-center gap-1.5">
-                          <Mail className="w-4 h-4" />
-                          {displayEmail}
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <Calendar className="w-4 h-4" />
-                          {memberSinceText}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-                    <Button
-                      variant="outline"
-                      className="gap-2 border-border hover:bg-accent bg-transparent backdrop-blur-sm"
-                      onClick={handleAvatarRefresh}
-                      disabled={!profile}
-                    >
-                      <Camera className="w-4 h-4" />
-                      Shuffle Avatar
-                    </Button>
-
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button className="gap-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white border-0 shadow-lg shadow-purple-500/20">
-                          <QrCode className="w-4 h-4" />
-                          Create Invite
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-md bg-background border-border backdrop-blur-xl">
-                        <DialogHeader>
-                          <DialogTitle>Share Invite</DialogTitle>
-                          <DialogDescription>
-                            Create a one-time link for a friend to instantly connect with you.
-                            Expires in 24 hours.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="flex flex-col items-center space-y-6 py-4">
-                          {!inviteCode ? (
-                            <Button
-                              onClick={handleGenerateInvite}
-                              disabled={isGeneratingInvite}
-                              className="w-full h-12 text-lg font-medium relative overflow-hidden group"
-                              variant="secondary"
-                            >
-                              <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 group-hover:opacity-100 opacity-0 transition-opacity" />
-                              {isGeneratingInvite ? (
-                                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                              ) : (
-                                <Plus className="w-5 h-5 mr-2" />
-                              )}
-                              Generate New Invite
-                            </Button>
-                          ) : (
-                            <>
-                              <div className="relative group">
-                                <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-                                <div className="relative p-4 bg-white rounded-xl shadow-2xl ring-1 ring-gray-900/5">
-                                  <img
-                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(inviteUrl)}`}
-                                    alt="QR Code"
-                                    className="w-48 h-48"
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="flex gap-2 w-full">
-                                <Button
-                                  className="flex-1 gap-2"
-                                  variant="outline"
-                                  onClick={handleDownloadQR}
-                                >
-                                  <Download className="w-4 h-4" />
-                                  Save QR
-                                </Button>
-                                <Button className="flex-1 gap-2" onClick={handleShare}>
-                                  <Share2 className="w-4 h-4" />
-                                  Share
-                                </Button>
-                              </div>
-
-                              <div className="space-y-2 w-full">
-                                <Label className="text-muted-foreground text-xs uppercase tracking-wider font-semibold ml-1">
-                                  Invite Link
-                                </Label>
-                                <div className="flex items-center gap-2 p-1.5 bg-muted rounded-lg border border-border/50">
-                                  <div className="flex-1 px-3 text-sm font-medium truncate select-all text-foreground/90">
-                                    {inviteUrl}
-                                  </div>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-8 w-8 hover:bg-background/80"
-                                    onClick={copyInviteToClipboard}
-                                  >
-                                    <Copy className="w-4 h-4" />
-                                  </Button>
-                                </div>
-
-                                <div className="flex items-center justify-center gap-2 text-xs font-medium text-amber-500/90 py-2 bg-amber-500/5 rounded-full mt-4">
-                                  <Clock className="w-3.5 h-3.5" />
-                                  <span>{timeLeft || "Expires in 24h"}</span>
-                                </div>
-
-                                <Button
-                                  variant="ghost"
-                                  className="w-full text-muted-foreground hover:bg-destructive/5 hover:text-destructive text-xs h-8 mt-2"
-                                  onClick={() => {
-                                    setInviteCode(null);
-                                    setInviteExpiresAt(null);
-                                  }}
-                                >
-                                  Generate New Code
-                                </Button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                    {!isEditing ? (
-                      <Button
-                        onClick={() => setIsEditing(true)}
-                        className="gap-2 shadow-lg shadow-primary/20"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                        Edit Profile
-                      </Button>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          onClick={handleCancel}
-                          disabled={isSaving}
-                          className="hover:bg-accent"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleSave}
-                          disabled={isSaving}
-                          className="gap-2 min-w-[100px]"
-                        >
-                          {isSaving ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Save className="w-4 h-4" />
-                          )}
-                          Save
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Stats Grid */}
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 mt-8 pt-8 border-t border-border">
-                  {statsCards.map((stat) => (
-                    <div
-                      key={stat.label}
-                      className="group relative overflow-hidden rounded-xl md:rounded-2xl border border-border bg-muted/40 p-3 md:p-4 hover:bg-accent transition-all duration-300"
-                    >
-                      <div className="relative z-10">
-                        <p className="text-[10px] md:text-xs font-medium uppercase tracking-wider text-muted-foreground truncate">
-                          {stat.label}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <p className="text-xl md:text-2xl font-bold text-foreground truncate">
-                            {statsLoading ? "—" : stat.value}
-                          </p>
-                          {statsLoading && (
-                            <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin text-muted-foreground" />
-                          )}
-                        </div>
-                      </div>
-                      <div className="absolute -right-4 -bottom-4 w-12 h-12 md:w-16 md:h-16 bg-primary/5 rounded-full blur-xl group-hover:bg-primary/10 transition-colors" />
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-
-              <div className="grid gap-4 md:gap-8 lg:grid-cols-3">
-                {/* Profile Details Form */}
-                <motion.div
-                  variants={itemVariants}
-                  className="lg:col-span-2 rounded-xl md:rounded-3xl border border-border bg-muted/40 backdrop-blur-md p-4 md:p-8"
-                >
-                  <div className="flex items-center justify-between mb-8">
-                    <div>
-                      <h2 className="text-xl font-semibold flex items-center gap-2">
-                        <User className="w-5 h-5 text-primary" />
-                        Profile Details
-                      </h2>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Manage your personal information
-                      </p>
-                    </div>
-                    {isEditing && (
-                      <Badge
-                        variant="outline"
-                        className="border-primary/50 text-primary animate-pulse"
-                      >
-                        Editing Mode
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="space-y-8">
-                    {/* Basic Info Section */}
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="name" className={isEditing ? "text-primary" : ""}>
-                          Full Name
-                        </Label>
-                        {isEditing ? (
-                          <Input
-                            id="name"
-                            value={formData.name}
-                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                            className="bg-muted/40 border-border focus:border-primary/50"
-                          />
-                        ) : (
-                          <p className="text-lg font-medium">{profile?.name || "Not set"}</p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="username" className={isEditing ? "text-primary" : ""}>
-                          Username
-                        </Label>
-                        {isEditing ? (
-                          <Input
-                            id="username"
-                            value={formData.username}
-                            onChange={(e) =>
-                              setFormData({ ...formData, username: e.target.value.toLowerCase() })
-                            }
-                            className="bg-muted/40 border-border focus:border-primary/50"
-                          />
-                        ) : (
-                          <p className="text-lg font-medium">@{profile?.username || "username"}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="bio" className={isEditing ? "text-primary" : ""}>
-                        Bio
-                      </Label>
-                      {isEditing ? (
-                        <Textarea
-                          id="bio"
-                          value={formData.bio}
-                          onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                          className="bg-muted/40 border-border focus:border-primary/50 min-h-[100px]"
-                          placeholder="Tell us about yourself..."
-                        />
-                      ) : (
-                        <p className="text-base text-muted-foreground whitespace-pre-wrap">
-                          {profile?.bio || "No bio yet."}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="phone" className={isEditing ? "text-primary" : ""}>
-                          Phone Number
-                        </Label>
-                        {isPhoneVerified && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
-                          >
-                            <CheckCircle2 className="w-4 h-4 mr-1" />
-                            Verified
-                          </Badge>
-                        )}
-                      </div>
-                      {isEditing ? (
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={formData.phone}
-                          onChange={(e) => {
-                            setFormData({ ...formData, phone: e.target.value });
-                            if (e.target.value.trim()) {
-                              setPhoneError(null);
-                            }
-                          }}
-                          className="bg-muted/40 border-border focus:border-primary/50"
-                          placeholder="+1 (555) 000-0000"
-                        />
-                      ) : (
-                        <p className="text-lg font-medium">{profile?.phone || "Not set"}</p>
-                      )}
-                      {!profile?.phone && !isEditing && (
-                        <p className="text-xs text-red-500 mt-1">
-                          Add your mobile number to keep your account more secure.
-                        </p>
-                      )}
-                      {isEditing && phoneError && (
-                        <p className="text-xs text-red-500 mt-1">{phoneError}</p>
-                      )}
-                    </div>
-                  </div>
-                </motion.div>
-
-                {/* Sidebar */}
-                <motion.div variants={itemVariants} className="space-y-6">
-                  {/* Account Snapshot */}
-                  <div className="rounded-xl md:rounded-3xl border border-border bg-muted/40 backdrop-blur-md p-4 md:p-6">
-                    <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
-                      <Shield className="w-5 h-5 text-emerald-500" />
-                      Account Status
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="p-4 rounded-2xl bg-muted/40 border border-border">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
-                          Membership
-                        </p>
-                        <p className="font-medium">{memberSinceText}</p>
-                      </div>
-                      {!profile?.phone && (
-                        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-                          <p className="text-xs uppercase tracking-wide text-amber-400 mb-1">
-                            Action Recommended
-                          </p>
-                          <p className="text-sm text-amber-100">
-                            Add your mobile number to help secure your account and recover access if
-                            you get locked out.
-                          </p>
-                        </div>
-                      )}
-                      <div className="p-4 rounded-2xl bg-muted/40 border border-border">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
-                          Last Active
-                        </p>
-                        <p className="font-medium">
-                          {profile?.updatedAt
-                            ? new Date(profile.updatedAt).toLocaleDateString()
-                            : "Just now"}
-                        </p>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-muted/40 border border-border space-y-3">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
-                          Connected Accounts
-                        </p>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm text-muted-foreground">Google</span>
-                            {linkedProviders.google ? (
-                              <Badge
-                                variant="secondary"
-                                className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              >
-                                Connected
-                              </Badge>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="border-border hover:bg-accent"
-                                onClick={() => handleLinkProvider("google")}
-                                disabled={linkingProvider === "google"}
-                              >
-                                {linkingProvider === "google" ? (
-                                  <>
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                    Linking...
-                                  </>
-                                ) : (
-                                  "Connect"
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm text-muted-foreground">GitHub</span>
-                            {linkedProviders.github ? (
-                              <Badge
-                                variant="secondary"
-                                className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              >
-                                Connected
-                              </Badge>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="border-border hover:bg-accent"
-                                onClick={() => handleLinkProvider("github")}
-                                disabled={linkingProvider === "github"}
-                              >
-                                {linkingProvider === "github" ? (
-                                  <>
-                                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                                    Linking...
-                                  </>
-                                ) : (
-                                  "Connect"
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              </div>
-            </motion.div>
-          )}
+              )}
+            </DialogContent>
+          </Dialog>
         </div>
-      </main>
-      <div id="phone-recaptcha-container" className="hidden" />
-    </div>
+
+        <dl className="mt-6 grid grid-cols-3 gap-3 border-t border-border/60 pt-6">
+          {statCards.map((stat) => (
+            <div key={stat.label} className="rounded-xl border border-border/60 bg-muted/40 p-3">
+              <dt className="text-[11px] font-medium uppercase leading-tight tracking-wide text-muted-foreground">
+                {stat.label}
+              </dt>
+              <dd className="mt-1 text-2xl font-semibold tabular-nums">{stat.value ?? "\u2014"}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Details */}
+        <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm sm:p-6 lg:col-span-2">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-base font-semibold">Profile details</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Your bio and contact details.</p>
+            </div>
+            {!isEditing && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-2"
+                onClick={() => setIsEditing(true)}
+              >
+                <Edit2 className="h-3.5 w-3.5" aria-hidden="true" />
+                Edit
+              </Button>
+            )}
+          </div>
+
+          {/* Email is set by the sign-in provider, so it shows in both modes
+              and is never an input. */}
+          <div className="mt-6 min-w-0 border-b border-border/60 pb-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Email
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="truncate text-sm">{displayEmail || "Not set"}</span>
+              <Badge
+                variant={profile?.isEmailVerified ? "secondary" : "outline"}
+                className="gap-1 font-normal"
+              >
+                {profile?.isEmailVerified && (
+                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                )}
+                {profile?.isEmailVerified ? "Verified" : "Not verified"}
+              </Badge>
+            </div>
+          </div>
+
+          {isEditing ? (
+            <div className="mt-5 space-y-5">
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full name</Label>
+                  <Input
+                    id="name"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="username">Username</Label>
+                  <Input
+                    id="username"
+                    value={form.username}
+                    onChange={(e) => setForm({ ...form, username: e.target.value.toLowerCase() })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bio">Bio</Label>
+                <Textarea
+                  id="bio"
+                  value={form.bio}
+                  onChange={(e) => setForm({ ...form, bio: e.target.value })}
+                  placeholder="A sentence or two about you."
+                  className="min-h-24"
+                />
+              </div>
+
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="location">Location</Label>
+                  <Input
+                    id="location"
+                    value={form.location}
+                    onChange={(e) => setForm({ ...form, location: e.target.value })}
+                    placeholder="City, Country"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="website">Website</Label>
+                  <Input
+                    id="website"
+                    value={form.website}
+                    onChange={(e) => setForm({ ...form, website: e.target.value })}
+                    placeholder="example.com"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="phone">Phone number</Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  placeholder="+1 555 000 0000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Only people you are connected with can see this.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 border-t border-border/60 pt-5">
+                <Button
+                  variant="ghost"
+                  onClick={handleCancel}
+                  disabled={updateProfileMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSave}
+                  disabled={updateProfileMutation.isPending}
+                  className="gap-2"
+                >
+                  {updateProfileMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Save changes
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-5 space-y-5">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Bio
+                </p>
+                <p
+                  className={`mt-1 whitespace-pre-wrap text-sm ${
+                    profile?.bio ? "text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {profile?.bio || "Not set"}
+                </p>
+              </div>
+
+              <div className="grid gap-5 sm:grid-cols-2">
+                <ReadField label="Location" value={profile?.location} />
+                <ReadField label="Website" value={profile?.website} href={websiteHref} />
+              </div>
+
+              <ReadField label="Phone number" value={profile?.phone} />
+            </div>
+          )}
+        </section>
+
+        {/* Connected accounts */}
+        <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm sm:p-6">
+          <h2 className="text-base font-semibold">Connected accounts</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Link a provider to sign in with it.</p>
+          <div className="mt-4 space-y-2">
+            {PROVIDERS.map(({ id, label }) => (
+              <div
+                key={id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/40 p-3"
+              >
+                <span className="text-sm font-medium">{label}</span>
+                {linkedProviders[id] ? (
+                  <Badge variant="secondary" className="gap-1 font-normal">
+                    <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                    Connected
+                  </Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleLinkProvider(id)}
+                    disabled={linkingProvider === id}
+                    className="gap-1.5"
+                  >
+                    {linkingProvider === id && (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    )}
+                    Connect
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </motion.div>
   );
 }

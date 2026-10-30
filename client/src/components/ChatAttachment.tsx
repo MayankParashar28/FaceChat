@@ -32,7 +32,7 @@ export function formatFileSize(bytes: number): string {
  * header to `<img src>`, and putting the token in the URL would leak a
  * credential into history, referrer headers and logs.
  */
-function useAttachmentUrl(attachment: ChatAttachmentData, conversationId: string) {
+export function useAttachmentUrl(attachment: ChatAttachmentData, conversationId: string) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 

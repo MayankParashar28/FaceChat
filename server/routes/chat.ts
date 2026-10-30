@@ -6,12 +6,63 @@ import { apiRateLimiter } from "../middleware/rateLimiter";
 import { mongoService } from "../services/mongodb";
 import { Conversation, Message } from "../models";
 import { CacheKeys, CacheTTL, cacheDelete, remember } from "../services/cache";
+import {
+  destroyGhostConversation,
+  enforceGhostExpiry,
+  isGhostExpired,
+} from "../services/ghostChat";
 
 const router = Router();
 
 /** Drop the cached conversation list for everyone in a conversation. */
 async function invalidateConversationLists(participants: { toString(): string }[]) {
   await cacheDelete(...participants.map((p) => CacheKeys.conversationList(p.toString())));
+}
+
+/**
+ * The gate every read of one conversation's contents has to pass: signed in,
+ * the conversation exists, it has not quietly expired, and the caller is
+ * actually in it. Answers the request itself on a refusal and returns null,
+ * so a caller only has to check for that.
+ */
+async function authorizeConversationRead(
+  req: any,
+  res: any
+): Promise<{ conversation: any; dbUser: any } | null> {
+  if (!req.user) {
+    res.status(401).json({ error: "Authentication required" });
+    return null;
+  }
+
+  const conversation = await Conversation.findById(req.params.conversationId);
+  if (!conversation) {
+    res.status(404).json({ error: "Conversation not found" });
+    return null;
+  }
+
+  // A ghost chat whose time has passed is gone the moment anybody asks for
+  // it, whether or not the sweep has come round yet. The dyno sleeps, and a
+  // sweep that has not run for an hour must not mean an hour of extra life.
+  if (await enforceGhostExpiry(conversation)) {
+    res.status(410).json({ error: "This GhostLink chat has vanished.", vanished: true });
+    return null;
+  }
+
+  const dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(req.user.uid));
+  if (!dbUser) {
+    res.status(404).json({ error: "User not found" });
+    return null;
+  }
+
+  const isParticipant = conversation.participants.some(
+    (p: { toString(): string }) => p.toString() === dbUser._id.toString()
+  );
+  if (!isParticipant) {
+    res.status(403).json({ error: "Access denied" });
+    return null;
+  }
+
+  return { conversation, dbUser };
 }
 
 // Get all conversations for the current user
@@ -54,7 +105,13 @@ router.get("/", authenticate, async (req, res) => {
       () => mongoService.getUserConversations(dbUser._id.toString())
     );
 
-    const withPresence = conversations.map((conversation: any) => ({
+    // The list is cached for a few seconds, so an overdue ghost can still be
+    // sitting in it. Filter on the way out — the sweep and the message read
+    // both destroy it, but neither should be what decides whether somebody
+    // sees it listed.
+    const live = conversations.filter((conversation: any) => !isGhostExpired(conversation));
+
+    const withPresence = live.map((conversation: any) => ({
       ...conversation,
       participants: (conversation.participants || []).map((p: any) => ({
         ...p,
@@ -76,44 +133,21 @@ router.get("/", authenticate, async (req, res) => {
 // Get messages for a conversation
 router.get("/:conversationId/messages", authenticate, async (req, res) => {
   try {
-    if (!req.user) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
     const { conversationId } = req.params;
     const { beforeDate, limit } = req.query;
 
-    // Use authenticated user's ID instead of query parameter
-    const userId = req.user.uid;
+    const allowed = await authorizeConversationRead(req, res);
+    if (!allowed) return;
+    const { dbUser } = allowed;
 
     logger.info(
       "Fetching messages for conversation:",
       conversationId,
       "userId:",
-      userId,
+      dbUser.firebaseUid,
       "beforeDate:",
       beforeDate
     );
-
-    // Verify user is a participant in this conversation
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
-      return res.status(404).json({ error: "Conversation not found" });
-    }
-
-    const dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(userId));
-    if (!dbUser) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    // Check if user is a participant
-    const isParticipant = conversation.participants.some(
-      (p) => p.toString() === dbUser._id.toString()
-    );
-
-    if (!isParticipant) {
-      return res.status(403).json({ error: "Access denied" });
-    }
 
     const limitNum = limit ? parseInt(limit as string, 10) : 50;
     const beforeDateObj = beforeDate ? new Date(beforeDate as string) : undefined;
@@ -132,6 +166,44 @@ router.get("/:conversationId/messages", authenticate, async (req, res) => {
     logger.error("Error fetching messages:", error);
     // Return empty array to prevent client errors
     res.json([]);
+  }
+});
+
+/**
+ * One whole thread: the message it hangs off and every reply beneath it, in
+ * the order they were written.
+ *
+ * Separate from the paginated message list because a thread is read as a unit
+ * — its root may be weeks above the page someone is looking at, and half a
+ * thread is not worth drawing.
+ */
+router.get("/:conversationId/threads/:rootId", authenticate, async (req, res) => {
+  try {
+    const { conversationId, rootId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(rootId)) {
+      return res.status(400).json({ error: "Invalid message id" });
+    }
+
+    const allowed = await authorizeConversationRead(req, res);
+    if (!allowed) return;
+
+    const messages = await mongoService.getThreadMessages(
+      conversationId,
+      rootId,
+      allowed.dbUser._id.toString()
+    );
+
+    // Empty means the root is not in this conversation — a thread always has
+    // at least its own root — so it reads as missing rather than as blank.
+    if (!messages.length) {
+      return res.status(404).json({ error: "Thread not found" });
+    }
+
+    res.json(messages);
+  } catch (error) {
+    logger.error("Error fetching thread:", error);
+    res.status(500).json({ error: "Failed to fetch thread" });
   }
 });
 
@@ -227,7 +299,10 @@ router.post("/", apiRateLimiter, authenticate, async (req, res) => {
                   id: lastMessage._id.toString(),
                   conversationId: existingConv._id.toString(),
                   senderId: (lastMessage.senderId as any)._id.toString(),
-                  content: lastMessage.content,
+                  // A deleted last message must not leave its text sitting in
+                  // the conversation list after it has gone from the thread.
+                  content: lastMessage.deletedAt ? "" : lastMessage.content,
+                  deletedAt: lastMessage.deletedAt,
                   isPinned: lastMessage.isPinned,
                   createdAt: lastMessage.createdAt,
                   sender: {
@@ -312,24 +387,16 @@ router.delete("/:conversationId", authenticate, async (req, res) => {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // Soft delete (or handle logic - maybe just hide from user? For now soft delete the whole conv as per standard chat apps often doing this for 'empty' chats)
-    // Actually, if it's 1-on-1, deleting it might be tricky if the other person has messages.
-    // User asked to "remove from chat list".
-    // If there are NO messages, we can safely delete it.
-    const messageCount = await Message.countDocuments({ conversationId: conversation._id });
-    if (messageCount === 0) {
-      // Safe to fully delete or soft delete
-      await Conversation.findByIdAndUpdate(conversationId, { isDeleted: true });
-    } else {
-      // If messages exist, ideally we track 'hiddenForUsers'.
-      // But for this specific request "remove cross btn after sending msg",
-      // it implies we only show this for NEW matches. New matches usually have 0 messages.
-      // If user forces delete on a chat with messages, we might want to prevent or just 'hide' it.
-      // For now, let's allow soft-delete which hides it for everyone (agreed simplified logic for 'match' removal).
-      await Conversation.findByIdAndUpdate(conversationId, { isDeleted: true });
-    }
+    // Take it off this person's list and nobody else's. Both branches of the
+    // old code set `isDeleted`, which removed the conversation — and its
+    // history — from the other participant too, whatever the button said. A
+    // later message brings it back for everyone (see createMessage).
+    await Conversation.updateOne(
+      { _id: conversation._id },
+      { $addToSet: { hiddenFor: dbUser._id } }
+    );
 
-    await invalidateConversationLists(conversation.participants);
+    await invalidateConversationLists([dbUser._id]);
 
     res.json({ success: true });
   } catch (error) {
@@ -386,6 +453,70 @@ router.post("/:conversationId/clear", authenticate, async (req, res) => {
   } catch (error) {
     logger.error("Error clearing chat:", error);
     res.status(500).json({ error: "Failed to clear chat" });
+  }
+});
+
+/**
+ * End a GhostLink chat now, without waiting for its timer.
+ *
+ * The timer was the only way out, so sending something to the wrong person
+ * meant watching the clock for however long was left. Either participant can
+ * pull it: both of them are in the room, and the chat was never going to
+ * survive anyway — this only decides when.
+ *
+ * Confined to ghost chats on purpose. The same call against an ordinary
+ * conversation would be an unrecoverable delete of somebody else's history,
+ * which is a different feature and not one anybody asked for.
+ */
+router.post("/:conversationId/ghost/destroy", apiRateLimiter, authenticate, async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    const { conversationId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+      return res.status(400).json({ error: "Invalid conversation id" });
+    }
+
+    const dbUser = req.user.dbUser || (await mongoService.getUserByFirebaseUid(req.user.uid));
+    if (!dbUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      // Already gone, most likely because its timer or the other person got
+      // there first. That is the outcome being asked for, so it is not a
+      // failure — but say nothing about whether it ever existed.
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    const isParticipant = conversation.participants.some(
+      (p) => p.toString() === dbUser._id.toString()
+    );
+    if (!isParticipant) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (!conversation.isGhost) {
+      return res.status(400).json({ error: "This conversation is not a GhostLink chat" });
+    }
+
+    // Erases the attachments, the messages, the conversation and the invite,
+    // drops both cached lists and tells the room — the same path the timer
+    // takes, so there is one way a ghost chat ends.
+    const erased = await destroyGhostConversation(conversation._id);
+
+    logger.info(
+      `GhostLink chat ${conversationId} ended early by ${dbUser._id.toString()}: ` +
+        `${erased.messages} messages, ${erased.attachments} attachments`
+    );
+
+    res.json({ success: true, erased });
+  } catch (error) {
+    logger.error("Error destroying ghost chat:", error);
+    res.status(500).json({ error: "Failed to destroy the chat" });
   }
 });
 

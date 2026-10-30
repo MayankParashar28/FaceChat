@@ -12,6 +12,12 @@ import {
 import { getDatabase, ref, onValue } from "firebase/database";
 import { auth } from "./firebase";
 import { getAvatarUrl } from "./utils";
+import {
+  SESSION_TOKEN_KEY,
+  STORED_USER_KEY,
+  readSessionToken,
+  setAuthError,
+} from "./sessionCredential";
 
 // User interface
 export interface AppUser {
@@ -35,11 +41,40 @@ interface AuthContextType {
   logout: () => Promise<void>;
   checkUsername: (username: string) => Promise<{ available: boolean; message: string }>;
   getUsernameSuggestions: (baseUsername: string) => Promise<string[]>;
-  resetPassword: (email: string, newPassword?: string) => Promise<any>;
   signInWithGoogle: () => Promise<void>;
   signInWithGithub: () => Promise<void>;
   linkGoogleAccount: () => Promise<void>;
   linkGithubAccount: () => Promise<void>;
+}
+
+/**
+ * The cached profile, but only when the credential that authenticates it is
+ * still present.
+ *
+ * The profile used to be the credential: the client sent its `uid` as the
+ * bearer token and the server looked a user up by it. Now that an id is no
+ * longer accepted as a credential, a profile on its own proves nothing, and
+ * restoring it produced a signed-in-looking app whose every request went out
+ * with no Authorization header at all — so the server answered 401 and the
+ * dashboard and chat list rendered empty, which reads as an account with no
+ * meetings and no conversations rather than as a sign-in that needs redoing.
+ *
+ * Sessions stored before tokens existed have no token, so they are cleared
+ * here and the person signs in once more.
+ */
+function readStoredSession(): AppUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const saved = localStorage.getItem(STORED_USER_KEY);
+    if (!saved) return null;
+    if (!readSessionToken()) {
+      localStorage.removeItem(STORED_USER_KEY);
+      return null;
+    }
+    return JSON.parse(saved) as AppUser;
+  } catch {
+    return null;
+  }
 }
 
 // Create singleton auth context to prevent HMR duplication
@@ -54,14 +89,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for saved local mock user on mount
-    const savedMock = localStorage.getItem("facechat_mock_user");
-    if (savedMock) {
-      try {
-        const parsed = JSON.parse(savedMock);
-        setUser(parsed);
-        setLoading(false);
-      } catch (e) {}
+    // Restore an email/password session, if it still has its token.
+    const stored = readStoredSession();
+    if (stored) {
+      setUser(stored);
+      setLoading(false);
     }
 
     // Set up token refresh listener
@@ -89,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           firebaseUser.displayName?.trim() ||
           firebaseUser.email?.split("@")[0] ||
           (derivedUsername ? derivedUsername : "Guest");
-        const avatar = getAvatarUrl(firebaseUser.photoURL, firebaseUser.uid, firebaseUser.email);
+        const avatar = getAvatarUrl(firebaseUser.photoURL, firebaseUser.uid);
 
         const appUser: AppUser = {
           uid: firebaseUser.uid,
@@ -121,15 +153,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }),
           });
 
+          // Read once: a body cannot be consumed twice.
+          const syncBody = await response.json().catch(() => null as any);
+
           if (response.ok) {
-            const dbUser = await response.json();
+            const dbUser = syncBody;
             setUser((prev) => {
               if (!prev) return prev;
               const nextDisplayName =
                 (dbUser?.name && String(dbUser.name).trim()) || prev.displayName;
               const nextUsername =
                 (dbUser?.username && String(dbUser.username).trim()) || prev.username;
-              const nextPhoto = getAvatarUrl(dbUser?.avatar ?? prev.photoURL, prev.uid, prev.email);
+              const nextPhoto = getAvatarUrl(dbUser?.avatar ?? prev.photoURL, prev.uid);
 
               return {
                 ...prev,
@@ -140,21 +175,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 emailVerified: firebaseUser.emailVerified,
               };
             });
+          } else if (response.status === 409 && syncBody?.code === "EMAIL_ALREADY_REGISTERED") {
+            // This uid will never have a record here: another account already
+            // holds the address. Staying signed in would mean every request
+            // resolving no user and answering with an empty list, so the app
+            // would look like an account with nothing in it rather than a
+            // sign-in that did not work. Say what happened instead.
+            setAuthError(
+              syncBody?.error ||
+                "An account already exists for this email address under a different sign-in method."
+            );
+            setUser(null);
+            await signOut(auth);
+          } else {
+            // Transient — network trouble, or a fault on our side. Someone who
+            // already has a record keeps working, so do not sign them out.
+            console.warn(`User sync failed with ${response.status}`);
           }
         } catch (error: any) {
-          console.log("User sync error:", error);
+          console.warn("User sync error:", error);
         }
       } else {
-        const localMock = localStorage.getItem("facechat_mock_user");
-        if (localMock) {
-          try {
-            setUser(JSON.parse(localMock));
-          } catch (e) {
-            setUser(null);
-          }
-        } else {
-          setUser(null);
-        }
+        // No Firebase user. An email/password session may still be live; a
+        // profile without its token is not one.
+        setUser(readStoredSession());
       }
       setLoading(false);
     });
@@ -183,13 +227,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         uid: userData.firebaseUid || `user_${userData._id}`,
         email: userData.email,
         displayName: userData.name || userData.username,
-        photoURL: getAvatarUrl(userData.avatar, userData.firebaseUid, userData.email),
+        photoURL: getAvatarUrl(userData.avatar, userData.firebaseUid),
         username: userData.username,
         emailVerified: true,
         isEmailVerified: true,
       };
 
-      localStorage.setItem("facechat_mock_user", JSON.stringify(appUser));
+      if (userData.sessionToken) {
+        localStorage.setItem(SESSION_TOKEN_KEY, userData.sessionToken);
+      }
+      localStorage.setItem(STORED_USER_KEY, JSON.stringify(appUser));
       setUser(appUser);
     } catch (error: any) {
       console.warn("DB Login Error:", error);
@@ -223,13 +270,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         uid: userData.firebaseUid || `user_${userData._id}`,
         email: userData.email,
         displayName: userData.name || userData.username,
-        photoURL: getAvatarUrl(userData.avatar, userData.firebaseUid, userData.email),
+        photoURL: getAvatarUrl(userData.avatar, userData.firebaseUid),
         username: userData.username,
         emailVerified: true,
         isEmailVerified: true,
       };
 
-      localStorage.setItem("facechat_mock_user", JSON.stringify(appUser));
+      if (userData.sessionToken) {
+        localStorage.setItem(SESSION_TOKEN_KEY, userData.sessionToken);
+      }
+      localStorage.setItem(STORED_USER_KEY, JSON.stringify(appUser));
       setUser(appUser);
     } catch (error: any) {
       console.warn("DB Signup Error:", error);
@@ -296,28 +346,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const resetPassword = async (email: string, newPassword?: string) => {
-    try {
-      const response = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, newPassword: newPassword || "Password123!" }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to reset password");
-      }
-      return data;
-    } catch (error: any) {
-      console.error("Reset password error:", error);
-      throw error;
-    }
-  };
-
   const logout = async () => {
     try {
-      localStorage.removeItem("facechat_mock_user");
+      // Tell the server first, while the token is still in hand. Clearing
+      // storage on its own only hides the credential — the token stays valid
+      // for the rest of its thirty days, so a copy of it keeps working.
+      const sessionToken = readSessionToken();
+      if (sessionToken) {
+        try {
+          await fetch("/api/auth/logout", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${sessionToken}` },
+          });
+        } catch {
+          // Offline, or the server is down. Sign out locally anyway; the
+          // token still expires on its own.
+        }
+      }
+
+      localStorage.removeItem(STORED_USER_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEY);
       if (user) {
         try {
           await updateOnlineStatus(user.uid, false);
@@ -425,7 +473,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     logout,
     checkUsername,
     getUsernameSuggestions,
-    resetPassword,
     signInWithGoogle,
     signInWithGithub,
     linkGoogleAccount,
@@ -440,13 +487,7 @@ export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
     if (typeof window !== "undefined") {
-      const savedMock = localStorage.getItem("facechat_mock_user");
-      let user: AppUser | null = null;
-      if (savedMock) {
-        try {
-          user = JSON.parse(savedMock);
-        } catch (e) {}
-      }
+      const user = readStoredSession();
       return {
         user,
         loading: false,
@@ -457,7 +498,6 @@ export function useAuth() {
         logout: async () => {},
         checkUsername: async () => ({ available: true, message: "" }),
         getUsernameSuggestions: async () => [],
-        resetPassword: async () => {},
         signInWithGoogle: async () => {},
         signInWithGithub: async () => {},
         linkGoogleAccount: async () => {},

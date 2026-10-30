@@ -7,6 +7,31 @@ import { mongoService } from "../services/mongodb";
 
 const router = Router();
 
+/**
+ * A username nobody else holds, derived from the one asked for.
+ *
+ * `username` carries a unique index, and the client derives its value from the
+ * email local part — so two people with the same local part at different
+ * domains collide. The insert then failed and the sign-in produced an account
+ * that does not exist, which is not worth refusing a sign-up over when a
+ * suffix settles it.
+ */
+async function availableUsername(preferred: string, firebaseUid: string): Promise<string> {
+  const base =
+    preferred
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_.]/g, "")
+      .slice(0, 24) || "user";
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    const candidate = attempt === 1 ? base : `${base}${attempt}`;
+    const owner = await mongoService.getUserByUsername(candidate);
+    if (!owner || owner.firebaseUid === firebaseUid) return candidate;
+  }
+  // Still taken after a dozen tries: fall back to something unguessable.
+  return `${base.slice(0, 18)}${Date.now().toString(36).slice(-5)}`;
+}
+
 // Rate limit user creation/update (use apiRateLimiter for sync, authRateLimiter is too strict)
 router.post("/", apiRateLimiter, authenticate, async (req, res) => {
   try {
@@ -36,13 +61,50 @@ router.post("/", apiRateLimiter, authenticate, async (req, res) => {
         ? userData.username
         : email.split("@")[0] || "user";
 
-    logger.info("Final user data:", { name, email, username, hasPassword: !!password });
+    // This route is an upsert keyed on firebaseUid, and both `email` and
+    // `username` carry unique indexes. So a sign-in bringing a *new* uid for an
+    // address that already has an account used to attempt an insert, hit the
+    // duplicate key and return 500 — which the client swallowed, leaving the
+    // person signed in to Firebase with no record here. Every later request
+    // then resolved no dbUser and answered with an empty list, so the app
+    // looked like an account with no meetings and no conversations instead of
+    // reporting that the sign-in had failed.
+    const existing = await mongoService.getUserByFirebaseUid(req.user.uid);
+    let finalUsername = username;
+
+    if (existing) {
+      // The client derives this from the email local part, so syncing it back
+      // would undo a rename on every sign-in — and if the derived name were
+      // taken by somebody else, the save would fail and lock a working account
+      // out of its own sign-in. The stored name stands.
+      finalUsername = existing.username;
+    } else {
+      const emailOwner = email ? await mongoService.getUserByEmail(email) : null;
+      if (emailOwner) {
+        logger.warn(
+          `Sign-in for ${req.user.uid} claims an address already held by ${emailOwner._id}`
+        );
+        return res.status(409).json({
+          error:
+            "An account already exists for this email address under a different sign-in method. Sign in the way you did originally, then link the new method from your profile.",
+          code: "EMAIL_ALREADY_REGISTERED",
+        });
+      }
+      finalUsername = await availableUsername(username, req.user.uid);
+    }
+
+    logger.info("Final user data:", {
+      name,
+      email,
+      username: finalUsername,
+      hasPassword: !!password,
+    });
 
     const user = await mongoService.createOrUpdateUser({
       firebaseUid: req.user.uid,
       email: email,
       name: name,
-      username: username,
+      username: finalUsername,
       password: password, // Will be hashed in service
       avatar: userData.avatar,
       isEmailVerified: false, // Start as unverified, require OTP verification
@@ -60,6 +122,16 @@ router.post("/", apiRateLimiter, authenticate, async (req, res) => {
     });
     res.json(userResponse);
   } catch (error: any) {
+    // Two sign-ins racing can still both pass the checks above, so the index
+    // stays the last word. Report it as a conflict, not a server fault.
+    if (error?.code === 11000) {
+      const field = Object.keys(error.keyPattern || {})[0] || "account";
+      logger.warn(`User sync hit a unique conflict on ${field}`);
+      return res.status(409).json({
+        error: `That ${field} is already registered to another account.`,
+        code: "ALREADY_REGISTERED",
+      });
+    }
     logger.error("Error creating user:", error);
     res.status(500).json({ error: error.message || "Failed to create user" });
   }
@@ -111,11 +183,12 @@ router.get("/search", apiRateLimiter, authenticate, async (req, res) => {
           }
         }
 
+        // No email. The search UI shows a name and a handle, and this answers
+        // any signed-in caller for any two-letter query.
         return {
           id: u._id.toString(),
           name: u.name,
           username: u.username,
-          email: u.email,
           avatar: (u as any).avatar ?? null,
           connectionStatus: status,
         };

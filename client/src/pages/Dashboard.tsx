@@ -28,6 +28,7 @@ import {
   BarChart3,
   Calendar,
   Copy,
+  Link2 as LinkIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getInitials } from "@/lib/utils";
@@ -134,7 +135,7 @@ const StatCard = ({
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ delay, duration: 0.4 }}
-    className="bg-card dark:bg-white/[0.03] p-5 rounded-2xl relative overflow-hidden group flex flex-col justify-between h-full border border-border/30 shadow-sm hover:shadow-md transition-all duration-300"
+    className="bg-card p-5 rounded-2xl relative overflow-hidden group flex flex-col justify-between h-full border border-border/30 shadow-sm hover:shadow-md transition-all duration-300"
   >
     <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-5 transition-opacity">
       <Icon className="w-16 h-16" />
@@ -182,7 +183,7 @@ const ActionButton = ({
     `}
   >
     <div
-      className={`p-2 rounded-full ${variant === "primary" ? "bg-white/20" : "bg-primary/5 text-primary"}`}
+      className={`p-2 rounded-full ${variant === "primary" ? "bg-primary-foreground/20" : "bg-primary/5 text-primary"}`}
     >
       <Icon
         className={`w-5 h-5 ${variant === "primary" ? "text-primary-foreground" : "text-primary"}`}
@@ -190,10 +191,24 @@ const ActionButton = ({
     </div>
     <span className="font-medium text-xs">{label}</span>
     {variant === "primary" && (
-      <div className="absolute inset-0 bg-white/10 opacity-0 hover:opacity-100 transition-opacity duration-500" />
+      <div className="absolute inset-0 bg-foreground/5 opacity-0 hover:opacity-100 transition-opacity duration-500" />
     )}
   </motion.button>
 );
+
+/**
+ * Anyone holding a room id can walk into that call, so these are drawn from
+ * the same source the server uses for the rooms it creates rather than from
+ * Math.random.
+ */
+function newRoomId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  }
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
@@ -202,9 +217,7 @@ export default function Dashboard() {
   const [roomId, setRoomId] = useState("");
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
-  const [scheduledRoomId] = useState(
-    () => Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10)
-  );
+  const [shareableRoomId] = useState(newRoomId);
   const queryClient = useQueryClient();
 
   const { data: profileData } = useQuery<UserProfile>({
@@ -270,19 +283,13 @@ export default function Dashboard() {
     }
   }, [user, refetch, queryClient]);
 
-  const startQuickAction = (mode: "instant" | "invite" | "schedule") => {
-    const newRoomId =
-      Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-    const params = new URLSearchParams();
-    params.set("mode", mode);
-    if (quickActionInviteIds.length) params.set("invite", quickActionInviteIds.join(","));
-    setLocation(`/call/${newRoomId}?${params.toString()}`);
+  /** Start a call in a fresh room and ring one person into it. */
+  const callCollaborator = (collaboratorId: string) => {
+    setLocation(`/call/${newRoomId()}?invite=${encodeURIComponent(collaboratorId)}`);
   };
 
   const createCall = () => {
-    const newRoomId =
-      Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
-    setLocation(`/call/${newRoomId}`);
+    setLocation(`/call/${newRoomId()}`);
   };
 
   const joinCall = async () => {
@@ -384,7 +391,6 @@ export default function Dashboard() {
     };
   }, [profileData?._id, userMeetings]);
 
-  const quickActionInviteIds = topCollaborators.map((c) => c.id).filter(Boolean);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const weeklyMeetings =
     stats?.callsThisWeek ?? filteredMeetings.filter((m) => new Date(m.startTime) >= weekAgo).length;
@@ -542,8 +548,8 @@ export default function Dashboard() {
               <DialogTrigger asChild>
                 <div className="w-full">
                   <ActionButton
-                    icon={CalendarPlus}
-                    label="Schedule"
+                    icon={LinkIcon}
+                    label="Share link"
                     onClick={() => setScheduleDialogOpen(true)}
                     variant="secondary"
                     delay={0.6}
@@ -552,9 +558,9 @@ export default function Dashboard() {
               </DialogTrigger>
               <DialogContent className="w-[90vw] max-w-[420px] glass-panel border-border">
                 <DialogHeader>
-                  <DialogTitle>Schedule a Meeting</DialogTitle>
+                  <DialogTitle>Share a room link</DialogTitle>
                   <DialogDescription>
-                    Copy this link to send to your participants.
+                    Send this link to the people you want in the call, then start it.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-6 pt-4">
@@ -565,7 +571,7 @@ export default function Dashboard() {
                     <div className="flex gap-2">
                       <Input
                         readOnly
-                        value={`${window.location.origin}/call/${scheduledRoomId}`}
+                        value={`${window.location.origin}/call/${shareableRoomId}`}
                         className="bg-muted/50 border-border/50 font-mono text-xs h-10 rounded-xl"
                       />
                       <Button
@@ -574,7 +580,7 @@ export default function Dashboard() {
                         className="shrink-0 border-border/50 rounded-xl h-10 w-10"
                         onClick={() => {
                           navigator.clipboard.writeText(
-                            `${window.location.origin}/call/${scheduledRoomId}`
+                            `${window.location.origin}/call/${shareableRoomId}`
                           );
                           toast({
                             title: "Copied!",
@@ -590,9 +596,21 @@ export default function Dashboard() {
                   <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 flex gap-3 items-start">
                     <Calendar className="w-5 h-5 text-primary shrink-0 mt-0.5" />
                     <div className="space-y-1">
-                      <p className="text-sm font-medium text-primary">Pro Tip</p>
+                      <p className="text-sm font-medium text-primary">About this link</p>
                       <p className="text-xs text-muted-foreground">
-                        This room is permanently reserved for you. You can share this link anytime.
+                        The room opens when someone first joins and stays open while anyone is in
+                        it. To put a meeting in the calendar, use{" "}
+                        <button
+                          type="button"
+                          className="underline underline-offset-2 hover:text-primary"
+                          onClick={() => {
+                            setScheduleDialogOpen(false);
+                            setLocation("/meetings");
+                          }}
+                        >
+                          Meetings
+                        </button>
+                        .
                       </p>
                     </div>
                   </div>
@@ -609,7 +627,7 @@ export default function Dashboard() {
                       className="w-full rounded-xl"
                       onClick={() => {
                         setScheduleDialogOpen(false);
-                        setLocation(`/call/${scheduledRoomId}`);
+                        setLocation(`/call/${shareableRoomId}`);
                       }}
                     >
                       Start Now
@@ -677,7 +695,7 @@ export default function Dashboard() {
                       Your recent meetings and calls will appear here once you start collaborating.
                     </p>
                     <Button
-                      onClick={() => startQuickAction("schedule")}
+                      onClick={() => setLocation("/meetings")}
                       variant="outline"
                       className="gap-2 border-primary/20 hover:bg-primary/5 hover:text-primary"
                     >
@@ -806,9 +824,9 @@ export default function Dashboard() {
                       variant="secondary"
                       size="sm"
                       className="h-7 text-xs px-3 bg-muted/40 hover:bg-primary/10 hover:text-primary border-border"
-                      onClick={() => startQuickAction("invite")}
+                      onClick={() => callCollaborator(collab.id)}
                     >
-                      Invite
+                      Call
                     </Button>
                   </div>
                 ))

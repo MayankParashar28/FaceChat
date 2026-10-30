@@ -5,6 +5,15 @@ import mongoose, { Schema, Document, Types } from "mongoose";
  * ========================================================= */
 
 export interface IUser extends Document {
+  /**
+   * Bumped to invalidate every session token this account has issued.
+   *
+   * A token carries the value it was minted under; the middleware refuses any
+   * token whose value no longer matches. That is how "sign out everywhere"
+   * works without keeping a row per outstanding token — one number does it,
+   * and it is the right lever after a password change or a lost device.
+   */
+  tokenVersion?: number;
   _id: Types.ObjectId;
   firebaseUid: string;
   email: string;
@@ -70,6 +79,7 @@ export interface IUser extends Document {
 const UserSchema = new Schema<IUser>(
   {
     firebaseUid: { type: String, required: true, unique: true },
+    tokenVersion: { type: Number, default: 0 },
     email: {
       type: String,
       required: true,
@@ -426,6 +436,29 @@ export interface IConversation extends Document {
    * conversation for the other person too.
    */
   clearedAt?: Map<string, Date>;
+  /**
+   * Participants who removed this conversation from their own list. It stays
+   * put for everyone else, and a new message brings it back for all of them.
+   * Removing one used to set `isDeleted`, which took the conversation away
+   * from the other person as well.
+   */
+  hiddenFor?: Types.ObjectId[];
+  /**
+   * A GhostLink chat: it erases itself, for both people, once `destructAt`
+   * passes. Ordinary conversations never set this.
+   */
+  isGhost?: boolean;
+  /**
+   * When a ghost conversation vanishes, stamped when the link was redeemed.
+   *
+   * Deliberately NOT a MongoDB TTL index, unlike Invite.expiresAt. TTL would
+   * drop this row while its messages and their uploaded files stayed behind —
+   * unreachable but still stored, which is the opposite of what a ghost chat
+   * promises. Destruction has to walk the messages and destroy each attachment
+   * at its provider first, so the sweep in services/ghostChat owns it. Leaving
+   * an overdue row in place is what lets the sweep find it after a restart.
+   */
+  destructAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -439,11 +472,16 @@ const ConversationSchema = new Schema<IConversation>(
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     isDeleted: { type: Boolean, default: false },
     clearedAt: { type: Map, of: Date, default: undefined },
+    hiddenFor: [{ type: Schema.Types.ObjectId, ref: "User" }],
+    isGhost: { type: Boolean, default: false },
+    destructAt: { type: Date },
   },
   { timestamps: true }
 );
 
 ConversationSchema.index({ participants: 1 });
+// The sweep asks only for overdue ghosts, so keep it off a collection scan.
+ConversationSchema.index({ isGhost: 1, destructAt: 1 });
 ConversationSchema.index({ createdBy: 1 });
 ConversationSchema.index({ lastMessage: 1 });
 ConversationSchema.index({ isDeleted: 1 });
@@ -472,6 +510,39 @@ export interface IMessage extends Document {
   messageType: "text" | "image" | "file" | "system";
   attachment?: IMessageAttachment;
   isPinned: boolean;
+  /**
+   * Who pinned it and when. A pin is a thing one participant did, not a
+   * property the message was born with, and both sides can pin in the same
+   * conversation — so without these the list could not be ordered by when
+   * things were pinned, or say whose doing it was. Absent on a message that
+   * is not pinned, and on pins made before this was recorded.
+   */
+  pinnedAt?: Date;
+  pinnedBy?: Types.ObjectId;
+  /** Set when the author rewrote it. The bubble then says so. */
+  editedAt?: Date;
+  /**
+   * Set when the author took it back.
+   *
+   * The row survives as a tombstone rather than disappearing: a conversation
+   * that silently reshuffles is worse than one that admits something was
+   * removed, and a reply pointing at it still has something to point at. The
+   * content and any attachment are cleared at the same time, so the text is
+   * genuinely gone and not merely hidden by the client.
+   */
+  deletedAt?: Date;
+  /** The message this one answers, if any. */
+  replyTo?: Types.ObjectId;
+  /**
+   * The message a whole side conversation hangs off, carried on every reply
+   * in it however deep.
+   *
+   * `replyTo` alone already describes the tree, but reading a thread from it
+   * would mean walking the chain one query at a time with no way to know when
+   * to stop. This is that walk precomputed: one indexed query returns the
+   * thread whatever shape it has.
+   */
+  threadRoot?: Types.ObjectId;
   isRead: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -485,7 +556,15 @@ const MessageSchema = new Schema<IMessage>(
       required: true,
     },
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    content: { type: String, required: true, trim: true },
+    // Required, except on a message that has been taken back: deleting clears
+    // the text, and a validator demanding one would refuse the update.
+    content: {
+      type: String,
+      required: function (this: IMessage) {
+        return !this.deletedAt;
+      },
+      trim: true,
+    },
     messageType: {
       type: String,
       enum: ["text", "image", "file", "system"],
@@ -508,6 +587,12 @@ const MessageSchema = new Schema<IMessage>(
       required: false,
     },
     isPinned: { type: Boolean, default: false },
+    pinnedAt: { type: Date, required: false },
+    pinnedBy: { type: Schema.Types.ObjectId, ref: "User", required: false },
+    editedAt: { type: Date, required: false },
+    deletedAt: { type: Date, required: false },
+    replyTo: { type: Schema.Types.ObjectId, ref: "Message", required: false },
+    threadRoot: { type: Schema.Types.ObjectId, ref: "Message", required: false },
     isRead: { type: Boolean, default: false },
   },
   { timestamps: true }
@@ -516,6 +601,9 @@ const MessageSchema = new Schema<IMessage>(
 MessageSchema.index({ conversationId: 1, createdAt: -1 });
 MessageSchema.index({ senderId: 1 });
 MessageSchema.index({ isPinned: 1, createdAt: -1 });
+// Reading a thread, and counting its replies, are both single queries against
+// this; it is the only index here that something actually asks for by name.
+MessageSchema.index({ threadRoot: 1, createdAt: 1 });
 
 /* =========================================================
  *  DISCOVERY MODEL (Mutual Search/Tinder-like)
@@ -548,6 +636,16 @@ export interface IConnection extends Document {
   _id: Types.ObjectId;
   participants: Types.ObjectId[];
   status: "active" | "blocked";
+  /**
+   * Who set `status: "blocked"`. Only that person can lift it. Without this
+   * the block lived on a document both people share, so either of them could
+   * clear it — including the person who was blocked.
+   *
+   * Rows blocked before this field existed have it unset; the unblock route
+   * treats those as liftable by either participant, since there is no record
+   * of who asked for the block.
+   */
+  blockedBy?: Types.ObjectId;
   unlockedAt: Date;
 }
 
@@ -559,6 +657,7 @@ const ConnectionSchema = new Schema<IConnection>(
       enum: ["active", "blocked"],
       default: "active",
     },
+    blockedBy: { type: Schema.Types.ObjectId, ref: "User" },
     unlockedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
@@ -580,5 +679,7 @@ export { OTP } from "./otp";
 export type { IOTP } from "./otp";
 export { Notification } from "./notification";
 export type { INotification } from "./notification";
+export { RevokedSession } from "./revokedSession";
+export type { IRevokedSession } from "./revokedSession";
 export { Invite } from "./invite";
 export type { IInvite } from "./invite";

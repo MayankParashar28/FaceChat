@@ -16,6 +16,8 @@ import {
 } from "../models";
 import mongoose, { Types } from "mongoose";
 import { hashPassword, validatePasswordStrength } from "../utils/passwordHash";
+import { avatarUrlForSeed } from "./avatar";
+import { buildReplyQuote } from "./replyQuote";
 
 // Short-TTL cache for hot, read-only user lookups (presence, call participant
 // display, message sender resolution). Keyed by Firebase UID. NOT used by auth
@@ -24,9 +26,16 @@ const userUidCache = new Map<string, { user: IUser | null; expires: number }>();
 const USER_CACHE_TTL_MS = 30_000;
 
 export class MongoDBService {
+  /**
+   * The avatar a new account starts with, drawn by this server.
+   *
+   * This used to return a `https://api.dicebear.com/...` URL and store it on
+   * the user, so the picture was fetched from a third party by every browser
+   * that ever rendered that account — with the username in the query string.
+   * Same generator, same art, served from here. See `services/avatar`.
+   */
   private buildDefaultAvatarUrl(seed: string): string {
-    const safeSeed = encodeURIComponent(seed || Math.random().toString(36).slice(2));
-    return `https://api.dicebear.com/9.x/adventurer/svg?seed=${safeSeed}`;
+    return avatarUrlForSeed(seed);
   }
   // User operations
   async createUser(userData: {
@@ -245,6 +254,11 @@ export class MongoDBService {
   }
 
   async getUserById(userId: string): Promise<IUser | null> {
+    // An id that cannot be an ObjectId is a miss, not an error. Mongoose
+    // throws a CastError on one, and this method rethrew it — so a socket
+    // handler that looked up an id it had not validated took the whole
+    // process down with an unhandled rejection.
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return null;
     try {
       return await User.findById(userId);
     } catch (error) {
@@ -802,7 +816,9 @@ export class MongoDBService {
       }
 
       return await ChatMessage.find(query)
-        .populate("senderId", "name email avatar username firebaseUid")
+        // No email here: the call screen shows a name and an avatar, and this
+        // list is handed to everyone in the room.
+        .populate("senderId", "name avatar username firebaseUid")
         .sort({ timestamp: 1 })
         .limit(limit);
     } catch (error) {
@@ -1120,8 +1136,12 @@ export class MongoDBService {
       const conversations = await Conversation.find({
         participants: userId,
         isDeleted: false,
+        // Conversations this person removed from their own list.
+        hiddenFor: { $ne: userId },
       })
-        .populate("participants", "username name email avatar firebaseUid")
+        // No email: this list describes the people you are talking to, and it
+        // is served to each of them.
+        .populate("participants", "username name avatar firebaseUid")
         .populate({
           path: "lastMessage",
           populate: {
@@ -1190,6 +1210,10 @@ export class MongoDBService {
           id: convIdStr,
           name: conv.name,
           isGroup: conv.isGroup,
+          // A GhostLink chat and when it vanishes. The list route drops the
+          // overdue ones, and the chat page counts this down.
+          isGhost: conv.isGhost || false,
+          destructAt: conv.destructAt,
           participants: conv.participants.map((p: any) => ({
             id: p._id.toString(),
             firebaseUid: p.firebaseUid,
@@ -1270,6 +1294,121 @@ export class MongoDBService {
     }
   }
 
+  /**
+   * Turning stored messages into what the client reads.
+   *
+   * Shared by the conversation page and by a single thread, which pull
+   * different sets of messages but must describe them identically — a
+   * message that looked one way in the timeline and another in a thread
+   * would be the same bug twice.
+   *
+   * `ordered` is already in the order it should be read.
+   */
+  private async formatMessages(ordered: any[], viewerId?: string): Promise<any[]> {
+    const messages = ordered;
+    // A reply quotes a message that may well be older than this page, so
+    // the ones that are missing are fetched rather than left as a bare id
+    // the client cannot draw. Only the fields a one-line quote needs.
+    const onPage = new Map(messages.map((m) => [m._id.toString(), m]));
+    const missingQuoted = Array.from(
+      new Set(
+        messages
+          .map((m) => m.replyTo?.toString())
+          .filter((id): id is string => !!id && !onPage.has(id))
+      )
+    );
+    const offPage = missingQuoted.length
+      ? await Message.find({ _id: { $in: missingQuoted } })
+          .populate("senderId", "name")
+          .select("content messageType attachment deletedAt senderId")
+          .lean()
+      : [];
+    const quotedById = new Map<string, any>(offPage.map((m: any) => [m._id.toString(), m]));
+
+    // How many live replies hang off each message on this page. Counted
+    // rather than kept in a column: a stored counter drifts the first time a
+    // reply saves and its increment does not, and a thread that claims three
+    // replies and opens on two is worse than one indexed query per page.
+    const replyCounts = new Map<string, number>();
+    if (onPage.size) {
+      const grouped = await Message.aggregate([
+        {
+          $match: {
+            threadRoot: { $in: messages.map((m) => m._id) },
+            deletedAt: null,
+          },
+        },
+        { $group: { _id: "$threadRoot", count: { $sum: 1 } } },
+      ]);
+      for (const row of grouped) replyCounts.set(row._id.toString(), row.count);
+    }
+
+    const quoteOf = (replyTo?: unknown) => {
+      if (!replyTo) return undefined;
+      const id = replyTo.toString();
+      return buildReplyQuote(id, (onPage.get(id) ?? quotedById.get(id)) as any);
+    };
+
+    return ordered.map((msg) => {
+      const senderId =
+        typeof msg.senderId === "string" ? msg.senderId : (msg.senderId as any)._id.toString();
+      const sender =
+        typeof msg.senderId === "string" || !("name" in msg.senderId)
+          ? null
+          : {
+              id: (msg.senderId as any)._id.toString(),
+              name: (msg.senderId as any).name,
+              username: (msg.senderId as any).username,
+            };
+
+      // Determine status: only show status for messages sent by the viewer
+      let status: "sent" | "delivered" | "seen" | undefined;
+      if (viewerId && senderId === viewerId) {
+        // Message was sent by the viewer
+        // If read, it's "seen", otherwise "delivered" (assuming it was delivered if we're viewing)
+        // For loaded messages, if isRead is true, it's "seen", otherwise "delivered"
+        status = msg.isRead ? "seen" : "delivered";
+      }
+      // If message is from someone else, no status (it's not our message to track)
+
+      // A deleted message keeps its place in the thread but nothing else:
+      // the text and the attachment never leave the server again.
+      const deleted = !!msg.deletedAt;
+
+      return {
+        id: msg._id.toString(),
+        conversationId: msg.conversationId.toString(),
+        senderId,
+        content: deleted ? "" : msg.content,
+        deletedAt: msg.deletedAt,
+        editedAt: msg.editedAt,
+        replyTo: quoteOf(msg.replyTo),
+        threadRoot: msg.threadRoot?.toString(),
+        replyCount: replyCounts.get(msg._id.toString()) ?? 0,
+        isPinned: msg.isPinned,
+        // Plain ids. The client already has the participants, so it can put
+        // a name to this without the populate a nested object would cost.
+        pinnedAt: msg.pinnedAt,
+        pinnedBy: msg.pinnedBy?.toString(),
+        messageType: msg.messageType,
+        attachment:
+          !deleted && msg.attachment
+            ? {
+                provider: msg.attachment.provider,
+                storageId: msg.attachment.storageId,
+                resourceType: msg.attachment.resourceType,
+                name: msg.attachment.name,
+                size: msg.attachment.size,
+                mimeType: msg.attachment.mimeType,
+              }
+            : undefined,
+        createdAt: msg.createdAt,
+        sender: sender || { id: senderId, name: "Unknown", username: "unknown" },
+        status,
+      };
+    });
+  }
+
   async getConversationMessages(
     conversationId: string,
     viewerId?: string,
@@ -1304,51 +1443,7 @@ export class MongoDBService {
         return [];
       }
 
-      const formattedMessages = messages.reverse().map((msg) => {
-        const senderId =
-          typeof msg.senderId === "string" ? msg.senderId : (msg.senderId as any)._id.toString();
-        const sender =
-          typeof msg.senderId === "string" || !("name" in msg.senderId)
-            ? null
-            : {
-                id: (msg.senderId as any)._id.toString(),
-                name: (msg.senderId as any).name,
-                username: (msg.senderId as any).username,
-              };
-
-        // Determine status: only show status for messages sent by the viewer
-        let status: "sent" | "delivered" | "seen" | undefined;
-        if (viewerId && senderId === viewerId) {
-          // Message was sent by the viewer
-          // If read, it's "seen", otherwise "delivered" (assuming it was delivered if we're viewing)
-          // For loaded messages, if isRead is true, it's "seen", otherwise "delivered"
-          status = msg.isRead ? "seen" : "delivered";
-        }
-        // If message is from someone else, no status (it's not our message to track)
-
-        return {
-          id: msg._id.toString(),
-          conversationId: msg.conversationId.toString(),
-          senderId,
-          content: msg.content,
-          isPinned: msg.isPinned,
-          messageType: msg.messageType,
-          attachment: msg.attachment
-            ? {
-                provider: msg.attachment.provider,
-                storageId: msg.attachment.storageId,
-                resourceType: msg.attachment.resourceType,
-                name: msg.attachment.name,
-                size: msg.attachment.size,
-                mimeType: msg.attachment.mimeType,
-              }
-            : undefined,
-          createdAt: msg.createdAt,
-          sender: sender || { id: senderId, name: "Unknown", username: "unknown" },
-          status,
-        };
-      });
-
+      const formattedMessages = await this.formatMessages(messages.reverse(), viewerId);
       logger.info("Formatted messages:", formattedMessages.length);
       return formattedMessages;
     } catch (error) {
@@ -1358,10 +1453,42 @@ export class MongoDBService {
     }
   }
 
+  /**
+   * A whole thread: the message it hangs off, and every reply beneath it.
+   *
+   * Unpaginated on purpose. A thread is a side conversation someone opened to
+   * read in one go, and a "load more" inside it would defeat the point. If one
+   * ever grows past being readable, that is the moment to page it.
+   */
+  async getThreadMessages(
+    conversationId: string,
+    rootId: string,
+    viewerId?: string
+  ): Promise<any[]> {
+    try {
+      const messages = await Message.find({
+        conversationId,
+        $or: [{ _id: rootId }, { threadRoot: rootId }],
+      })
+        .populate("senderId", "username name avatar")
+        .sort({ createdAt: 1 });
+
+      if (!messages.length) return [];
+      return await this.formatMessages(messages, viewerId);
+    } catch (error) {
+      logger.error("Error getting thread messages:", error);
+      return [];
+    }
+  }
+
   async createMessage(messageData: {
     conversationId: string;
     senderId: string;
     content: string;
+    /** The message being answered, already checked to be in this conversation. */
+    replyTo?: string;
+    /** The thread it lands in: the parent's own thread, or the parent itself. */
+    threadRoot?: string;
     messageType?: "text" | "image" | "file" | "system";
     attachment?: {
       provider: "cloudinary" | "gridfs";
@@ -1379,13 +1506,19 @@ export class MongoDBService {
         content: messageData.content,
         messageType: messageData.messageType,
         attachment: messageData.attachment,
+        replyTo: messageData.replyTo ? new mongoose.Types.ObjectId(messageData.replyTo) : undefined,
+        threadRoot: messageData.threadRoot
+          ? new mongoose.Types.ObjectId(messageData.threadRoot)
+          : undefined,
       });
       await message.save();
 
-      // Update conversation's last message
+      // Update conversation's last message. A new message also brings the
+      // conversation back for anyone who had removed it from their list —
+      // what they hid was the old thread, not this.
       await Conversation.findByIdAndUpdate(messageData.conversationId, {
-        lastMessage: message._id,
-        updatedAt: new Date(),
+        $set: { lastMessage: message._id, updatedAt: new Date() },
+        $unset: { hiddenFor: "" },
       });
 
       return message;
@@ -1418,9 +1551,13 @@ export class MongoDBService {
   async searchUsersByUsername(query: string, limit: number = 10): Promise<IUser[]> {
     try {
       const cleanQuery = query.trim();
-      const regex = new RegExp(cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const escaped = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      // Email matches the whole address only. As a substring it turned this
+      // into an address directory: "@gmail.com" returned everyone who has one.
+      const exactEmail = new RegExp(`^${escaped}$`, "i");
       const users = await User.find({
-        $or: [{ username: regex }, { name: regex }, { email: regex }],
+        $or: [{ username: regex }, { name: regex }, { email: exactEmail }],
         isDeleted: { $ne: true },
       })
         .select("username name avatar email firebaseUid")

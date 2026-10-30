@@ -32,24 +32,9 @@ import {
   signedDeliveryUrl,
   storeAttachment,
 } from "../services/attachmentStorage";
+import { ALLOWED_MIME, bytesMatchDeclaredMime, sniffFileKind } from "../services/fileSignature";
 
 const router = Router();
-
-/** Types we are willing to store and serve back to a browser. */
-const ALLOWED_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "application/zip",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-]);
 
 /** Resolve the caller's MongoDB user and confirm they belong to the conversation. */
 async function assertParticipant(firebaseUid: string, conversationId: string) {
@@ -93,6 +78,15 @@ router.post(
       }
       if (!ALLOWED_MIME.has(mimeType)) {
         return res.status(415).json({ error: `Unsupported file type: ${mimeType || "unknown"}` });
+      }
+      // The type above is whatever the caller put in the query string. Check it
+      // against the bytes, or the allow-list restricts nothing: any file could
+      // be stored — and served back — as an image.
+      if (!bytesMatchDeclaredMime(mimeType, body)) {
+        logger.warn(
+          `Rejected upload: declared ${mimeType}, bytes look like ${sniffFileKind(body)}`
+        );
+        return res.status(415).json({ error: `File contents do not match ${mimeType}` });
       }
 
       const stored = await storeAttachment({

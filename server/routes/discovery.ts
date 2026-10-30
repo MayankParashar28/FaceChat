@@ -8,6 +8,41 @@ import mongoose from "mongoose";
 
 const router = Router();
 
+/** Accepts a MongoDB id or a Firebase uid, like the discovery route always has. */
+async function resolveUser(id: string) {
+  if (!id) return null;
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    const byId = await mongoService.getUserById(id).catch(() => null);
+    if (byId) return byId;
+  }
+  return await mongoService.getUserByFirebaseUid(id).catch(() => null);
+}
+
+/**
+ * The one connection document for a pair, whatever its status.
+ *
+ * Every lookup here used to filter on `status: "active"`, so a blocked pair
+ * looked like a pair with no connection at all and the discovery handler
+ * happily created a second, active one next to the blocked one. That handed
+ * the blocked person a way to unblock themselves.
+ */
+async function findPairConnection(aId: string, bId: string) {
+  return await Connection.findOne({
+    participants: {
+      $all: [new mongoose.Types.ObjectId(aId), new mongoose.Types.ObjectId(bId)],
+    },
+  });
+}
+
+/** Both people have discovered each other, so a connection is warranted. */
+async function isMutualDiscovery(aId: string, bId: string) {
+  const [forward, reverse] = await Promise.all([
+    Discovery.findOne({ viewerId: aId, targetId: bId }),
+    Discovery.findOne({ viewerId: bId, targetId: aId }),
+  ]);
+  return !!forward && !!reverse;
+}
+
 // "Discover" / View a user profile
 // POST /api/discovery/:targetId
 router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
@@ -41,16 +76,18 @@ router.post("/:targetId", apiRateLimiter, authenticate, async (req, res) => {
       return res.status(400).json({ error: "Cannot discover yourself" });
     }
 
-    // Check if ALREADY connected
-    const existingConnection = await Connection.findOne({
-      participants: {
-        $all: [
-          new mongoose.Types.ObjectId(viewerId),
-          new mongoose.Types.ObjectId(resolvedTargetId),
-        ],
-      },
-      status: "active",
-    });
+    // Any connection for this pair, active or blocked. This used to ask only
+    // for an active one, which is why a block could be undone by the person
+    // who was blocked: with the blocked row invisible here, the mutual-discovery
+    // branch below created a fresh active connection beside it and both of them
+    // got a "New Match!" notification.
+    const existingConnection = await findPairConnection(viewerId, resolvedTargetId);
+
+    if (existingConnection?.status === "blocked") {
+      // Say nothing about who blocked whom. Either way there is nothing to
+      // discover and nothing to create.
+      return res.json({ status: "blocked", messagingUnlocked: false });
+    }
 
     if (existingConnection) {
       return res.json({
@@ -197,10 +234,29 @@ router.get("/status/:targetId", authenticate, async (req, res) => {
     const viewer = req.user.dbUser || (await mongoService.getUserByFirebaseUid(viewerUid));
     if (!viewer) return res.status(404).json({ error: "Viewer not found" });
 
-    const connection = await Connection.findOne({
-      participants: { $all: [viewer._id, targetId] },
-      status: "active",
-    });
+    // The id went straight into the query before this, so a Firebase uid or any
+    // other non-ObjectId answered with a 500 from Mongoose's cast error.
+    const target = await resolveUser(targetId);
+    if (!target) return res.status(404).json({ error: "Target user not found" });
+
+    const viewerId = viewer._id.toString();
+    const resolvedTargetId = target._id.toString();
+
+    const connection = await findPairConnection(viewerId, resolvedTargetId);
+
+    if (connection?.status === "blocked") {
+      // The chat header needs to know whether to offer Block or Unblock, so
+      // say who is holding the block — but only ever to the blocker.
+      const blockedByMe = connection.blockedBy?.toString() === viewerId;
+      return res.json({
+        status: "blocked",
+        messagingUnlocked: false,
+        blockedByMe,
+        // No blockedBy recorded: a row from before that field existed, which
+        // either participant may lift.
+        canUnblock: blockedByMe || !connection.blockedBy,
+      });
+    }
 
     if (connection) {
       return res.json({ status: "connected", messagingUnlocked: true });
@@ -208,7 +264,7 @@ router.get("/status/:targetId", authenticate, async (req, res) => {
 
     const discovery = await Discovery.findOne({
       viewerId: viewer._id,
-      targetId: targetId,
+      targetId: target._id,
     });
 
     return res.json({
@@ -222,7 +278,7 @@ router.get("/status/:targetId", authenticate, async (req, res) => {
 });
 
 // Block a user
-router.post("/block/:targetId", authenticate, async (req, res) => {
+router.post("/block/:targetId", apiRateLimiter, authenticate, async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ error: "Authentication required" });
 
@@ -231,24 +287,92 @@ router.post("/block/:targetId", authenticate, async (req, res) => {
     const viewer = req.user.dbUser || (await mongoService.getUserByFirebaseUid(viewerUid));
     if (!viewer) return res.status(404).json({ error: "Viewer not found" });
 
-    // Find the active connection
-    const connection = await Connection.findOne({
-      participants: { $all: [viewer._id, targetId] },
-    });
+    const target = await resolveUser(targetId);
+    if (!target) return res.status(404).json({ error: "Target user not found" });
+
+    const viewerId = viewer._id.toString();
+    const resolvedTargetId = target._id.toString();
+    if (viewerId === resolvedTargetId) {
+      return res.status(400).json({ error: "You cannot block yourself" });
+    }
+
+    const connection = await findPairConnection(viewerId, resolvedTargetId);
+
+    if (connection?.status === "blocked") {
+      // Already blocked. Don't reassign blockedBy — that would let the blocked
+      // person take ownership of the block and then lift it.
+      return res.json({ success: true, message: "User blocked" });
+    }
 
     if (connection) {
-      // Update status to blocked
       connection.status = "blocked";
+      connection.blockedBy = viewer._id;
       await connection.save();
       return res.json({ success: true, message: "User blocked" });
     }
 
-    // If no connection exists, we might want to create a blocked record or just ignore
-    // For now, let's assume blocking only works if you have a connection/match
-    return res.status(404).json({ error: "Connection not found" });
+    // No connection yet. Blocking used to answer 404 here, so you could not
+    // block anyone you had not already matched with — and nothing stopped the
+    // two of you matching later. A blocked row with no match behind it records
+    // the refusal and keeps the discovery handler above from forming one.
+    await Connection.create({
+      participants: [viewer._id, target._id],
+      status: "blocked",
+      blockedBy: viewer._id,
+    });
+
+    return res.json({ success: true, message: "User blocked" });
   } catch (error) {
     logger.error("Error blocking user:", error);
     res.status(500).json({ error: "Failed to block user" });
+  }
+});
+
+// Unblock a user. There was no way to do this at all: the only route out of a
+// block was the resurrection bug the discovery handler used to have.
+router.delete("/block/:targetId", apiRateLimiter, authenticate, async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Authentication required" });
+
+    const { targetId } = req.params;
+    const viewerUid = req.user.uid;
+    const viewer = req.user.dbUser || (await mongoService.getUserByFirebaseUid(viewerUid));
+    if (!viewer) return res.status(404).json({ error: "Viewer not found" });
+
+    const target = await resolveUser(targetId);
+    if (!target) return res.status(404).json({ error: "Target user not found" });
+
+    const viewerId = viewer._id.toString();
+    const resolvedTargetId = target._id.toString();
+
+    const connection = await findPairConnection(viewerId, resolvedTargetId);
+    if (!connection || connection.status !== "blocked") {
+      // Nothing to lift. Idempotent so a double click is harmless.
+      return res.json({ success: true, message: "User is not blocked" });
+    }
+
+    // Only the person who asked for the block can lift it. Rows from before
+    // blockedBy existed carry no owner, so either participant may clear those.
+    const isBlocker = connection.blockedBy?.toString() === viewerId;
+    if (connection.blockedBy && !isBlocker) {
+      return res.status(403).json({ error: "You cannot lift a block you did not set" });
+    }
+
+    if (await isMutualDiscovery(viewerId, resolvedTargetId)) {
+      // They had matched before the block, so put the match back.
+      connection.status = "active";
+      connection.blockedBy = undefined;
+      await connection.save();
+      return res.json({ success: true, status: "connected", messagingUnlocked: true });
+    }
+
+    // A pre-emptive block with no match behind it: drop the row and leave the
+    // two of them as strangers rather than inventing a connection.
+    await Connection.deleteOne({ _id: connection._id });
+    return res.json({ success: true, status: "none", messagingUnlocked: false });
+  } catch (error) {
+    logger.error("Error unblocking user:", error);
+    res.status(500).json({ error: "Failed to unblock user" });
   }
 });
 

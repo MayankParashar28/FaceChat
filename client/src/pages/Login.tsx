@@ -4,45 +4,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Scan,
-  Mail,
-  Lock,
-  User,
-  AlertCircle,
-  CheckCircle2,
-  ArrowRight,
-  Sparkles,
-  Eye,
-  EyeOff,
-} from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Mail, Lock, User, AlertCircle, ArrowRight, Sparkles, Eye, EyeOff } from "lucide-react";
+
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/lib/auth";
+import { takeAuthError } from "@/lib/sessionCredential";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { LogoMark } from "@/components/LogoMark";
 import { validatePassword, getPasswordStrengthColor } from "@/lib/passwordValidation";
 import { motion, AnimatePresence } from "framer-motion";
-import { authenticateWebAuthn, isWebAuthnSupported } from "@/lib/webauthn";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { user, loading, signIn, signUp, checkUsername, getUsernameSuggestions, resetPassword } =
+  const { user, loading, signIn, signUp, signInWithGoogle, checkUsername, getUsernameSuggestions } =
     useAuth();
   const [email, setEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
-  const [isFaceScanning, setIsFaceScanning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
@@ -56,12 +38,46 @@ export default function Login() {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showSignupPassword, setShowSignupPassword] = useState(false);
 
-  // Forgot Password State
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [resetEmail, setResetEmail] = useState("");
-  const [newResetPassword, setNewResetPassword] = useState("");
-  const [resetStatus, setResetStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [resetError, setResetError] = useState("");
+  /**
+   * Google sign-in.
+   *
+   * This button was on the page until it was removed in Aug 2026, which left
+   * accounts created through Google with no way back in: they hold no password,
+   * so the email/password form could never work for them. The provider itself
+   * never went away — signInWithGoogle has been wired up in lib/auth the whole
+   * time, just unreachable from here.
+   *
+   * No redirect on success: the effect below already sends a signed-in user to
+   * the dashboard.
+   */
+  const handleGoogleSignIn = async () => {
+    setError("");
+    setIsGoogleSubmitting(true);
+    try {
+      await signInWithGoogle();
+    } catch (err: any) {
+      const code = err?.code ?? "";
+      // Closing the popup is not an error worth shouting about.
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        return;
+      }
+      // Firebase's own text for this is "Firebase: Error (auth/popup-blocked)",
+      // which tells nobody what to do about it.
+      setError(
+        code === "auth/popup-blocked"
+          ? "Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again."
+          : err?.message || "Could not sign in with Google. Please try again."
+      );
+    } finally {
+      setIsGoogleSubmitting(false);
+    }
+  };
+
+  // A sign-in the auth provider had to undo leaves its reason behind.
+  useEffect(() => {
+    const rejected = takeAuthError();
+    if (rejected) setError(rejected);
+  }, []);
 
   // Redirect to dashboard if user is already logged in
   useEffect(() => {
@@ -76,7 +92,7 @@ export default function Login() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="relative">
           <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse" />
-          <div className="relative bg-black/40 backdrop-blur-xl p-8 rounded-full border border-white/10">
+          <div className="relative bg-card/80 backdrop-blur-xl p-8 rounded-full border border-border">
             <LogoMark className="h-12 w-12 animate-spin-slow" />
           </div>
         </div>
@@ -176,47 +192,6 @@ export default function Login() {
     setShowSuggestions(false);
   };
 
-  const handleFaceLogin = async () => {
-    setIsFaceScanning(true);
-    setError("");
-
-    try {
-      // Check if supported
-      const supported = await isWebAuthnSupported();
-      if (!supported) {
-        throw new Error("Face ID / Touch ID is not supported on this device.");
-      }
-
-      await authenticateWebAuthn();
-      // In a real app, we would verify the credential with the server here
-      // For now, we'll simulate a successful login if the biometric check passes
-      setTimeout(() => {
-        setIsFaceScanning(false);
-        setLocation("/dashboard");
-      }, 1000);
-    } catch (error: any) {
-      setIsFaceScanning(false);
-      console.error("Face login error:", error);
-      setError(error.message || "Face ID login failed. Please try again.");
-    }
-  };
-
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resetEmail || !newResetPassword) return;
-
-    setResetStatus("sending");
-    setResetError("");
-
-    try {
-      await resetPassword(resetEmail, newResetPassword);
-      setResetStatus("sent");
-    } catch (error: any) {
-      setResetStatus("error");
-      setResetError(error.message || "Failed to reset password");
-    }
-  };
-
   return (
     <div className="min-h-screen w-full flex bg-background transition-colors duration-300">
       {/* Left Side - Branding & Visuals (Theme Aware) */}
@@ -253,34 +228,11 @@ export default function Login() {
             Join the next generation of video conferencing. AI-powered features, crystal clear
             quality, and secure connections.
           </p>
-
-          <div className="flex gap-4 pt-4">
-            <div className="flex -space-x-4">
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className="w-10 h-10 rounded-full border-2 border-background dark:border-black bg-background/50 dark:bg-white/10 backdrop-blur-md flex items-center justify-center text-xs text-foreground dark:text-white font-medium shadow-sm"
-                >
-                  {i}
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-col justify-center">
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <Sparkles key={i} className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-                ))}
-              </div>
-              <span className="text-sm text-muted-foreground dark:text-white/60">
-                Trusted by thousands
-              </span>
-            </div>
-          </div>
         </div>
 
         {/* Footer */}
         <div className="relative z-10 text-sm text-muted-foreground dark:text-white/40">
-          © 2024 FaceCallAI. All rights reserved.
+          © 2026 AI Meet
         </div>
       </div>
 
@@ -336,20 +288,6 @@ export default function Login() {
               </TabsList>
 
               <TabsContent value="login" className="space-y-6">
-                <Button
-                  className="w-full h-12 rounded-xl bg-gradient-to-r from-primary/20 to-purple-500/20 hover:from-primary/30 hover:to-purple-500/30 border border-white/10 text-foreground dark:text-white transition-all group relative overflow-hidden"
-                  variant="outline"
-                  onClick={handleFaceLogin}
-                  disabled={isFaceScanning}
-                  data-testid="button-face-login"
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-                  <Scan
-                    className={`w-5 h-5 mr-2 ${isFaceScanning ? "animate-pulse text-primary" : "text-muted-foreground dark:text-white/80"}`}
-                  />
-                  {isFaceScanning ? "Scanning Face..." : "Login with Face ID"}
-                </Button>
-
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email">Email or Username</Label>
@@ -367,16 +305,7 @@ export default function Login() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="password">Password</Label>
-                      <button
-                        type="button"
-                        onClick={() => setShowForgotPassword(true)}
-                        className="text-xs text-primary hover:text-primary/80 transition-colors"
-                      >
-                        Forgot Password?
-                      </button>
-                    </div>
+                    <Label htmlFor="password">Password</Label>
                     <div className="relative group">
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                       <Input
@@ -409,7 +338,7 @@ export default function Login() {
                   >
                     {isSubmitting ? (
                       <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                         <span>Signing In...</span>
                       </div>
                     ) : (
@@ -581,7 +510,7 @@ export default function Login() {
                   >
                     {isSubmitting ? (
                       <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                         <span>Creating Account...</span>
                       </div>
                     ) : (
@@ -591,103 +520,62 @@ export default function Login() {
                       </div>
                     )}
                   </Button>
-                  <p className="text-xs text-center text-muted-foreground">
-                    By signing up, you agree to our Terms & Privacy Policy
-                  </p>
                 </form>
               </TabsContent>
             </Tabs>
+
+            {/* Outside the tabs: with Google, signing in and signing up are
+                the same action. */}
+            <div className="mt-6 space-y-4">
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">or</span>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full h-12 rounded-xl font-medium"
+                onClick={handleGoogleSignIn}
+                disabled={isGoogleSubmitting || isSubmitting}
+              >
+                {isGoogleSubmitting ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+                    <span>Opening Google…</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.57c2.08-1.92 3.27-4.74 3.27-8.09Z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.76c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84Z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.05l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38Z"
+                      />
+                    </svg>
+                    <span>Continue with Google</span>
+                  </div>
+                )}
+              </Button>
+            </div>
           </motion.div>
         </div>
       </div>
-
-      <Dialog open={showForgotPassword} onOpenChange={setShowForgotPassword}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Reset Password</DialogTitle>
-            <DialogDescription>
-              Enter your email address or username and your new password below.
-            </DialogDescription>
-          </DialogHeader>
-
-          {resetStatus === "sent" ? (
-            <div className="py-6 text-center space-y-4">
-              <div className="mx-auto w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
-                <CheckCircle2 className="w-6 h-6 text-green-500" />
-              </div>
-              <div className="space-y-2">
-                <p className="font-medium">Password Updated Successfully!</p>
-                <p className="text-sm text-muted-foreground">
-                  Your password has been updated. You can now log in with your new password.
-                </p>
-              </div>
-              <Button
-                onClick={() => {
-                  setShowForgotPassword(false);
-                  setResetStatus("idle");
-                  setResetEmail("");
-                  setNewResetPassword("");
-                }}
-                className="w-full"
-              >
-                Back to Login
-              </Button>
-            </div>
-          ) : (
-            <form onSubmit={handleResetPassword} className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="reset-email">Email or Username</Label>
-                <Input
-                  id="reset-email"
-                  type="text"
-                  placeholder="you@example.com or username"
-                  value={resetEmail}
-                  onChange={(e) => setResetEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="reset-new-password">New Password</Label>
-                <Input
-                  id="reset-new-password"
-                  type="password"
-                  placeholder="At least 8 characters"
-                  value={newResetPassword}
-                  onChange={(e) => setNewResetPassword(e.target.value)}
-                  required
-                />
-              </div>
-
-              {resetStatus === "error" && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{resetError}</AlertDescription>
-                </Alert>
-              )}
-
-              <DialogFooter>
-                <Button type="button" variant="ghost" onClick={() => setShowForgotPassword(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={resetStatus === "sending" || !resetEmail || !newResetPassword}
-                >
-                  {resetStatus === "sending" ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                      Updating...
-                    </>
-                  ) : (
-                    "Reset Password"
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

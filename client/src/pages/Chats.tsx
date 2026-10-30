@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,6 +29,17 @@ import {
   Link2,
   Briefcase,
   BadgeCheck,
+  Flame,
+  Ghost,
+  PinOff,
+  FileText,
+  ChevronDown,
+  X,
+  Reply,
+  Pencil,
+  Trash2,
+  MoreHorizontal,
+  MessagesSquare,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -36,6 +47,12 @@ import {
   formatFileSize,
   type ChatAttachmentData,
 } from "@/components/ChatAttachment";
+import { GhostLinkDialog } from "@/components/GhostLinkDialog";
+import { PhotoBombStack } from "@/components/PhotoBombStack";
+import { groupPhotoBombs } from "@/lib/photoBombs";
+import { describeMessage } from "@/lib/messagePreview";
+import { ReplyQuoteBlock, type ReplyQuoteData } from "@/components/ReplyQuoteBlock";
+import { ThreadPanel, type ThreadMessage } from "@/components/ThreadPanel";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,6 +80,7 @@ import {
 
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
+import { readSessionToken } from "@/lib/sessionCredential";
 import { auth } from "@/lib/firebase";
 import { User as FirebaseUser } from "firebase/auth";
 import { searchUsers } from "@/lib/utils";
@@ -71,8 +89,46 @@ import { useToast } from "@/hooks/use-toast";
 // Matches MAX_UPLOAD_BYTES in server/routes/attachments.ts.
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
+// One request per file, and apiRateLimiter allows 60 a minute, so a batch this
+// size leaves plenty of headroom for the rest of the page's traffic.
+const MAX_ATTACHMENTS_PER_BATCH = 10;
+
+// Matches EDIT_WINDOW_MS in server/services/messageEdits.ts, which is what
+// actually enforces it. Repeated here only so the menu stops offering Edit at
+// the same moment the server would start refusing it.
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+// Mirrors ALLOWED_MIME in server/routes/attachments.ts. The picker's `accept`
+// does this job for files chosen through a dialog, but a drop or a paste can
+// carry anything, so the batch checks the type itself and says what it skipped
+// instead of letting the upload come back 415.
+const ACCEPTED_MIME = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "application/zip",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
 const FILE_ACCEPT = "application/pdf,text/plain,text/csv,application/zip,.doc,.docx,.xls,.xlsx";
+
+/**
+ * The one line a reply shows of what it answers.
+ *
+ * Raw rather than a ready-made sentence: `describeMessage` turns it into one,
+ * so a quoted photo reads the same way the pinned list reads it. `unavailable`
+ * is a quote whose original the server could not find at all — cleared by a
+ * ghost chat, say — as opposed to `deleted`, which it found as a tombstone.
+ */
+type ReplyQuote = ReplyQuoteData;
 
 type Message = {
   id: string;
@@ -80,6 +136,19 @@ type Message = {
   senderId: string;
   content: string;
   isPinned: boolean;
+  /** Who pinned it and when; absent unless it is pinned. */
+  pinnedAt?: string | Date;
+  pinnedBy?: string;
+  /** Set once the author rewrote it. */
+  editedAt?: string | Date;
+  /** Set once the author took it back; `content` and `attachment` are gone. */
+  deletedAt?: string | Date | null;
+  /** The message this one answers, as much of it as a quote needs. */
+  replyTo?: ReplyQuote;
+  /** The thread this sits in, when it is a reply. Absent on a thread's root. */
+  threadRoot?: string;
+  /** Live replies hanging off this one. Counted by the server, not stored. */
+  replyCount?: number;
   createdAt: Date;
   messageType?: "text" | "image" | "file" | "system";
   attachment?: ChatAttachmentData;
@@ -107,13 +176,15 @@ type Conversation = {
   }>;
   lastMessage?: Message;
   unreadCount: number;
+  /** A GhostLink chat, which erases itself once `destructAt` passes. */
+  isGhost?: boolean;
+  destructAt?: string | null;
 };
 
 type SearchedUser = {
   id: string;
   name: string;
   username: string;
-  email: string;
   avatar?: string;
   connectionStatus?: "connected" | "discovered" | "none";
 };
@@ -136,6 +207,7 @@ export default function Chats() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [selectedChat, setSelectedChat] = useState<string | null>(() => {
@@ -149,7 +221,12 @@ export default function Chats() {
   });
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [uploadingAttachment, setUploadingAttachment] = useState<string | null>(null);
+  // The file going up right now, and where it sits in the batch.
+  const [uploadingAttachment, setUploadingAttachment] = useState<{
+    name: string;
+    index: number;
+    total: number;
+  } | null>(null);
   // One dialog drives every destructive confirmation here, in place of the
   // browser's confirm() — which cannot be styled and blocks the page.
   const [confirmAction, setConfirmAction] = useState<{
@@ -160,6 +237,10 @@ export default function Chats() {
   } | null>(null);
   // Set to the other participant's MongoDB id while their profile is open.
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  // dragenter/dragleave fire again for every child element the pointer crosses,
+  // so the overlay flickers if it keys off the events alone. Count them.
+  const dragDepthRef = useRef(0);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -174,6 +255,42 @@ export default function Chats() {
   const typingTimeoutRef = useRef<NodeJS.Timeout>();
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
+  /**
+   * Set by Reply and Edit, read when the menu they were chosen from closes.
+   *
+   * Focusing the composer inside the handler does not survive: the menu
+   * restores focus to its own trigger on the way out, after the handler has
+   * run, so the cursor ended up back on the message instead of in the box —
+   * and on a phone the keyboard never came up at all.
+   */
+  const focusComposerOnMenuClose = useRef(false);
+  // Set for a moment after jumping to a pinned message, so the eye lands on it.
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [isPinnedListOpen, setIsPinnedListOpen] = useState(false);
+  /**
+   * Whether the server has registered this connection against the account.
+   *
+   * Joining a conversation room is refused until it has, and the refusal is
+   * silent from the reader's point of view — so this gates the join rather
+   * than letting it race the handshake and lose.
+   */
+  const [isSocketReady, setIsSocketReady] = useState(false);
+  // `message:new` can arrive twice for one message — the optimistic-replacement
+  // path has its own guards for that — and a thread must not count it twice.
+  const threadCountedRef = useRef<Set<string>>(new Set());
+  /** The message being answered, shown above the composer until sent or cancelled. */
+  // Typed to the narrower thread shape, not Message: a reply can be started
+  // from the thread panel, whose rows may be older than the loaded page.
+  const [replyingTo, setReplyingTo] = useState<ThreadMessage | null>(null);
+  /** The thread the panel is showing, by its root message id. */
+  const [openThreadRoot, setOpenThreadRoot] = useState<string | null>(null);
+  /**
+   * The message being rewritten. The composer is reused rather than editing in
+   * place: it already handles the keyboard, the send button and the draft, and
+   * two separate text inputs would be two sets of that to keep working.
+   */
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   /** Message ids already reported as seen, so the observer never re-emits. */
   const seenReportedRef = useRef<Set<string>>(new Set());
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -181,6 +298,11 @@ export default function Chats() {
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set()); // Stores firebaseUids
   const selectedChatRef = useRef<string | null>(null);
   const userRef = useRef(user);
+  // Socket handlers close over the render they were registered in, so reading
+  // the current messages out of a ref is how they name a message they are
+  // being told about.
+  const messagesRef = useRef<Message[]>(messages);
+  messagesRef.current = messages;
   useEffect(() => {
     selectedChatRef.current = selectedChat;
   }, [selectedChat]);
@@ -203,14 +325,13 @@ export default function Chats() {
         if (tok) return tok;
       } catch (e) {}
     }
-    if (user?.uid) return user.uid;
+    // The email/password session token. This used to return `user.uid`, which
+    // the server accepted as a credential — see getAuthToken in lib/queryClient.
     if (typeof window !== "undefined") {
-      const rawMock = localStorage.getItem("facechat_mock_user");
-      if (rawMock) {
-        try {
-          const parsed = JSON.parse(rawMock);
-          if (parsed?.uid) return parsed.uid;
-        } catch (e) {}
+      try {
+        return readSessionToken();
+      } catch (e) {
+        /* storage can throw in a private window */
       }
     }
     return null;
@@ -257,8 +378,22 @@ export default function Chats() {
       console.log("WebSocket connected");
       const token = await getToken();
       if (token) {
-        newSocket.emit("user:online", { firebaseToken: token });
+        // The acknowledgement is the point: the server only recognises this
+        // connection once it has finished registering it, and anything that
+        // joins a conversation room before then is turned away.
+        newSocket.emit("user:online", { firebaseToken: token }, (ok: boolean) =>
+          setIsSocketReady(!!ok)
+        );
       }
+    });
+
+    newSocket.on("disconnect", () => {
+      // Rooms do not survive a reconnect, so the join has to happen again.
+      setIsSocketReady(false);
+    });
+
+    newSocket.on("conversation:join-error", ({ error }: { error: string }) => {
+      toast({ title: "Cannot open that chat", description: error, variant: "destructive" });
     });
 
     newSocket.on("message:new", (newMessage: Message) => {
@@ -393,6 +528,19 @@ export default function Chats() {
           return [...prev, normalizedMessage];
         });
 
+        // A reply is one more on the thread it joined, so the "N replies" line
+        // under its root moves for everyone without a refetch.
+        if (normalizedMessage.threadRoot && !threadCountedRef.current.has(normalizedMessage.id)) {
+          threadCountedRef.current.add(normalizedMessage.id);
+          const rootId = normalizedMessage.threadRoot;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === rootId ? { ...m, replyCount: (m.replyCount ?? 0) + 1 } : m))
+          );
+          queryClient.invalidateQueries({
+            queryKey: ["thread", newMessage.conversationId, rootId],
+          });
+        }
+
         // Only scroll if it's a new message from another user (WhatsApp behavior)
         // Don't scroll for our own messages - they're already visible
         if (
@@ -493,8 +641,109 @@ export default function Chats() {
       // You can add a toast library here if needed
     });
 
-    newSocket.on("message:pinned", ({ messageId, isPinned }) => {
-      setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, isPinned } : msg)));
+    // Both sides are in the conversation room, so a pin either of them makes
+    // lands here for both — including for the socket that asked for it, which
+    // is what confirms the optimistic pin below.
+    newSocket.on(
+      "message:pinned",
+      ({ messageId, isPinned, pinnedAt, pinnedBy, replaced, pinLimit }) => {
+        // A conversation keeps only so many pins, so pinning one can unpin
+        // another. The server sends both halves of that in a single event.
+        const dropped: string[] = replaced ?? [];
+
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id === messageId) {
+              return {
+                ...msg,
+                isPinned,
+                pinnedAt: isPinned ? pinnedAt : undefined,
+                pinnedBy: isPinned ? pinnedBy : undefined,
+              };
+            }
+            if (dropped.includes(msg.id)) {
+              return { ...msg, isPinned: false, pinnedAt: undefined, pinnedBy: undefined };
+            }
+            return msg;
+          })
+        );
+
+        if (dropped.length > 0) {
+          // Said to both people, not just whoever pinned: the pin that stepped
+          // aside may well have been the other one's, and they are the one who
+          // would otherwise find it gone with no explanation.
+          const names = dropped
+            .map((id) => messagesRef.current.find((m) => m.id === id))
+            .filter((m): m is Message => !!m)
+            .map((m) => describeMessage(m).label);
+          toast({
+            title:
+              names.length === 1 ? `Unpinned \u201c${names[0]}\u201d` : "Older pins were removed",
+            description: `A chat keeps its ${pinLimit ?? 3} most recent pins.`,
+          });
+        }
+      }
+    );
+
+    // Pins answer on their own channel. On `message:error` the handler above
+    // throws away the most recent unsent message, so a refused pin used to
+    // delete something the user had just typed.
+    newSocket.on("message:edited", ({ messageId, content, editedAt }) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, content, editedAt } : msg))
+      );
+      queryClient.invalidateQueries({ queryKey: ["thread"] });
+    });
+
+    newSocket.on("message:deleted", ({ messageId, deletedAt, threadRoot }) => {
+      // A tombstone is not a reply anyone can read, so the count drops with it.
+      if (threadRoot) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === threadRoot ? { ...m, replyCount: Math.max(0, (m.replyCount ?? 0) - 1) } : m
+          )
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ["thread"] });
+      // Everything the message carried goes, here as well as on the server:
+      // leaving the text in this client's state would mean a tombstone whose
+      // contents were one devtools expand away.
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? {
+                ...msg,
+                content: "",
+                attachment: undefined,
+                deletedAt,
+                isPinned: false,
+                pinnedAt: undefined,
+                pinnedBy: undefined,
+                editedAt: undefined,
+              }
+            : msg
+        )
+      );
+    });
+
+    newSocket.on("message:edit-error", ({ error }: { error: string }) => {
+      toast({ title: "Edit not saved", description: error, variant: "destructive" });
+    });
+
+    newSocket.on("message:delete-error", ({ error }: { error: string }) => {
+      toast({ title: "Not deleted", description: error, variant: "destructive" });
+    });
+
+    newSocket.on("message:pin-error", ({ messageId, error }) => {
+      // Put the message back the way it was before the optimistic flip.
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, isPinned: !msg.isPinned, pinnedAt: undefined, pinnedBy: undefined }
+            : msg
+        )
+      );
+      toast({ title: "Pin not saved", description: error, variant: "destructive" });
     });
 
     newSocket.on("user:typing", ({ userId, userName, conversationId }) => {
@@ -568,7 +817,24 @@ export default function Chats() {
         clearTimeout(refetchDebounceRef.current);
       }
     };
-  }, [debouncedRefetchConversations, firebaseUser]);
+  }, [debouncedRefetchConversations, firebaseUser, queryClient, toast]);
+
+  /**
+   * Enter the conversation's room, once the server knows who this connection
+   * is.
+   *
+   * Kept apart from loading the messages, which happens over HTTP and must
+   * not wait for a websocket that may never connect. The join itself has to
+   * wait: `conversationMember` reads a map written at the end of the
+   * `user:online` handler, so a join sent before the acknowledgement was
+   * refused and the socket sat outside the room. Everything broadcast to the
+   * room — a pin, above all — then missed this client entirely, which is why
+   * the other side had to reload to see one.
+   */
+  useEffect(() => {
+    if (!selectedChat || !socket || !isSocketReady) return;
+    socket.emit("join:conversation", selectedChat);
+  }, [selectedChat, socket, isSocketReady]);
 
   useEffect(() => {
     // Clear typing state when conversation changes
@@ -582,9 +848,6 @@ export default function Chats() {
       const currentChatId = selectedChat;
       setMessages([]);
       setIsLoadingOlder(false);
-
-      // Join the conversation room
-      socket.emit("join:conversation", currentChatId);
 
       // Opening a conversation no longer marks it read. It used to emit
       // "mark:read", which flips every unread message in the conversation to
@@ -699,14 +962,21 @@ export default function Chats() {
       messagesContainerRef.current
         ?.querySelectorAll<HTMLElement>("[data-unread-message]")
         .forEach((el) => {
-          const id = el.dataset.messageId;
-          if (!id || seenReportedRef.current.has(id)) return;
+          // One element can stand for several messages: a photo stack draws
+          // the whole burst, and the messages it folded have no node of their
+          // own to be seen. Reporting only the lead left the rest unread for
+          // good, so the element carries every id it speaks for.
+          const ids = (el.dataset.unreadIds || "").split(",").filter(Boolean);
+          if (ids.length === 0) return;
           const box = el.getBoundingClientRect();
           // Most of the bubble inside the visible strip, not just an edge.
           const shown = Math.min(box.bottom, bottom) - Math.max(box.top, top);
           if (shown <= 0 || shown < box.height * 0.6) return;
-          seenReportedRef.current.add(id);
-          socket.emit("message:seen", { messageId: id, userId: user.uid });
+          for (const id of ids) {
+            if (seenReportedRef.current.has(id)) continue;
+            seenReportedRef.current.add(id);
+            socket.emit("message:seen", { messageId: id, userId: user.uid });
+          }
         });
     };
 
@@ -731,6 +1001,51 @@ export default function Chats() {
       document.removeEventListener("visibilitychange", schedule);
     };
   }, [socket, user?.uid, selectedChat, messages]);
+
+  // The rules for what counts as one burst live in lib/photoBombs, where they
+  // can be tested without a DOM.
+  const photoBombs = useMemo(() => groupPhotoBombs(messages), [messages]);
+
+  /**
+   * End the open ghost chat now rather than waiting out its timer.
+   *
+   * The server runs the same destruction the timer would and broadcasts to
+   * the room, so the other person's screen clears from that event — this only
+   * has to handle our own, and does it from the response so the counts show
+   * even if our socket is in the middle of reconnecting.
+   */
+  const destroyGhostNow = async () => {
+    if (!selectedChat) return;
+    setIsDestroyingGhost(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`/api/conversations/${selectedChat}/ghost/destroy`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Could not end the chat");
+      }
+      const { erased } = await res.json();
+      if (erased) setGhostErased({ chatId: selectedChat, ...erased });
+      setVanishedChatId(selectedChat);
+      setMessages([]);
+      queryClient.setQueryData<Conversation[]>(["/api/conversations"], (old) =>
+        old ? old.filter((c) => c.id !== selectedChat) : old
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+    } catch (err) {
+      toast({
+        title: "Could not end the chat",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDestroyingGhost(false);
+    }
+  };
 
   const scrollToBottom = (smooth: boolean = true) => {
     if (scrollRef.current) {
@@ -922,142 +1237,437 @@ export default function Chats() {
     }
   }, [conversations, selectedChat]);
 
+  /**
+   * Sending one message, wherever it was typed.
+   *
+   * The composer under the conversation and the one inside the thread panel
+   * both come through here. Two send paths would be two places for the
+   * optimistic row, the typing indicator and the ten-second give-up to drift
+   * apart from each other.
+   *
+   * Returns false when there was nothing to send or nowhere to send it, so the
+   * caller knows to leave what was typed where it is.
+   */
+  const sendMessage = (content: string, replyTarget: ThreadMessage | null): boolean => {
+    const messageContent = content.trim();
+    if (!messageContent || !socket || !selectedChat || !user?.uid) return false;
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Create optimistic message
+    const optimisticMessage: Message = {
+      id: tempId,
+      conversationId: selectedChat,
+      senderId: user.uid,
+      content: messageContent,
+      isPinned: false,
+      createdAt: new Date(),
+      // Answering anything in a thread joins that thread, matching what the
+      // server will decide, so an open panel shows this reply straight away.
+      threadRoot: replyTarget ? (replyTarget.threadRoot ?? replyTarget.id) : undefined,
+      // Quoted locally so the reply reads right the instant it appears;
+      // the server sends its own version back on `message:new`.
+      replyTo: replyTarget
+        ? {
+            id: replyTarget.id,
+            senderName: replyTarget.sender.name,
+            content: replyTarget.content,
+            messageType: replyTarget.messageType,
+            attachment: replyTarget.attachment
+              ? {
+                  mimeType: replyTarget.attachment.mimeType,
+                  name: replyTarget.attachment.name,
+                }
+              : undefined,
+            deleted: false,
+          }
+        : undefined,
+      sender: {
+        id: user.uid,
+        name: user.displayName || user.username || "You",
+        username: user.username || "you",
+      },
+      status: "sent",
+      isOptimistic: true,
+      tempId: tempId,
+    };
+
+    // Add optimistic message immediately
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setPendingMessages((prev) => new Map(prev).set(tempId, optimisticMessage));
+
+    // The thread panel reads its own fetched list, which knows nothing about
+    // the row just added to the timeline. Without this a reply typed in the
+    // panel would leave it unchanged until the server answered.
+    const threadRoot = optimisticMessage.threadRoot;
+    if (threadRoot) {
+      queryClient.setQueryData<ThreadMessage[]>(["thread", selectedChat, threadRoot], (prev) =>
+        prev ? [...prev, optimisticMessage] : prev
+      );
+    }
+
+    // Scroll to bottom to show the new message
+    setTimeout(() => scrollToBottom(true), 50);
+
+    // Stop typing indicator
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    socket.emit("typing:stop", { conversationId: selectedChat, userId: user.uid });
+
+    // Send message to server
+    socket.emit("message:send", {
+      conversationId: selectedChat,
+      senderId: user.uid,
+      content: messageContent,
+      replyTo: replyTarget?.id,
+      tempId,
+    });
+
+    // Set timeout to handle potential errors (if message doesn't arrive within 10 seconds)
+    setTimeout(() => {
+      setPendingMessages((prev) => {
+        if (prev.has(tempId)) {
+          // Message didn't arrive, might have failed
+          // Remove optimistic message if it's still pending
+          setMessages((prevMsgs) => prevMsgs.filter((msg) => msg.tempId !== tempId));
+          const newMap = new Map(prev);
+          newMap.delete(tempId);
+          return newMap;
+        }
+        return prev;
+      });
+    }, 10000);
+    return true;
+  };
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && socket && selectedChat && user?.uid) {
-      const messageContent = message.trim();
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-      // Create optimistic message
-      const optimisticMessage: Message = {
-        id: tempId,
-        conversationId: selectedChat,
-        senderId: user.uid,
-        content: messageContent,
-        isPinned: false,
-        createdAt: new Date(),
-        sender: {
-          id: user.uid,
-          name: user.displayName || user.username || "You",
-          username: user.username || "you",
-        },
-        status: "sent",
-        isOptimistic: true,
-        tempId: tempId,
-      };
-
-      // Add optimistic message immediately
-      setMessages((prev) => [...prev, optimisticMessage]);
-      setPendingMessages((prev) => new Map(prev).set(tempId, optimisticMessage));
-
-      // Scroll to bottom to show the new message
-      setTimeout(() => scrollToBottom(true), 50);
-
-      // Clear input
-      setMessage("");
-
-      // Stop typing indicator
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      socket.emit("typing:stop", { conversationId: selectedChat, userId: user.uid });
-
-      // Send message to server
-      socket.emit("message:send", {
-        conversationId: selectedChat,
-        senderId: user.uid,
-        content: messageContent,
-      });
-
-      // Set timeout to handle potential errors (if message doesn't arrive within 10 seconds)
-      setTimeout(() => {
-        setPendingMessages((prev) => {
-          if (prev.has(tempId)) {
-            // Message didn't arrive, might have failed
-            // Remove optimistic message if it's still pending
-            setMessages((prevMsgs) => prevMsgs.filter((msg) => msg.tempId !== tempId));
-            const newMap = new Map(prev);
-            newMap.delete(tempId);
-            return newMap;
-          }
-          return prev;
-        });
-      }, 10000);
+    // The composer doubles as the edit box, so the same submit does both.
+    if (editingMessage) {
+      saveEdit();
+      return;
     }
+    if (!sendMessage(message, replyingTo)) return;
+    setMessage("");
+    setReplyingTo(null);
   };
 
   const handleEmojiSelect = (emoji: string) => {
     setMessage(message + emoji);
   };
 
+  /**
+   * Pin or unpin, showing the result before the server has answered.
+   *
+   * This used to emit and return. With the socket down nothing happened at
+   * all — no pin, no error, no hint that the tap had been noticed — and even
+   * connected there was a round trip of silence before the ring appeared, so
+   * people tapped twice and pinned it back off again.
+   */
   const handlePinMessage = (messageId: string, currentPinStatus: boolean) => {
-    if (socket) {
-      socket.emit("message:pin", { messageId, isPinned: !currentPinStatus });
-    }
-  };
+    const next = !currentPinStatus;
 
-  // Upload first, then send the message over the socket so attachments go
-  // through the same FaceLink gate and optimistic-update path as text.
-  const uploadAttachment = async (file: File) => {
-    if (!selectedChat || !user?.uid || !socket) return;
-
-    if (file.size > MAX_ATTACHMENT_BYTES) {
+    if (!socket?.connected) {
       toast({
-        title: "File too large",
-        description: `${file.name} is ${formatFileSize(file.size)}. The limit is ${formatFileSize(
-          MAX_ATTACHMENT_BYTES
-        )}.`,
+        title: next ? "Cannot pin right now" : "Cannot unpin right now",
+        description: "You are offline. Reconnect and try again.",
         variant: "destructive",
       });
       return;
     }
 
-    setUploadingAttachment(file.name);
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `/api/conversations/${selectedChat}/attachments?name=${encodeURIComponent(
-          file.name
-        )}&type=${encodeURIComponent(file.type)}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": file.type || "application/octet-stream",
-          },
-          body: file,
-        }
-      );
+    // `message:pinned` comes back to this socket too and overwrites these with
+    // what was actually stored; `message:pin-error` puts them back.
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId
+          ? {
+              ...msg,
+              isPinned: next,
+              pinnedAt: next ? new Date().toISOString() : undefined,
+              pinnedBy: next
+                ? getCurrentParticipantId(selectedConversation) || undefined
+                : undefined,
+            }
+          : msg
+      )
+    );
+    socket.emit("message:pin", { messageId, isPinned: next });
+  };
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Upload failed");
-      }
+  /**
+   * Whether Edit is worth offering.
+   *
+   * Mirrors `canEdit` on the server, which is what actually decides: your own
+   * message, no attachment (its caption would stop describing the file), not
+   * already gone, and still inside the window. An optimistic message has no
+   * id the server would recognise yet, so it waits.
+   */
+  const canEditMessage = (msg: Message, isMine: boolean) =>
+    isMine &&
+    !msg.isOptimistic &&
+    !msg.deletedAt &&
+    !msg.attachment &&
+    Date.now() - new Date(msg.createdAt).getTime() <= EDIT_WINDOW_MS;
 
-      const attachment = await res.json();
-      socket.emit("message:send", {
-        conversationId: selectedChat,
-        senderId: user.uid,
-        // The caption doubles as the list preview, so name the file there.
-        content: file.name,
-        attachment,
-      });
-    } catch (err) {
+  /** Answer a message: the quote sits above the composer until it is sent. */
+  const startReply = (msg: Message) => {
+    setEditingMessage(null);
+    setReplyingTo(msg);
+    focusComposerOnMenuClose.current = true;
+  };
+
+  /** Rewrite one of your own. The composer is loaded with what is there now. */
+  const startEdit = (msg: Message) => {
+    setReplyingTo(null);
+    setEditingMessage(msg);
+    setMessage(msg.content);
+    focusComposerOnMenuClose.current = true;
+  };
+
+  /** Back out of either, leaving the draft as it was before. */
+  const cancelCompose = () => {
+    if (editingMessage) setMessage("");
+    setEditingMessage(null);
+    setReplyingTo(null);
+  };
+
+  const saveEdit = () => {
+    const next = message.trim();
+    if (!editingMessage) return;
+    if (!next) {
       toast({
-        title: "Could not send attachment",
-        description: err instanceof Error ? err.message : "Please try again.",
+        title: "Nothing to save",
+        description: "An empty message is a deleted one — use Delete instead.",
         variant: "destructive",
       });
+      return;
+    }
+    if (next === editingMessage.content) {
+      cancelCompose();
+      return;
+    }
+    if (!socket?.connected) {
+      toast({
+        title: "Cannot edit right now",
+        description: "You are offline. Reconnect and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Shown straight away; `message:edited` confirms it and `message:edit-error`
+    // is where a refusal arrives.
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === editingMessage.id
+          ? { ...msg, content: next, editedAt: new Date().toISOString() }
+          : msg
+      )
+    );
+    socket.emit("message:edit", { messageId: editingMessage.id, content: next });
+    cancelCompose();
+  };
+
+  /**
+   * Take a message back, after asking.
+   *
+   * Deliberately not optimistic, unlike pinning and editing: this one cannot
+   * be undone, and showing it as gone before the server agreed would mean a
+   * message rising from the dead when the answer was no.
+   */
+  const askToDelete = (target: Message) => {
+    setConfirmAction({
+      title: "Delete this message?",
+      description:
+        "It goes for both of you, and any file on it is deleted from storage. This cannot be undone.",
+      confirmLabel: "Delete",
+      run: () => {
+        if (!socket?.connected) {
+          toast({
+            title: "Cannot delete right now",
+            description: "You are offline. Reconnect and try again.",
+            variant: "destructive",
+          });
+          return;
+        }
+        // Editing something that is about to be gone makes no sense.
+        if (editingMessage?.id === target.id) cancelCompose();
+        socket.emit("message:delete", { messageId: target.id });
+      },
+    });
+  };
+
+  /**
+   * Scroll a pinned message into view and mark it, so tapping an entry in the
+   * list goes somewhere instead of merely being readable.
+   */
+  const jumpToMessage = (messageId: string) => {
+    // A photo inside a pile has no row of its own — the message leading the
+    // pile draws all of them — so that is where the jump has to land.
+    const target = photoBombs.folded.get(messageId) ?? messageId;
+    const row = messagesContainerRef.current?.querySelector(
+      `[data-message-id="${CSS.escape(target)}"]`
+    );
+    if (!row) {
+      // It is pinned but older than the page that is loaded.
+      toast({
+        title: "Further up the conversation",
+        description: "Scroll back to load that message.",
+      });
+      return;
+    }
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(target);
+    window.setTimeout(() => {
+      setHighlightedMessageId((current) => (current === target ? null : current));
+    }, 1600);
+  };
+
+  // Upload first, then send the message over the socket so attachments go
+  // through the same FaceLink gate and optimistic-update path as text.
+  //
+  // The endpoint takes one file per request (raw body, no multipart parser), so
+  // a batch is a sequence of these. Throws so the batch driver can report which
+  // files did not make it.
+  const uploadOneAttachment = async (file: File, conversationId: string, senderUid: string) => {
+    const token = await getToken();
+    const res = await fetch(
+      `/api/conversations/${conversationId}/attachments?name=${encodeURIComponent(
+        file.name
+      )}&type=${encodeURIComponent(file.type)}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      }
+    );
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Upload failed");
+    }
+
+    const attachment = await res.json();
+    socket!.emit("message:send", {
+      conversationId,
+      senderId: senderUid,
+      // The caption doubles as the list preview, so name the file there.
+      content: file.name,
+      attachment,
+    });
+  };
+
+  // Send every file the picker handed back. One at a time, so the messages
+  // arrive in the order they were chosen and the rate limiter is not hammered.
+  const uploadAttachments = async (picked: File[]) => {
+    if (!selectedChat || !user?.uid || !socket || picked.length === 0) return;
+
+    const conversationId = selectedChat;
+    const senderUid = user.uid;
+
+    const wrongType = picked.filter((f) => !ACCEPTED_MIME.has(f.type));
+    const supported = picked.filter((f) => ACCEPTED_MIME.has(f.type));
+    const tooBig = supported.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
+    let queue = supported.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
+
+    const overflow = Math.max(0, queue.length - MAX_ATTACHMENTS_PER_BATCH);
+    queue = queue.slice(0, MAX_ATTACHMENTS_PER_BATCH);
+
+    // One notice for everything being skipped, rather than a toast per file.
+    const skipped = [
+      ...wrongType.map((f) => `${f.name} (${f.type || "unknown type"})`),
+      ...tooBig.map((f) => `${f.name} (${formatFileSize(f.size)})`),
+      ...(overflow > 0 ? [`${overflow} more over the limit of ${MAX_ATTACHMENTS_PER_BATCH}`] : []),
+    ];
+    if (skipped.length > 0) {
+      toast({
+        title: wrongType.length > 0 ? "Some files were not supported" : "Some files were skipped",
+        description: `Not sent: ${skipped.join(", ")}. Images, PDFs, documents and zips up to ${formatFileSize(
+          MAX_ATTACHMENT_BYTES
+        )} each.`,
+        variant: "destructive",
+      });
+    }
+    if (queue.length === 0) return;
+
+    const failed: string[] = [];
+    try {
+      for (let i = 0; i < queue.length; i++) {
+        const file = queue[i];
+        setUploadingAttachment({ name: file.name, index: i + 1, total: queue.length });
+        try {
+          await uploadOneAttachment(file, conversationId, senderUid);
+        } catch (err) {
+          // One bad file should not drop the rest of the selection.
+          console.error("Attachment upload failed", file.name, err);
+          failed.push(file.name);
+        }
+      }
     } finally {
       setUploadingAttachment(null);
+    }
+
+    if (failed.length > 0) {
+      toast({
+        title: failed.length === queue.length ? "Could not send attachments" : "Some files failed",
+        description: `${failed.join(", ")} did not send. Please try again.`,
+        variant: "destructive",
+      });
     }
   };
 
   const handleFilePicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     // Reset so picking the same file twice still fires a change event.
     event.target.value = "";
-    if (file) void uploadAttachment(file);
+    if (files.length > 0) void uploadAttachments(files);
+  };
+
+  /** A drag carrying files, as opposed to dragged text or a link. */
+  const dragHasFiles = (event: React.DragEvent) =>
+    Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
+  const handleDragEnter = (event: React.DragEvent) => {
+    if (!canAttach || !dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDraggingFiles(true);
+  };
+
+  const handleDragOver = (event: React.DragEvent) => {
+    if (!canAttach || !dragHasFiles(event)) return;
+    // Without this the browser navigates to the dropped file instead.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragLeave = (event: React.DragEvent) => {
+    if (!canAttach || !dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDraggingFiles(false);
+  };
+
+  const handleDrop = (event: React.DragEvent) => {
+    if (!canAttach || !dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDraggingFiles(false);
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length > 0) void uploadAttachments(files);
+  };
+
+  // Paste an image straight into the composer. Only takes over when the
+  // clipboard actually carries files — pasting text has to keep working.
+  const handlePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    if (!canAttach) return;
+    const files = Array.from(event.clipboardData?.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void uploadAttachments(files);
   };
 
   const handleStartConversation = async (userId: string) => {
@@ -1080,6 +1690,18 @@ export default function Chats() {
         // Fallback to allowing chat creation if discovery fails
       } else {
         const discoveryData = await discoveryRes.json();
+
+        if (discoveryData.status === "blocked") {
+          // One of them blocked the other. The conversation POST below would
+          // refuse this anyway, with a message about discovering each other
+          // that does not describe what happened.
+          toast({
+            variant: "destructive",
+            title: "Messaging Locked",
+            description: "You cannot message this user.",
+          });
+          return;
+        }
 
         if (discoveryData.status === "discovered" && !discoveryData.messagingUnlocked) {
           // SHOW LOCKED UI - User A has discovered B, but B hasn't discovered A yet.
@@ -1216,6 +1838,138 @@ export default function Chats() {
     conversations.find((c) => c.id === selectedChat) ||
     (newConversation?.id === selectedChat ? newConversation : null);
 
+  /**
+   * The open ghost chat's deadline, held apart from the conversation itself.
+   *
+   * The server drops an expired ghost from the conversation list, and the list
+   * refreshes on a poll — so the row can disappear a moment BEFORE the
+   * countdown here reaches zero. Reading the deadline off `selectedConversation`
+   * meant it went null at that point, the countdown never finished, and the
+   * chat simply evaporated into "Select a conversation" with nothing said.
+   * Remembering it lets the timer finish and the explanation appear.
+   */
+  const [ghostDeadline, setGhostDeadline] = useState<{ chatId: string; at: number } | null>(null);
+
+  useEffect(() => {
+    if (!selectedChat || !selectedConversation?.isGhost || !selectedConversation.destructAt) return;
+    const at = new Date(selectedConversation.destructAt).getTime();
+    setGhostDeadline((prev) =>
+      prev?.chatId === selectedChat && prev.at === at ? prev : { chatId: selectedChat, at }
+    );
+  }, [selectedChat, selectedConversation?.isGhost, selectedConversation?.destructAt]);
+
+  const activeGhost = ghostDeadline?.chatId === selectedChat ? ghostDeadline : null;
+
+  // Ticks once a second so the countdown stays live. This is only the part
+  // people can see — the server destroys the chat whether or not anybody has
+  // this page open, and refuses it on read once the time has passed.
+  const [ghostNow, setGhostNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!activeGhost) return;
+    const timer = setInterval(() => setGhostNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [activeGhost]);
+
+  const ghostMsLeft = activeGhost ? Math.max(0, activeGhost.at - ghostNow) : null;
+  const ghostVanished = ghostMsLeft !== null && ghostMsLeft <= 0;
+
+  /**
+   * The ghost chat that just went, kept after its row has gone.
+   *
+   * Refreshing the list is what removes the conversation, and with it
+   * `selectedConversation` — so a panel that depended on the conversation
+   * still existing would be unmounted in the same tick and the person would
+   * land on "Select a conversation" with no idea what happened. Holding the id
+   * lets the explanation stay on screen until they leave it themselves.
+   */
+  const [vanishedChatId, setVanishedChatId] = useState<string | null>(null);
+
+  /**
+   * What the destruction took, when the server got to tell us.
+   *
+   * The server counts this as it erases and has always thrown the number
+   * away. Showing it is the only moment the promise is demonstrated rather
+   * than asserted. Null when the local countdown got there first and the
+   * broadcast has not arrived yet, so the notice reads without it.
+   */
+  const [ghostErased, setGhostErased] = useState<{
+    chatId: string;
+    messages: number;
+    attachments: number;
+  } | null>(null);
+
+  const [isDestroyingGhost, setIsDestroyingGhost] = useState(false);
+
+  /**
+   * What to say once a ghost chat has gone.
+   *
+   * There are two places this appears — a panel where the conversation's row
+   * used to be, and an overlay for when the countdown reaches zero with the
+   * thread still open — and they have to say the same thing. The counts are
+   * only there when the server got to send them, which it cannot do if the
+   * local clock arrived first.
+   */
+  const ghostVanishedCopy = (() => {
+    const erased = ghostErased?.chatId === selectedChat ? ghostErased : null;
+    if (!erased)
+      return "The messages and any files are deleted. There is no history to go back to.";
+    const messages = `${erased.messages} ${erased.messages === 1 ? "message" : "messages"}`;
+    const files =
+      erased.attachments > 0
+        ? ` and ${erased.attachments} ${erased.attachments === 1 ? "file" : "files"}`
+        : "";
+    return `${messages}${files} erased. There is no history to go back to.`;
+  })();
+
+  // Once it goes, drop it from the list rather than leaving a dead row behind.
+  useEffect(() => {
+    if (!ghostVanished || !selectedChat) return;
+    setVanishedChatId(selectedChat);
+    setMessages([]);
+    queryClient.setQueryData<Conversation[]>(["/api/conversations"], (old) =>
+      old ? old.filter((c) => c.id !== selectedChat) : old
+    );
+    queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+  }, [ghostVanished, selectedChat, queryClient]);
+
+  /**
+   * The server telling us a ghost chat is gone.
+   *
+   * The countdown above would get there on its own, but it runs on this
+   * browser's clock and the messages are already drawn on screen. This is the
+   * moment the server actually destroyed them, so clear the thread then —
+   * whatever the local clock thinks.
+   */
+  useEffect(() => {
+    if (!socket) return;
+    const onVanished = ({
+      conversationId,
+      erased,
+    }: {
+      conversationId: string;
+      erased?: { messages: number; attachments: number };
+    }) => {
+      if (conversationId === selectedChat) {
+        setVanishedChatId(conversationId);
+        setMessages([]);
+        if (erased) setGhostErased({ chatId: conversationId, ...erased });
+      }
+      // Drop the row outright rather than only asking for a refetch. The list
+      // is cached server-side for a few seconds, so a refetch fired at this
+      // moment can come back still holding the conversation — and a list row
+      // carries a preview of its last message, which is the one thing a chat
+      // that just erased itself must not leave behind.
+      queryClient.setQueryData<Conversation[]>(["/api/conversations"], (old) =>
+        old ? old.filter((c) => c.id !== conversationId) : old
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+    };
+    socket.on("conversation:vanished", onVanished);
+    return () => {
+      socket.off("conversation:vanished", onVanished);
+    };
+  }, [socket, selectedChat, queryClient]);
+
   // What the other person chose to show: whatever they filled in on their own
   // profile page, and nothing more. The endpoint returns these fields only.
   const { data: viewedProfile, isLoading: profileLoading } = useQuery<ViewedProfile>({
@@ -1230,7 +1984,61 @@ export default function Chats() {
       return res.json();
     },
   });
-  const pinnedMessages = messages.filter((m) => m.isPinned);
+  // The other person in a 1-on-1 thread. Groups have no single counterpart, so
+  // block and unblock are offered on direct conversations only.
+  const otherParticipant =
+    selectedConversation && !selectedConversation.isGroup
+      ? (selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid) ?? null)
+      : null;
+
+  // Whether this pair is blocked, and whether this account is the one holding
+  // the block. Without this the header offered "Block User" to someone who had
+  // already blocked the other person, and offered no way back.
+  const { data: connectionStatus, refetch: refetchConnectionStatus } = useQuery<{
+    status: "connected" | "discovered" | "blocked" | "none";
+    messagingUnlocked: boolean;
+    blockedByMe?: boolean;
+    canUnblock?: boolean;
+  }>({
+    queryKey: ["connectionStatus", otherParticipant?.id],
+    enabled: !!otherParticipant?.id,
+    queryFn: async () => {
+      const token = await getToken();
+      const res = await fetch(`/api/discovery/status/${otherParticipant!.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to load connection status");
+      return res.json();
+    },
+  });
+
+  const isBlocked = connectionStatus?.status === "blocked";
+  const canUnblock = isBlocked && !!connectionStatus?.canUnblock;
+  // Drop and paste are refused for the same reasons the composer is hidden.
+  const canAttach = !!selectedChat && !isBlocked;
+
+  /**
+   * Every pinned message, newest pin first.
+   *
+   * The bar this replaced rendered `pinnedMessages[0].content` and nothing
+   * else, so pinning a second message made the first one vanish from view
+   * while staying pinned — there was no count, no list, and no way to reach
+   * or unpin anything but whichever one happened to sort first.
+   *
+   * Pins made before `pinnedAt` was recorded fall back to when the message
+   * itself was sent, so they still take a sensible place in the order.
+   */
+  const pinnedMessages = useMemo(() => {
+    const when = (m: Message) => new Date(m.pinnedAt ?? m.createdAt).getTime();
+    return messages.filter((m) => m.isPinned).sort((a, b) => when(b) - when(a));
+  }, [messages]);
+
+  /** The name to put against a pin: the other person's, or "you". */
+  const pinnerName = (pinnedBy?: string) => {
+    if (!pinnedBy) return null;
+    if (pinnedBy === getCurrentParticipantId(selectedConversation)) return "you";
+    return selectedConversation?.participants.find((p) => p.id === pinnedBy)?.name ?? null;
+  };
 
   // selectedChat is restored from localStorage, so it can point at a
   // conversation this account cannot see — after signing in as someone else,
@@ -1238,11 +2046,16 @@ export default function Chats() {
   // stale id hid the list *and* the thread and left a blank screen.
   useEffect(() => {
     if (!selectedChat || isLoadingConversations || selectedConversation) return;
+    // A GhostLink chat keeps its slot. Its row is dropped from the list the
+    // moment it expires, and clearing the selection here would swap the
+    // countdown — and then the message saying it vanished — for an empty pane
+    // before anybody could read either.
+    if (ghostDeadline?.chatId === selectedChat) return;
     setSelectedChat(null);
     if (typeof window !== "undefined") {
       localStorage.removeItem("facechat_selected_chat");
     }
-  }, [selectedChat, selectedConversation, isLoadingConversations]);
+  }, [selectedChat, selectedConversation, isLoadingConversations, ghostDeadline]);
 
   // Clear newConversation once it appears in the conversations list
   useEffect(() => {
@@ -1316,7 +2129,7 @@ export default function Chats() {
     return null;
   };
 
-  const formatTime = (date: Date) => {
+  const formatTime = (date: Date | string) => {
     const d = new Date(date);
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
@@ -1500,17 +2313,24 @@ export default function Chats() {
   };
 
   const handleBlockUser = () => {
-    if (!selectedConversation) return;
-
-    // Find the other user
-    const otherUser = selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid);
-    if (!otherUser) return;
+    if (!otherParticipant) return;
 
     setConfirmAction({
-      title: `Block ${otherUser.name}?`,
-      description: `You will no longer receive messages from ${otherUser.name}, and they cannot start a call with you.`,
+      title: `Block ${otherParticipant.name}?`,
+      description: `You will no longer receive messages from ${otherParticipant.name}, and they cannot start a call with you. You can unblock them from this menu.`,
       confirmLabel: "Block",
-      run: () => blockUser(otherUser.id, otherUser.name),
+      run: () => blockUser(otherParticipant.id, otherParticipant.name),
+    });
+  };
+
+  const handleUnblockUser = () => {
+    if (!otherParticipant) return;
+
+    setConfirmAction({
+      title: `Unblock ${otherParticipant.name}?`,
+      description: `${otherParticipant.name} will be able to message and call you again.`,
+      confirmLabel: "Unblock",
+      run: () => unblockUser(otherParticipant.id, otherParticipant.name),
     });
   };
 
@@ -1530,9 +2350,10 @@ export default function Chats() {
           title: "User Blocked",
           description: `You have blocked ${otherUserName}.`,
         });
-        // Optionally remove the chat or refresh
-        await refetchConversations();
-        setSelectedChat(null);
+        // Keep the thread open and let the header and composer show the block.
+        // Closing it used to look like the conversation had been deleted, and
+        // left no way to find the person again to unblock them.
+        await Promise.all([refetchConversations(), refetchConnectionStatus()]);
       } else {
         throw new Error("Failed to block user");
       }
@@ -1546,13 +2367,49 @@ export default function Chats() {
     }
   };
 
-  const getMessageBubbleClasses = (isMine: boolean, isPinned: boolean) => {
+  const unblockUser = async (otherUserId: string, otherUserName: string) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`/api/discovery/block/${otherUserId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to unblock user");
+      }
+
+      const body = (await res.json()) as { messagingUnlocked?: boolean };
+      toast({
+        title: "User Unblocked",
+        description: body.messagingUnlocked
+          ? `You and ${otherUserName} can message each other again.`
+          : `${otherUserName} is unblocked. You will need to discover each other again to chat.`,
+      });
+      await Promise.all([refetchConversations(), refetchConnectionStatus()]);
+    } catch (err) {
+      console.error("Failed to unblock user", err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to unblock user.",
+      });
+    }
+  };
+
+  const getMessageBubbleClasses = (isMine: boolean, isPinned: boolean, isHighlighted = false) => {
     const base = isMine
       ? "bg-primary/15 text-primary dark:text-primary-foreground border border-primary/20"
       : "bg-muted/50 text-foreground border border-border/60";
 
     const pinned = isPinned ? " ring-2 ring-chart-2/40" : "";
-    return `rounded-2xl px-5 py-3 ${base}${pinned}`;
+    // Briefly, after jumping here from the pinned list, so the eye lands on
+    // the right bubble rather than somewhere near it.
+    const jumped = isHighlighted ? " ring-2 ring-primary ring-offset-2 ring-offset-background" : "";
+    return `rounded-2xl px-5 py-3 transition-shadow ${base}${pinned}${jumped}`;
   };
 
   return (
@@ -1562,7 +2419,7 @@ export default function Chats() {
         <div
           className={`${selectedChat ? "hidden md:flex" : "flex"} w-full md:w-80 border-r border-border flex-col bg-muted/40 backdrop-blur-sm h-full`}
         >
-          <div className="p-4 border-b border-border">
+          <div className="p-4 border-b border-border space-y-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1572,6 +2429,15 @@ export default function Chats() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+
+            {/* A GhostLink is most often wanted mid-conversation, so it is
+                offered here rather than only on the profile page. */}
+            <GhostLinkDialog>
+              <Button variant="outline" size="sm" className="w-full gap-2">
+                <Ghost className="h-4 w-4" aria-hidden="true" />
+                New GhostLink
+              </Button>
+            </GhostLinkDialog>
           </div>
 
           <ScrollArea className="flex-1">
@@ -1715,7 +2581,13 @@ export default function Chats() {
                             const isMine = conv.lastMessage
                               ? isMessageFromMe(conv.lastMessage, conv)
                               : false;
-                            return `${isMine ? "You: " : ""}${conv.lastMessage.content}`;
+                            // A deleted last message has no text left, so this
+                            // read as a blank row rather than as anything.
+                            if (conv.lastMessage.deletedAt) return "Message deleted";
+                            // The raw content is the file name on an upload;
+                            // the same rules the pinned list reads it by.
+                            const preview = describeMessage(conv.lastMessage).label;
+                            return `${isMine ? "You: " : ""}${preview}`;
                           })()}
                         </p>
                       </div>
@@ -1748,10 +2620,44 @@ export default function Chats() {
         </div>
 
         {/* Chat Area */}
-        {selectedChat && selectedConversation ? (
+        {vanishedChatId && selectedChat === vanishedChatId ? (
+          <div className="flex flex-1 flex-col items-center justify-center bg-transparent w-full h-full px-6 text-center">
+            <span className="text-5xl mb-3" aria-hidden="true">
+              👻
+            </span>
+            <p className="text-lg font-semibold">This chat has vanished</p>
+            <p className="text-sm text-muted-foreground max-w-xs mt-1">{ghostVanishedCopy}</p>
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() => {
+                setVanishedChatId(null);
+                setSelectedChat(null);
+              }}
+            >
+              Back to chats
+            </Button>
+          </div>
+        ) : selectedChat && selectedConversation ? (
           <div
             className={`${!selectedChat ? "hidden md:flex" : "flex"} flex-1 flex-col bg-transparent relative w-full h-full`}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
           >
+            {isDraggingFiles && (
+              <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-background/80 backdrop-blur-sm pointer-events-none">
+                <div className="flex flex-col items-center gap-2 text-center px-6">
+                  <Paperclip className="h-8 w-8 text-primary" />
+                  <p className="font-semibold text-foreground">Drop to send</p>
+                  <p className="text-sm text-muted-foreground">
+                    Up to {MAX_ATTACHMENTS_PER_BATCH} files, {formatFileSize(MAX_ATTACHMENT_BYTES)}{" "}
+                    each
+                  </p>
+                </div>
+              </div>
+            )}
             {/* Chat Header */}
             <div className="p-4 border-b border-border bg-muted/40 backdrop-blur-sm flex items-center justify-between z-10 shrink-0">
               <div className="flex items-center gap-3">
@@ -1863,26 +2769,173 @@ export default function Chats() {
                       <LogOut className="w-4 h-4 mr-2" />
                       Clear Chat
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator className="bg-accent" />
-                    <DropdownMenuItem
-                      className="cursor-pointer text-destructive focus:text-destructive"
-                      onClick={handleBlockUser}
-                    >
-                      <Lock className="w-4 h-4 mr-2" />
-                      Block User
-                    </DropdownMenuItem>
+                    {!selectedConversation.isGroup && (
+                      <>
+                        <DropdownMenuSeparator className="bg-accent" />
+                        {isBlocked ? (
+                          <DropdownMenuItem
+                            className="cursor-pointer"
+                            disabled={!canUnblock}
+                            onClick={handleUnblockUser}
+                          >
+                            <Unlock className="w-4 h-4 mr-2" />
+                            {canUnblock ? "Unblock User" : "Blocked by them"}
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem
+                            className="cursor-pointer text-destructive focus:text-destructive"
+                            onClick={handleBlockUser}
+                          >
+                            <Lock className="w-4 h-4 mr-2" />
+                            Block User
+                          </DropdownMenuItem>
+                        )}
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
             </div>
 
-            {pinnedMessages.length > 0 && (
-              <div className="px-4 py-2 bg-muted/40 border-b border-border backdrop-blur-sm">
-                <div className="flex items-center gap-2 text-sm">
-                  <Pin className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Pinned:</span>
-                  <span className="truncate">{pinnedMessages[0].content}</span>
+            {ghostMsLeft !== null && !ghostVanished && (
+              <div className="px-4 py-2 border-b border-border bg-muted/40 backdrop-blur-sm">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="flex items-center gap-2 font-medium">
+                    <span aria-hidden="true">👻</span>
+                    Self-destructs in{" "}
+                    <span className="tabular-nums" aria-live="off">
+                      {String(Math.floor(ghostMsLeft / 60000)).padStart(2, "0")}:
+                      {String(Math.floor((ghostMsLeft % 60000) / 1000)).padStart(2, "0")}
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground hidden sm:inline">
+                      They can still screenshot this
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isDestroyingGhost}
+                      className="h-7 gap-1.5 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() =>
+                        setConfirmAction({
+                          title: "End this chat now?",
+                          description:
+                            "Every message and file in it is erased for both of you, straight away. There is no history to go back to.",
+                          confirmLabel: "Erase it",
+                          run: destroyGhostNow,
+                        })
+                      }
+                    >
+                      {isDestroyingGhost ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Flame className="h-3.5 w-3.5" aria-hidden="true" />
+                      )}
+                      Destroy now
+                    </Button>
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {ghostVanished && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/95 backdrop-blur-sm">
+                <div className="flex flex-col items-center gap-3 text-center px-6">
+                  <span className="text-5xl" aria-hidden="true">
+                    👻
+                  </span>
+                  <p className="text-lg font-semibold">This chat has vanished</p>
+                  <p className="text-sm text-muted-foreground max-w-xs">{ghostVanishedCopy}</p>
+                  <Button
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => {
+                      setSelectedChat(null);
+                      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+                    }}
+                  >
+                    Back to chats
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {pinnedMessages.length > 0 && (
+              <div className="border-b border-border bg-muted/40 backdrop-blur-sm">
+                {/* Collapsed, this is the newest pin and a count. The whole row
+                    is the toggle, because on a phone a chevron-sized target is
+                    the difference between opening it and missing. */}
+                <button
+                  type="button"
+                  onClick={() => setIsPinnedListOpen((open) => !open)}
+                  aria-expanded={isPinnedListOpen}
+                  className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                >
+                  <Pin className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="shrink-0 font-medium text-muted-foreground">
+                    {pinnedMessages.length} pinned
+                  </span>
+                  {!isPinnedListOpen && (
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                      {describeMessage(pinnedMessages[0]).label}
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                      isPinnedListOpen ? "rotate-180" : ""
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+
+                {isPinnedListOpen && (
+                  <ul className="max-h-48 overflow-y-auto border-t border-border/60 px-2 pb-2">
+                    {pinnedMessages.map((pinned) => {
+                      const preview = describeMessage(pinned);
+                      const by = pinnerName(pinned.pinnedBy);
+                      const PreviewIcon =
+                        preview.kind === "photo"
+                          ? ImageIcon
+                          : preview.kind === "file"
+                            ? FileText
+                            : MessageSquare;
+                      return (
+                        <li key={pinned.id} className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => jumpToMessage(pinned.id)}
+                            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <PreviewIcon
+                              className="h-4 w-4 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm">{preview.label}</span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {/* The file name earns its place only when the
+                                    line above is a caption rather than the name. */}
+                                {[preview.detail, by && `Pinned by ${by}`]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </span>
+                            </span>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => handlePinMessage(pinned.id, true)}
+                            aria-label={`Unpin ${preview.label}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             )}
 
@@ -1920,15 +2973,43 @@ export default function Chats() {
                     );
                   }
 
+                  // Everything after the first photo of a burst is drawn by
+                  // the stack on that first message.
+                  if (photoBombs.folded.has(msg.id)) return null;
+                  const bomb = photoBombs.leads.get(msg.id);
+
                   const isMe = isMessageFromMe(msg, selectedConversation);
+
+                  // A stack shows one tick for the whole burst, so it reports
+                  // the least-advanced state in it rather than the first
+                  // photo's — four photos are not "Seen" while one is sending.
+                  const rank = { sent: 0, delivered: 1, seen: 2 } as const;
+                  const group = bomb?.members ?? [msg];
+                  const displayStatus = group.reduce<Message["status"]>(
+                    (worst, m) =>
+                      !m.status || !worst || rank[m.status] < rank[worst] ? m.status : worst,
+                    group[0].status
+                  );
+                  const displayOptimistic = group.some((m) => m.isOptimistic);
+
                   // Marked for the read-receipt observer: only somebody else's
-                  // message, and only while it is still unread.
-                  const needsSeenReport = !isMe && msg.status !== "seen" && !msg.isOptimistic;
+                  // messages, and only those still unread.
+                  const unreadIds = group
+                    .filter(
+                      (m) =>
+                        !isMessageFromMe(m, selectedConversation) &&
+                        m.status !== "seen" &&
+                        !m.isOptimistic
+                    )
+                    .map((m) => m.id);
+                  const needsSeenReport = unreadIds.length > 0;
                   return (
                     <div
                       key={msg.id}
                       data-message-id={msg.id}
-                      {...(needsSeenReport ? { "data-unread-message": "true" } : {})}
+                      {...(needsSeenReport
+                        ? { "data-unread-message": "true", "data-unread-ids": unreadIds.join(",") }
+                        : {})}
                       className={`flex gap-3 group/message ${isMe ? "flex-row-reverse" : ""}`}
                     >
                       {!isMe && (
@@ -1964,19 +3045,58 @@ export default function Chats() {
                           </span>
                         )}
                         <div className="relative">
-                          <div className={getMessageBubbleClasses(isMe, msg.isPinned)}>
-                            {msg.attachment && (
-                              <ChatAttachment
-                                attachment={msg.attachment}
-                                conversationId={msg.conversationId}
+                          <div
+                            className={getMessageBubbleClasses(
+                              isMe,
+                              bomb ? false : msg.isPinned,
+                              highlightedMessageId === msg.id
+                            )}
+                          >
+                            {/* What it answers, above what it says. Tapping it
+                                goes there, the same jump the pinned list makes. */}
+                            {msg.replyTo && !msg.deletedAt && (
+                              <ReplyQuoteBlock
+                                quote={msg.replyTo}
+                                isMine={isMe}
+                                onJump={jumpToMessage}
                               />
                             )}
-                            {/* An attachment's caption defaults to its file name,
-                                which the card above already shows. */}
-                            {!(msg.attachment && msg.content === msg.attachment.name) && (
-                              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                                {msg.content}
+
+                            {msg.deletedAt ? (
+                              // The row stays so the thread does not reshuffle
+                              // under everyone; there is simply nothing in it.
+                              <p className="flex items-center gap-2 text-sm italic text-muted-foreground">
+                                <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                {isMe ? "You deleted this message" : "This message was deleted"}
                               </p>
+                            ) : (
+                              <>
+                                {bomb ? (
+                                  <PhotoBombStack
+                                    photos={bomb.members.map((m) => ({
+                                      messageId: m.id,
+                                      attachment: m.attachment!,
+                                      isPinned: m.isPinned,
+                                    }))}
+                                    conversationId={msg.conversationId}
+                                  />
+                                ) : (
+                                  msg.attachment && (
+                                    <ChatAttachment
+                                      attachment={msg.attachment}
+                                      conversationId={msg.conversationId}
+                                    />
+                                  )
+                                )}
+                                {/* An attachment's caption defaults to its file
+                                    name, which the card above already shows. */}
+                                {!bomb &&
+                                  !(msg.attachment && msg.content === msg.attachment.name) && (
+                                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                      {msg.content}
+                                    </p>
+                                  )}
+                              </>
                             )}
                             <div
                               className={`mt-3 flex items-center justify-end gap-2 text-[11px] font-medium ${
@@ -1985,55 +3105,152 @@ export default function Chats() {
                                   : "text-muted-foreground/80"
                               }`}
                             >
+                              {msg.editedAt && !msg.deletedAt && (
+                                // Said plainly rather than hidden in a tooltip:
+                                // the other person is entitled to know the words
+                                // they are reading are not the ones that arrived.
+                                <span title={`Edited ${formatTime(msg.editedAt)}`}>edited</span>
+                              )}
                               <span>{formatTime(msg.createdAt)}</span>
-                              {isMe && msg.status && (
+                              {isMe && displayStatus && (
                                 <span
                                   className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                                    msg.isOptimistic
+                                    displayOptimistic
                                       ? "bg-muted/50 text-muted-foreground/70 opacity-70"
-                                      : msg.status === "seen"
+                                      : displayStatus === "seen"
                                         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                                        : msg.status === "delivered"
+                                        : displayStatus === "delivered"
                                           ? "bg-sky-500/15 text-sky-600 dark:text-sky-300"
                                           : "bg-muted text-muted-foreground"
                                   }`}
                                 >
-                                  {msg.status === "seen" && (
+                                  {displayStatus === "seen" && (
                                     <>
                                       <CheckCheck className="h-3 w-3" />
                                       Seen
                                     </>
                                   )}
-                                  {msg.status === "delivered" && (
+                                  {displayStatus === "delivered" && (
                                     <>
                                       <CheckCheck className="h-3 w-3" />
                                       Delivered
                                     </>
                                   )}
-                                  {msg.status === "sent" && (
+                                  {displayStatus === "sent" && (
                                     <>
                                       <Check className="h-3 w-3" />
-                                      {msg.isOptimistic ? "Sending..." : "Sent"}
+                                      {displayOptimistic ? "Sending..." : "Sent"}
                                     </>
                                   )}
                                 </span>
                               )}
                             </div>
                           </div>
-                          <div
-                            className={`absolute -top-2 opacity-0 group-hover/message:opacity-100 transition-opacity ${
-                              isMe ? "left-0 -ml-8" : "right-0 -mr-8"
-                            }`}
-                          >
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 hover:bg-accent"
-                              onClick={() => handlePinMessage(msg.id, msg.isPinned)}
+                          {/* A thread stays in the timeline as well as in the
+                              panel, so this is a way into the same messages
+                              rather than somewhere they have been moved to. */}
+                          {!msg.deletedAt && (msg.replyCount ?? 0) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setOpenThreadRoot(msg.id)}
+                              className="mt-1 flex items-center gap-1 rounded text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
-                              <Pin className={`h-3 w-3 ${msg.isPinned ? "fill-current" : ""}`} />
-                            </Button>
-                          </div>
+                              <MessagesSquare className="h-3 w-3" aria-hidden="true" />
+                              {msg.replyCount === 1 ? "1 reply" : `${msg.replyCount} replies`}
+                            </button>
+                          )}
+                          {/* Hover alone used to govern this, which meant the
+                              control did not exist on a touch screen: there
+                              was no way to pin, reply, edit or delete anything
+                              from a phone at all. It is always there below md,
+                              and still appears on hover or focus on a pointer
+                              device. Nothing is offered on a tombstone — there
+                              is nothing left to act on. */}
+                          {!msg.deletedAt && (
+                            <div
+                              className={`absolute -top-2 transition-opacity md:opacity-0 md:group-hover/message:opacity-100 md:focus-within:opacity-100 ${
+                                isMe ? "left-0 -ml-8" : "right-0 -mr-8"
+                              }`}
+                            >
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={`h-6 w-6 hover:bg-accent ${
+                                      msg.isPinned ? "text-chart-2" : "text-muted-foreground"
+                                    }`}
+                                    aria-label={`Actions for ${describeMessage(msg).label}`}
+                                  >
+                                    {msg.isPinned ? (
+                                      <Pin className="h-3 w-3 fill-current" />
+                                    ) : (
+                                      <MoreHorizontal className="h-3 w-3" />
+                                    )}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align={isMe ? "start" : "end"}
+                                  className="w-44"
+                                  onCloseAutoFocus={(event) => {
+                                    // Only when Reply or Edit asked for it.
+                                    // Otherwise the menu keeps its own
+                                    // behaviour and focus returns to the
+                                    // trigger, where a keyboard user expects
+                                    // to find it.
+                                    if (!focusComposerOnMenuClose.current) return;
+                                    focusComposerOnMenuClose.current = false;
+                                    event.preventDefault();
+                                    composerRef.current?.focus();
+                                  }}
+                                >
+                                  <DropdownMenuItem onClick={() => startReply(msg)}>
+                                    <Reply className="mr-2 h-4 w-4" />
+                                    Reply
+                                  </DropdownMenuItem>
+                                  {/* A reply buried a few levels down is the
+                                      hardest place from which to see what the
+                                      side conversation actually was. */}
+                                  {msg.threadRoot && (
+                                    <DropdownMenuItem
+                                      onClick={() => setOpenThreadRoot(msg.threadRoot!)}
+                                    >
+                                      <MessagesSquare className="mr-2 h-4 w-4" />
+                                      View thread
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem
+                                    onClick={() => handlePinMessage(msg.id, msg.isPinned)}
+                                  >
+                                    {msg.isPinned ? (
+                                      <PinOff className="mr-2 h-4 w-4" />
+                                    ) : (
+                                      <Pin className="mr-2 h-4 w-4" />
+                                    )}
+                                    {msg.isPinned ? "Unpin" : "Pin"}
+                                  </DropdownMenuItem>
+                                  {canEditMessage(msg, isMe) && (
+                                    <DropdownMenuItem onClick={() => startEdit(msg)}>
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                  )}
+                                  {isMe && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={() => askToDelete(msg)}
+                                        className="text-destructive focus:text-destructive"
+                                      >
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2062,100 +3279,168 @@ export default function Chats() {
               </div>
             )}
 
-            <div className="p-4 border-t border-border bg-card/60 backdrop-blur-sm">
-              {uploadingAttachment && (
-                <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span className="truncate">Uploading {uploadingAttachment}…</span>
+            {isBlocked ? (
+              <div className="p-4 border-t border-border bg-card/60 backdrop-blur-sm">
+                <div className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  <Lock className="h-4 w-4 shrink-0" />
+                  <span>
+                    {canUnblock
+                      ? `You blocked ${otherParticipant?.name ?? "this user"}. Unblock them to send messages.`
+                      : "Messaging is locked for this conversation."}
+                  </span>
                 </div>
-              )}
-              <form
-                onSubmit={handleSendMessage}
-                className="relative flex items-end gap-2 p-2 rounded-2xl bg-background border border-border shadow-sm"
-              >
-                <div className="flex-1 flex flex-col gap-2">
-                  <div className="relative">
-                    <Input
-                      placeholder="Type a message..."
-                      value={message}
-                      onChange={(e) => handleTyping(e.target.value)}
-                      className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
-                    />
-                    <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept={FILE_ACCEPT}
-                        className="hidden"
-                        onChange={handleFilePicked}
+              </div>
+            ) : (
+              <div className="p-4 border-t border-border bg-card/60 backdrop-blur-sm">
+                {uploadingAttachment && (
+                  <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span className="truncate">
+                      {uploadingAttachment.total > 1
+                        ? `Uploading ${uploadingAttachment.index} of ${uploadingAttachment.total} — ${uploadingAttachment.name}…`
+                        : `Uploading ${uploadingAttachment.name}…`}
+                    </span>
+                  </div>
+                )}
+                {/* What the composer is about to do, when it is not simply
+                    sending something new. Without this the box silently
+                    changes meaning — you would type into what looks like a
+                    fresh message and overwrite an old one. */}
+                {(replyingTo || editingMessage) && (
+                  <div className="mb-2 flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2">
+                    {editingMessage ? (
+                      <Pencil className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Reply className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-muted-foreground">
+                        {editingMessage
+                          ? "Editing your message"
+                          : `Replying to ${replyingTo!.sender.name}`}
+                      </p>
+                      <p className="truncate text-sm">
+                        {describeMessage(editingMessage ?? replyingTo!).label}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={cancelCompose}
+                      aria-label={editingMessage ? "Stop editing" : "Cancel reply"}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+
+                <form
+                  onSubmit={handleSendMessage}
+                  className="relative flex items-end gap-2 p-2 rounded-2xl bg-background border border-border shadow-sm"
+                >
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="relative">
+                      <Input
+                        ref={composerRef}
+                        placeholder={editingMessage ? "Edit your message..." : "Type a message..."}
+                        value={message}
+                        onChange={(e) => handleTyping(e.target.value)}
+                        onPaste={handlePaste}
+                        onKeyDown={(e) => {
+                          // Escape backs out of a reply or an edit, which is
+                          // what the key does everywhere else in the app.
+                          if (e.key === "Escape" && (editingMessage || replyingTo)) {
+                            e.preventDefault();
+                            cancelCompose();
+                          }
+                        }}
+                        className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
                       />
-                      <input
-                        ref={imageInputRef}
-                        type="file"
-                        accept={IMAGE_ACCEPT}
-                        className="hidden"
-                        onChange={handleFilePicked}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Attach a file"
-                        disabled={!!uploadingAttachment}
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        <Paperclip className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Attach an image"
-                        disabled={!!uploadingAttachment}
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        onClick={() => imageInputRef.current?.click()}
-                      >
-                        <ImageIcon className="h-4 w-4" />
-                      </Button>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 hover:bg-accent text-muted-foreground hover:text-foreground"
-                          >
-                            <Smile className="h-4 w-4" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          className="w-auto p-2 bg-background/95 backdrop-blur-xl border-border"
-                          align="end"
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          multiple
+                          accept={FILE_ACCEPT}
+                          className="hidden"
+                          onChange={handleFilePicked}
+                        />
+                        <input
+                          ref={imageInputRef}
+                          type="file"
+                          multiple
+                          accept={IMAGE_ACCEPT}
+                          className="hidden"
+                          onChange={handleFilePicked}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Attach files"
+                          disabled={!!uploadingAttachment}
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => fileInputRef.current?.click()}
                         >
-                          <div className="grid grid-cols-4 gap-1">
-                            {emojis.map((emoji, i) => (
-                              <Button
-                                key={i}
-                                variant="ghost"
-                                size="icon"
-                                className="h-10 w-10 text-xl hover:bg-accent"
-                                onClick={() => handleEmojiSelect(emoji)}
-                              >
-                                {emoji}
-                              </Button>
-                            ))}
-                          </div>
-                        </PopoverContent>
-                      </Popover>
+                          <Paperclip className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Attach images"
+                          disabled={!!uploadingAttachment}
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={() => imageInputRef.current?.click()}
+                        >
+                          <ImageIcon className="h-4 w-4" />
+                        </Button>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 hover:bg-accent text-muted-foreground hover:text-foreground"
+                            >
+                              <Smile className="h-4 w-4" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-auto p-2 bg-background/95 backdrop-blur-xl border-border"
+                            align="end"
+                          >
+                            <div className="grid grid-cols-4 gap-1">
+                              {emojis.map((emoji, i) => (
+                                <Button
+                                  key={i}
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-10 w-10 text-xl hover:bg-accent"
+                                  onClick={() => handleEmojiSelect(emoji)}
+                                >
+                                  {emoji}
+                                </Button>
+                              ))}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <Button type="submit" size="icon" className="rounded-xl h-10 w-10 shadow-md">
-                  <Send className="h-4 w-4" />
-                </Button>
-              </form>
-            </div>
+                  <Button
+                    type="submit"
+                    size="icon"
+                    className="rounded-xl h-10 w-10 shadow-md"
+                    aria-label={editingMessage ? "Save edit" : "Send message"}
+                  >
+                    {editingMessage ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                  </Button>
+                </form>
+              </div>
+            )}
           </div>
         ) : (
           <div className="hidden md:flex flex-1 items-center justify-center text-muted-foreground">
@@ -2257,6 +3542,21 @@ export default function Chats() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ThreadPanel
+        conversationId={selectedChat}
+        rootId={openThreadRoot}
+        currentParticipantId={getCurrentParticipantId(selectedConversation)}
+        canSend={!isBlocked}
+        onClose={() => setOpenThreadRoot(null)}
+        onJump={(messageId) => {
+          // The sheet covers the timeline, so it has to get out of the way for
+          // the jump it just asked for to be visible at all.
+          setOpenThreadRoot(null);
+          window.setTimeout(() => jumpToMessage(messageId), 150);
+        }}
+        onSend={sendMessage}
+      />
 
       <AlertDialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
         <AlertDialogContent>

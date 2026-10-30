@@ -8,17 +8,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-import { Camera, Mic, Palette, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+import { Camera, Mic, Palette, ShieldAlert, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "@/components/ThemeProvider";
 import { motion } from "framer-motion";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { useAuth } from "@/lib/auth";
+import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 
 export default function Settings() {
   const { theme } = useTheme();
   const { toast } = useToast();
   const { settings, updateSettings } = useSettings();
+  const { logout } = useAuth();
+  const [, navigate] = useLocation();
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -283,8 +292,56 @@ export default function Settings() {
               </div>
             </div>
           </div>
+
+          {/* Account */}
+          <div className="rounded-3xl border border-destructive/30 bg-destructive/5 backdrop-blur-md overflow-hidden">
+            <div className="p-6 border-b border-destructive/30 bg-destructive/5">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-destructive/10 text-destructive">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">Account</h2>
+                  <p className="text-sm text-muted-foreground">Actions here cannot be undone</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <Label className="text-base font-medium">Delete account</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Removes your profile, messages, connections and hosted meetings for good.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  onClick={() => setDeleteOpen(true)}
+                  className="sm:shrink-0"
+                >
+                  Delete account
+                </Button>
+              </div>
+            </div>
+          </div>
         </motion.div>
       </motion.div>
+
+      <DeleteAccountDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={async () => {
+          setDeleteOpen(false);
+          toast({
+            title: "Account deleted",
+            description: "Everything tied to it has been removed.",
+          });
+          // The account is gone, so the session token points at nothing; sign
+          // out locally and leave, or every request from here answers 401.
+          await logout();
+          navigate("/");
+        }}
+      />
     </div>
   );
 }

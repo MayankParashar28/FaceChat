@@ -24,7 +24,30 @@ import discoveryRoutes from "./routes/discovery";
 import notificationRoutes from "./routes/notification";
 import inviteRoutes from "./routes/invite";
 import attachmentRoutes from "./routes/attachments";
+import avatarRoutes from "./routes/avatar";
 import { CacheKeys, cacheDelete } from "./services/cache";
+import {
+  MAX_UPLOAD_BYTES,
+  deleteAttachment,
+  findGridfsFile,
+  publicIdBelongsToConversation,
+} from "./services/attachmentStorage";
+import { ALLOWED_MIME } from "./services/fileSignature";
+import { looksLikeSessionToken, verifySessionToken } from "./services/sessionToken";
+import { enforceGhostExpiry, setGhostBroadcaster } from "./services/ghostChat";
+import { PIN_LIMIT, pinsToEvict } from "./services/pinLimit";
+import { canDelete, canEdit, validateEdit } from "./services/messageEdits";
+import { buildReplyQuote } from "./services/replyQuote";
+
+/** Attachment metadata that has been checked against what is actually stored. */
+type VerifiedAttachment = {
+  provider: "cloudinary" | "gridfs";
+  storageId: string;
+  resourceType?: string;
+  name: string;
+  size: number;
+  mimeType: string;
+};
 
 /**
  * Room ids double as conversation ids for calls started from a chat, but ad-hoc
@@ -126,6 +149,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Make IO and online users accessible in routes
   app.set("io", io);
+
+  // A ghost chat is destroyed from the sweep and from read paths, neither of
+  // which can reach `io` — it is created here. Hand the emitter over so the
+  // people in the room are told the moment it happens.
+  setGhostBroadcaster((conversationId, erased) => {
+    io.to(`conversation:${conversationId}`).emit("conversation:vanished", {
+      conversationId,
+      erased,
+    });
+  });
   app.set("getOnlineUserIds", () => new Set(userSockets.keys()));
 
   // Register API Routes
@@ -136,6 +169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/discovery", discoveryRoutes);
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/invites", inviteRoutes);
+  app.use("/api/avatars", avatarRoutes);
   // Mounted at /api so it owns both /api/conversations/:id/attachments and
   // /api/attachments/:fileId.
   app.use("/api", attachmentRoutes);
@@ -143,41 +177,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
   io.on("connection", (socket) => {
     logger.debug("Client connected:", socket.id);
 
-    socket.on("user:online", async (data: { firebaseToken: string }) => {
-      try {
-        const token = data?.firebaseToken;
-        if (!token) return;
-
-        let userId = token;
-        let dbUser: any = null;
-
-        // Try finding user directly by firebaseUid or MongoDB ID
+    /**
+     * Registering the connection against an account.
+     *
+     * Takes an acknowledgement callback, because everything else a socket does
+     * depends on this having finished. `socketUserMap` is only written at the
+     * end of this handler, and `conversationMember` reads it — so a client
+     * that joined a conversation room without waiting was refused, silently
+     * stayed out of the room, and then saw none of what is broadcast to it.
+     * Pins were the visible symptom: messages still arrived, because sending
+     * one joins the room as a side effect, but a reader who never sent
+     * anything sat outside and had to reload to see a pin.
+     */
+    socket.on(
+      "user:online",
+      async (data: { firebaseToken: string }, ack?: (ok: boolean) => void) => {
         try {
-          dbUser = await mongoService.getUserByFirebaseUidCached(token);
-          if (!dbUser && mongoose.Types.ObjectId.isValid(token)) {
-            dbUser = await mongoService.getUserById(token);
-          }
-        } catch (e) {}
+          const token = data?.firebaseToken;
+          if (!token) return ack?.(false);
 
-        if (!dbUser) {
-          try {
-            const decodedToken = await verifyFirebaseToken(token);
-            userId = decodedToken.uid;
-            dbUser = await mongoService.getUserByFirebaseUidCached(userId);
-            if (!dbUser) {
-              dbUser = await mongoService.createOrUpdateUser({
-                firebaseUid: userId,
-                email: decodedToken.email || "",
-                name: decodedToken.name || "",
-                username: decodedToken.email?.split("@")[0] || "user",
-              });
+          let userId: string | null = null;
+          let dbUser: any = null;
+
+          // A session token this server issued, or a Firebase ID token. Nothing
+          // else. This used to look the token up as a firebaseUid or MongoDB id
+          // first, so knowing someone's id was enough to come online as them and
+          // read their conversations; and when neither worked it fell through to
+          // `userId = token`, registering the connection as authenticated under
+          // whatever string had arrived.
+          if (looksLikeSessionToken(token)) {
+            const claims = await verifySessionToken(token);
+            if (claims) {
+              dbUser = await mongoService.getUserById(claims.sub);
+              if (dbUser) userId = dbUser.firebaseUid || dbUser._id.toString();
             }
-          } catch (e) {
-            userId = token;
+          } else {
+            try {
+              const decodedToken = await verifyFirebaseToken(token);
+              userId = decodedToken.uid;
+              dbUser = await mongoService.getUserByFirebaseUidCached(userId);
+              if (!dbUser) {
+                dbUser = await mongoService.createOrUpdateUser({
+                  firebaseUid: userId,
+                  email: decodedToken.email || "",
+                  name: decodedToken.name || "",
+                  username: decodedToken.email?.split("@")[0] || "user",
+                });
+              }
+            } catch (e) {
+              userId = null;
+            }
           }
-        }
 
-        if (dbUser) {
+          if (!dbUser || !userId) {
+            logger.warn("Rejected a socket sign-in with an unrecognised token");
+            socket.emit("user:unauthenticated", {
+              error: "Your session has expired. Please sign in again.",
+            });
+            return ack?.(false);
+          }
+
+          // Past the guard there is always a resolved account, so socketUserMap
+          // now only ever holds a MongoDB id — the assumption conversationMember
+          // and call:invite make about it is finally true.
           const mongoId = dbUser._id.toString();
           const firebaseUid = dbUser.firebaseUid || mongoId;
 
@@ -201,49 +263,148 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           socket.emit("user:authenticated", { userId: mongoId, user: dbUser });
           socket.emit("users:online-list", { onlineUserIds: Array.from(userSockets.keys()) });
-        } else {
-          userSockets.set(userId, socket.id);
-          socketUserMap.set(socket.id, userId);
-          setUserOnlineStatus(userId, true).catch(() => {});
-          io.emit("user:status", { userId, online: true });
-          socket.emit("users:online-list", { onlineUserIds: Array.from(userSockets.keys()) });
+
+          // Only now is this connection something `conversationMember` can
+          // recognise, so only now may the client ask to join a room.
+          ack?.(true);
+        } catch (error) {
+          logger.error("Error in user:online socket handler:", error);
+          ack?.(false);
         }
-      } catch (error) {
-        logger.error("Error in user:online socket handler:", error);
       }
-    });
+    );
+
+    /**
+     * The user this connection signed in as, but only if they belong to the
+     * conversation in question. Everything that reads or writes a conversation
+     * goes through here: the payloads used to name their own author.
+     */
+    const conversationMember = async (conversationId: string) => {
+      try {
+        const viewerId = socketUserMap.get(socket.id);
+        if (!viewerId || !mongoose.Types.ObjectId.isValid(conversationId)) return null;
+
+        // socketUserMap holds a MongoDB id for a connection whose user was
+        // resolved, but a raw Firebase uid for one whose user was not (see the
+        // else branch of user:online). Assuming the first form here killed the
+        // server: the uid went into a findById and the CastError escaped as an
+        // unhandled rejection.
+        const dbUser = mongoose.Types.ObjectId.isValid(viewerId)
+          ? await mongoService.getUserById(viewerId)
+          : await mongoService.getUserByFirebaseUidCached(viewerId);
+        if (!dbUser) return null;
+
+        const conversation = await Conversation.findById(conversationId).select("participants");
+        const isParticipant = !!conversation?.participants.some(
+          (p) => p.toString() === dbUser._id.toString()
+        );
+        return isParticipant ? dbUser : null;
+      } catch (error) {
+        // Refuse the event rather than take the process with it.
+        logger.error("Error resolving conversation membership:", error);
+        return null;
+      }
+    };
+
+    /**
+     * An attachment on message:send is metadata the client hands over, so by
+     * itself it proves nothing: a client can skip the upload endpoint entirely
+     * and describe any file it likes, which would walk straight past the byte
+     * check the endpoint now does. Confirm the file really was stored for THIS
+     * conversation, and prefer what storage says over what the payload claims.
+     *
+     * Returns undefined for a plain message, null to refuse, or the metadata
+     * to persist.
+     */
+    const verifiedAttachment = async (
+      conversationId: string,
+      attachment:
+        | {
+            provider?: unknown;
+            storageId?: unknown;
+            resourceType?: unknown;
+            name?: unknown;
+            size?: unknown;
+            mimeType?: unknown;
+          }
+        | undefined
+    ): Promise<VerifiedAttachment | null | undefined> => {
+      if (!attachment) return undefined;
+
+      const { provider, storageId, resourceType, name, size, mimeType } = attachment;
+      if (provider !== "cloudinary" && provider !== "gridfs") return null;
+      if (typeof storageId !== "string" || storageId.length === 0) return null;
+      // mimeType was read without checking it existed, so `attachment: {}`
+      // threw on .startsWith before reaching any of this.
+      if (typeof mimeType !== "string" || !ALLOWED_MIME.has(mimeType)) return null;
+
+      if (provider === "gridfs") {
+        if (!mongoose.Types.ObjectId.isValid(storageId)) return null;
+        const file = await findGridfsFile(new mongoose.Types.ObjectId(storageId));
+        if (!file) return null;
+        const owner = (file.metadata as { conversationId?: string } | undefined)?.conversationId;
+        if (owner !== conversationId) return null;
+        // GridFS recorded all of this at upload time; trust it over the payload.
+        return {
+          provider,
+          storageId,
+          name: file.filename,
+          size: file.length,
+          mimeType: file.contentType || mimeType,
+        };
+      }
+
+      // Cloudinary public ids are namespaced by conversation, which is what
+      // stops one conversation's message pointing at another's asset.
+      if (!publicIdBelongsToConversation(storageId, conversationId)) return null;
+      return {
+        provider,
+        storageId,
+        resourceType: typeof resourceType === "string" ? resourceType : undefined,
+        name: typeof name === "string" && name.length > 0 ? name.slice(0, 200) : "file",
+        size:
+          typeof size === "number" && Number.isFinite(size) && size > 0
+            ? Math.min(size, MAX_UPLOAD_BYTES)
+            : 0,
+        mimeType,
+      };
+    };
 
     socket.on("join:conversation", async (conversationId: string) => {
+      // Everything in a conversation room — new messages, typing, read
+      // receipts — is broadcast to whoever is in it. Joining used to be
+      // unconditional, so any connection could name someone else's
+      // conversation and listen to it live.
+      const dbUser = await conversationMember(conversationId);
+      if (!dbUser) {
+        // Not on `message:error`, which means "your message did not send" and
+        // makes the client drop whatever it had not sent yet.
+        socket.emit("conversation:join-error", {
+          conversationId,
+          error: "You are not part of that conversation.",
+        });
+        return;
+      }
+
       socket.join(`conversation:${conversationId}`);
 
-      // Mark messages sent by others as delivered when user joins conversation
-      // O(1) reverse lookup via socketUserMap (socketId -> userId).
-      const userId = socketUserMap.get(socket.id);
-      if (userId) {
-        try {
-          const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
-          if (dbUser) {
-            // Find all messages in this conversation that are not from this user
-            // These are messages sent by others that this user is receiving
-            const receivedMessages = await Message.find({
-              conversationId,
-              senderId: { $ne: dbUser._id.toString() },
-              isRead: false,
-            }).populate("senderId", "_id");
+      // Anything already waiting here counts as delivered now that the
+      // recipient is on the conversation: tell the senders so.
+      try {
+        const received = await Message.find({
+          conversationId,
+          senderId: { $ne: dbUser._id },
+          isRead: false,
+        }).select("_id");
 
-            // For each message received, update its status to "delivered" for the sender
-            // This tells the sender that their message was delivered
-            for (const msg of receivedMessages) {
-              // Emit status update to conversation room (sender will see "delivered")
-              io.to(`conversation:${conversationId}`).emit("message:status", {
-                messageId: msg._id.toString(),
-                status: "delivered",
-              });
-            }
-          }
-        } catch (error) {
-          logger.error("Error marking messages as delivered:", error);
+        for (const msg of received) {
+          io.to(`conversation:${conversationId}`).emit("message:status", {
+            messageId: msg._id.toString(),
+            status: "delivered",
+          });
         }
+      } catch (error) {
+        logger.error("Error marking messages as delivered:", error);
       }
     });
 
@@ -251,75 +412,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       socket.leave(`conversation:${conversationId}`);
     });
 
-    socket.on(
-      "mark:read",
-      async ({ conversationId, userId }: { conversationId: string; userId: string }) => {
-        try {
-          // Get user from MongoDB
-          const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
-          if (!dbUser) {
-            logger.error("User not found for mark read");
-            return;
-          }
-
-          // Mark all unread messages as read for this user in this conversation
-          await Message.updateMany(
-            {
-              conversationId,
-              senderId: { $ne: dbUser._id.toString() },
-              isRead: false,
-            },
-            { isRead: true }
-          );
-
-          // Their unread badge just changed.
-          await cacheDelete(CacheKeys.conversationList(dbUser._id.toString()));
-
-          // Get updated unread count
-          const conversation = await Conversation.findById(conversationId);
-          if (conversation) {
-            await conversation.populate("participants", "username name email avatar firebaseUid");
-            const unreadCount = await Message.countDocuments({
-              conversationId: conversation._id,
-              senderId: { $ne: dbUser._id.toString() },
-              isRead: false,
-            });
-
-            // Format and broadcast to all participants
-            const formattedConv = {
-              id: conversation._id.toString(),
-              name: conversation.name,
-              isGroup: conversation.isGroup,
-              participants: conversation.participants.map((p: any) => ({
-                id: p._id.toString(),
-                firebaseUid: p.firebaseUid,
-                name: p.name,
-                username: p.username,
-                avatar: p.avatar,
-                online: false,
-              })),
-              unreadCount,
-            };
-
-            // Broadcast to conversation room and participant user rooms
-            io.to(`conversation:${conversation._id.toString()}`).emit(
-              "conversation:updated",
-              formattedConv
-            );
-            conversation.participants.forEach((p: any) => {
-              if (p.firebaseUid) {
-                io.to(`user:${p.firebaseUid}`).emit("conversation:updated", formattedConv);
-              }
-              if (p._id) {
-                io.to(`user:${p._id.toString()}`).emit("conversation:updated", formattedConv);
-              }
-            });
-          }
-        } catch (error) {
-          logger.error("Error marking messages as read:", error);
-        }
-      }
-    );
+    // There is no `mark:read` here any more. Nothing emitted it — the client
+    // reports each message as it is actually seen — and it took the user id
+    // from the payload, so any connection could clear anyone's unread badge.
 
     socket.on(
       "typing:start",
@@ -349,6 +444,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         conversationId: string;
         senderId: string;
         content: string;
+        /** The message this one answers. Checked to be in this conversation. */
+        replyTo?: string;
         messageType?: "text" | "image" | "file";
         attachment?: {
           provider: "cloudinary" | "gridfs";
@@ -360,10 +457,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }) => {
         try {
-          // Get user from MongoDB
-          const dbUser = await mongoService.getUserByFirebaseUidCached(data.senderId);
+          // Who is sending is whoever this connection signed in as, never the
+          // id in the payload: that let one connection write messages under
+          // someone else's name.
+          const dbUser = await conversationMember(data.conversationId);
           if (!dbUser) {
-            socket.emit("message:error", { error: "User not found" });
+            socket.emit("message:error", {
+              error: "You are not signed in on this connection, or not part of that conversation.",
+            });
             return;
           }
 
@@ -373,7 +474,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // message so we never write (and then have to delete) a blocked message.
           // Groups are exempt; a `blocked` connection also fails this check.
           const conversationToCheck = await Conversation.findById(data.conversationId);
-          if (conversationToCheck && !conversationToCheck.isGroup) {
+          if (conversationToCheck?.isGhost) {
+            // A GhostLink chat has no connection behind it — redeeming the
+            // link was the authorisation, and the two of them stay strangers.
+            // Participation is already proven by conversationMember above, so
+            // the only thing left to enforce here is the timer.
+            if (await enforceGhostExpiry(conversationToCheck)) {
+              socket.emit("message:error", { error: "This GhostLink chat has vanished." });
+              return;
+            }
+          } else if (conversationToCheck && !conversationToCheck.isGroup) {
             const otherParticipantId = conversationToCheck.participants.find(
               (p) => p.toString() !== dbUser._id.toString()
             );
@@ -397,17 +507,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Create message in MongoDB
           // An attachment decides the type; anything else is plain text, so a
           // client cannot label a bare message as an image.
-          const attachment = data.attachment;
+          const attachment = await verifiedAttachment(data.conversationId, data.attachment);
+          if (attachment === null) {
+            socket.emit("message:error", {
+              error: "That attachment could not be verified. Please upload it again.",
+            });
+            return;
+          }
           const messageType = attachment
             ? attachment.mimeType.startsWith("image/")
               ? ("image" as const)
               : ("file" as const)
             : ("text" as const);
 
+          // A reply names a message by id, and the quoted preview is built
+          // from whatever that id points at — so an id from *another*
+          // conversation would pull a line of someone else's chat into this
+          // one. It has to belong here, and not be a tombstone.
+          let replyTo: string | undefined;
+          let threadRoot: string | undefined;
+          let quotedSource: any = null;
+          if (data.replyTo) {
+            const quoted = mongoose.Types.ObjectId.isValid(data.replyTo)
+              ? await Message.findById(data.replyTo).select("conversationId deletedAt threadRoot")
+              : null;
+            const belongsHere = quoted && quoted.conversationId.toString() === data.conversationId;
+            if (!belongsHere || quoted!.deletedAt) {
+              socket.emit("message:error", {
+                error: "The message you replied to is no longer there.",
+                tempId: (data as { tempId?: string }).tempId,
+              });
+              return;
+            }
+            replyTo = quoted!._id.toString();
+            // Answering anything inside a thread joins that same thread rather
+            // than starting a new one under the reply, so a side conversation
+            // stays one readable list however deep people nest inside it.
+            threadRoot = quoted!.threadRoot?.toString() ?? replyTo;
+            // Re-read with the fields a quote needs; the check above only
+            // asked which conversation it was in.
+            quotedSource = await Message.findById(replyTo)
+              .populate("senderId", "name")
+              .select("content messageType attachment deletedAt senderId")
+              .lean();
+          }
+
           const message = await mongoService.createMessage({
             conversationId: data.conversationId,
             senderId: dbUser._id.toString(),
             content: data.content,
+            replyTo,
+            threadRoot,
             messageType,
             attachment,
           });
@@ -440,7 +590,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Get Firebase UID for matching optimistic messages
           const senderFirebaseUid =
-            (populatedMessage.senderId as any)?.firebaseUid || data.senderId;
+            (populatedMessage.senderId as any)?.firebaseUid || dbUser.firebaseUid;
 
           const formattedMessage = {
             id: populatedMessage._id.toString(),
@@ -459,6 +609,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
               : undefined,
             isPinned: populatedMessage.isPinned,
+            // Built the same way the fetched page builds it, so the quote does
+            // not change shape when the thread is reloaded.
+            replyTo: replyTo ? buildReplyQuote(replyTo, quotedSource) : undefined,
+            threadRoot,
+            // Nothing can have answered a message that is only now arriving.
+            replyCount: 0,
             createdAt: populatedMessage.createdAt,
             sender: {
               ...sender,
@@ -496,7 +652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (conversation) {
               const participants = conversation.participants as any[];
               const recipientIds = participants
-                .filter((p: any) => p.firebaseUid && p.firebaseUid !== data.senderId)
+                .filter((p: any) => p.firebaseUid && p.firebaseUid !== dbUser.firebaseUid)
                 .map((p: any) => p.firebaseUid);
 
               if (recipientIds.length === 0) {
@@ -535,87 +691,253 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     );
 
-    socket.on(
-      "message:seen",
-      async ({ messageId, userId }: { messageId: string; userId: string }) => {
-        try {
-          // Get user from MongoDB
-          const dbUser = await mongoService.getUserByFirebaseUidCached(userId);
-          if (!dbUser) {
-            logger.error("User not found for seen status");
-            return;
-          }
+    socket.on("message:seen", async ({ messageId }: { messageId: string; userId?: string }) => {
+      try {
+        if (!mongoose.Types.ObjectId.isValid(messageId)) return;
 
-          // Update message as read in database
-          await Message.findByIdAndUpdate(messageId, {
-            isRead: true,
-          });
+        // Only someone in the conversation can say they have seen a message
+        // in it. This used to take the reader's id from the payload and
+        // never check the message at all.
+        const message = await Message.findById(messageId);
+        if (!message) return;
 
-          // Get the conversation to update unread count
-          const message = await Message.findById(messageId);
-          if (message) {
-            // Emit status update to conversation room (not all clients)
-            io.to(`conversation:${message.conversationId.toString()}`).emit("message:status", {
-              messageId,
-              status: "seen",
-            });
+        const dbUser = await conversationMember(message.conversationId.toString());
+        if (!dbUser) return;
+        // Your own message was never unread for you.
+        if (message.senderId.toString() === dbUser._id.toString()) return;
 
-            // Broadcast updated conversation with new unread count
-            const conversation = await Conversation.findById(message.conversationId.toString());
-            if (conversation) {
-              await conversation.populate("participants", "username name email avatar firebaseUid");
-              const unreadCount = await Message.countDocuments({
-                conversationId: conversation._id,
-                senderId: { $ne: dbUser._id.toString() },
-                isRead: false,
-              });
+        await Message.findByIdAndUpdate(messageId, { isRead: true });
 
-              // Format and broadcast to all participants
-              const formattedConv = {
-                id: conversation._id.toString(),
-                name: conversation.name,
-                isGroup: conversation.isGroup,
-                participants: conversation.participants.map((p: any) => ({
-                  id: p._id.toString(),
-                  firebaseUid: p.firebaseUid,
-                  name: p.name,
-                  username: p.username,
-                  avatar: p.avatar,
-                  online: false,
-                })),
-                unreadCount,
-              };
+        const conversationId = message.conversationId.toString();
 
-              // Broadcast to all participants in the conversation room
-              io.to(`conversation:${message.conversationId.toString()}`).emit(
-                "conversation:updated",
-                formattedConv
-              );
-            }
-          }
-        } catch (error) {
-          logger.error("Error updating message status:", error);
-        }
+        // Tell the room the message has been seen.
+        io.to(`conversation:${conversationId}`).emit("message:status", {
+          messageId,
+          status: "seen",
+        });
+
+        // The reader's unread badge just changed, so their cached
+        // conversation list is stale.
+        await cacheDelete(CacheKeys.conversationList(dbUser._id.toString()));
+
+        // Nudge the room to refetch. This used to send a whole formatted
+        // conversation — an extra query and populate per message seen — that
+        // the client never read: it refetches rather than trusting a count
+        // worked out for whoever did the reading.
+        io.to(`conversation:${conversationId}`).emit("conversation:updated", {
+          id: conversationId,
+        });
+      } catch (error) {
+        logger.error("Error updating message status:", error);
       }
-    );
+    });
 
+    /**
+     * Pinning is shared: either participant can pin, and either can unpin,
+     * including the other's pin. A pinned message is the conversation's note
+     * to itself rather than one person's bookmark, which is why `pinnedBy` is
+     * recorded and shown instead of being used to lock the other side out.
+     *
+     * Failures answer on `message:pin-error`, never on `message:error`. The
+     * latter means "your message did not send", and the client reacts to it by
+     * dropping the most recent unsent message — so reporting a failed pin
+     * there deleted something the user had just typed.
+     */
     socket.on(
       "message:pin",
       async ({ messageId, isPinned }: { messageId: string; isPinned: boolean }) => {
+        const fail = (error: string) => socket.emit("message:pin-error", { messageId, error });
         try {
-          // Persist the pin state so it survives reloads.
-          const updated = await Message.findByIdAndUpdate(messageId, { isPinned }, { new: true });
-          if (!updated) {
-            socket.emit("message:error", { error: "Message not found" });
-            return;
+          // This used to return silently, leaving the client waiting for an
+          // answer that was never coming.
+          if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return fail("That message no longer exists.");
           }
-          io.emit("message:pinned", { messageId, isPinned });
+          // A string "false" is truthy once mongoose casts it, which would pin
+          // a message the caller asked to unpin.
+          if (typeof isPinned !== "boolean") {
+            return fail("Could not tell whether to pin or unpin.");
+          }
+
+          const message = await Message.findById(messageId).select("conversationId");
+          if (!message) return fail("That message no longer exists.");
+
+          const conversationId = message.conversationId.toString();
+          // Pinning was open to any connection, for any message id.
+          const member = await conversationMember(conversationId);
+          if (!member) return fail("You are not part of that conversation.");
+
+          const pinnedAt = isPinned ? new Date() : undefined;
+          // Persist the pin state so it survives reloads.
+          await Message.findByIdAndUpdate(
+            messageId,
+            isPinned
+              ? { $set: { isPinned: true, pinnedAt, pinnedBy: member._id } }
+              : { $set: { isPinned: false }, $unset: { pinnedAt: 1, pinnedBy: 1 } }
+          );
+
+          // A conversation keeps only so many pins. Rather than refuse the
+          // new one, the oldest steps aside — the pin just made is the newest,
+          // so it is never the one evicted. Enforced here rather than in the
+          // client because both sides pin into the same list, and two taps
+          // arriving together would otherwise walk past any client-side count.
+          let replaced: string[] = [];
+          if (isPinned) {
+            const allPinned = await Message.find({ conversationId, isPinned: true })
+              .select("_id pinnedAt createdAt")
+              .lean();
+            const evicted = pinsToEvict(allPinned);
+            if (evicted.length > 0) {
+              replaced = evicted.map((m) => m._id.toString());
+              await Message.updateMany(
+                { _id: { $in: evicted.map((m) => m._id) } },
+                { $set: { isPinned: false }, $unset: { pinnedAt: 1, pinnedBy: 1 } }
+              );
+            }
+          }
+
+          // To the conversation, not to every client connected to the server,
+          // and to this socket too — both sides see the same board. `replaced`
+          // rides along so one event carries the whole change: everyone clears
+          // those pins, and the client that asked for this can say which.
+          io.to(`conversation:${conversationId}`).emit("message:pinned", {
+            messageId,
+            isPinned,
+            pinnedAt,
+            pinnedBy: isPinned ? member._id.toString() : undefined,
+            replaced,
+            pinLimit: PIN_LIMIT,
+          });
         } catch (error) {
           logger.error("Error pinning message:", error);
-          socket.emit("message:error", { error: "Failed to pin message" });
+          fail("Could not save that pin. Try again.");
         }
       }
     );
+
+    /**
+     * Rewriting a message you sent.
+     *
+     * Only the author, only text, and only for a while — `services/messageEdits`
+     * holds the reasoning. The original text is replaced rather than kept: this
+     * is a chat, not a version-controlled document, and storing every draft of
+     * something the sender wanted changed would be the opposite of the point.
+     */
+    socket.on(
+      "message:edit",
+      async ({ messageId, content }: { messageId: string; content: string }) => {
+        const fail = (error: string) => socket.emit("message:edit-error", { messageId, error });
+        try {
+          if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return fail("That message no longer exists.");
+          }
+          const text = validateEdit(content);
+          if (!text.ok) return fail(text.reason);
+
+          const message = await Message.findById(messageId);
+          if (!message) return fail("That message no longer exists.");
+
+          const conversationId = message.conversationId.toString();
+          const member = await conversationMember(conversationId);
+          if (!member) return fail("You are not part of that conversation.");
+
+          const verdict = canEdit(message, member._id.toString());
+          if (!verdict.ok) return fail(verdict.reason);
+
+          const editedAt = new Date();
+          const next = (content as string).trim();
+          await Message.findByIdAndUpdate(messageId, { $set: { content: next, editedAt } });
+
+          io.to(`conversation:${conversationId}`).emit("message:edited", {
+            messageId,
+            content: next,
+            editedAt,
+          });
+        } catch (error) {
+          logger.error("Error editing message:", error);
+          fail("Could not save that edit. Try again.");
+        }
+      }
+    );
+
+    /**
+     * Taking a message back.
+     *
+     * The row stays as a tombstone so the thread does not silently reshuffle
+     * and a reply pointing here still has something to point at, but the text
+     * and the file are actually gone — cleared in the database and deleted
+     * from storage, not merely hidden by the client.
+     */
+    socket.on("message:delete", async ({ messageId }: { messageId: string }) => {
+      const fail = (error: string) => socket.emit("message:delete-error", { messageId, error });
+      try {
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+          return fail("That message no longer exists.");
+        }
+
+        const message = await Message.findById(messageId);
+        if (!message) return fail("That message no longer exists.");
+
+        const conversationId = message.conversationId.toString();
+        const member = await conversationMember(conversationId);
+        if (!member) return fail("You are not part of that conversation.");
+
+        const verdict = canDelete(message, member._id.toString());
+        if (!verdict.ok) return fail(verdict.reason);
+
+        // The file goes first: if clearing the row succeeded and this failed,
+        // nothing would be left pointing at the bytes to try again with.
+        const attachment = (message as { attachment?: any }).attachment;
+        if (attachment?.provider && attachment?.storageId) {
+          await deleteAttachment({
+            provider: attachment.provider,
+            storageId: attachment.storageId,
+            resourceType: attachment.resourceType,
+          });
+        }
+
+        // Unpinned at the same time: a pinned list is a list of things worth
+        // going back to, and there is nothing to go back to here.
+        const wasPinned = message.isPinned;
+        await Message.findByIdAndUpdate(messageId, {
+          $set: { content: "", deletedAt: new Date(), isPinned: false },
+          $unset: { attachment: 1, pinnedAt: 1, pinnedBy: 1, editedAt: 1 },
+        });
+
+        io.to(`conversation:${conversationId}`).emit("message:deleted", {
+          messageId,
+          deletedAt: new Date(),
+          wasPinned,
+          // So the thread this belonged to can drop its count by one without
+          // anyone having to refetch the page to find out.
+          threadRoot: message.threadRoot?.toString(),
+        });
+
+        // The list preview quotes the last message, which may be this one.
+        const conversation = await Conversation.findById(conversationId).select("participants");
+        if (conversation) {
+          await cacheDelete(
+            ...conversation.participants.map((p: any) => CacheKeys.conversationList(p.toString()))
+          );
+        }
+        io.to(`conversation:${conversationId}`).emit("conversation:updated", {
+          id: conversationId,
+        });
+      } catch (error) {
+        logger.error("Error deleting message:", error);
+        fail("Could not delete that message. Try again.");
+      }
+    });
+
+    /** Callers name someone by Firebase uid or by MongoDB id; accept either. */
+    const resolveUser = async (id: string) => {
+      const byFirebase = await mongoService.getUserByFirebaseUidCached(id);
+      if (byFirebase) return byFirebase;
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        return await mongoService.getUserById(id);
+      }
+      return null;
+    };
 
     // --- Incoming-call signaling (ring the callee) ---
     // Caller -> server -> callee's `user:<id>` room. toUserId/fromUserId are
@@ -655,12 +977,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
 
         try {
-          const callerMongoId = socketUserMap.get(socket.id);
+          // Same two forms as conversationMember: a MongoDB id, or a Firebase
+          // uid when the connection's user could not be resolved at sign-in.
+          const callerId = socketUserMap.get(socket.id);
           const [caller, callee] = await Promise.all([
-            callerMongoId
-              ? mongoService.getUserById(callerMongoId)
+            callerId
+              ? resolveUser(callerId)
               : mongoService.getUserByFirebaseUidCached(data.fromUserId),
-            mongoService.getUserByFirebaseUidCached(data.toUserId),
+            resolveUser(data.toUserId),
           ]);
 
           if (!caller) return refuse("Sign in again to start a call.");
@@ -901,6 +1225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   });
                   io.to(`call:${roomId}`).emit("call:meeting-active", {
                     startTime: callStartedAt(restarted),
+                    meetingId: roomMeeting._id.toString(),
                   });
                 }
                 // ACTIVATE if scheduled and now 2 people
@@ -909,6 +1234,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   const activated = await mongoService.activateMeeting(roomMeeting._id.toString());
                   io.to(`call:${roomId}`).emit("call:meeting-active", {
                     startTime: callStartedAt(activated),
+                    meetingId: roomMeeting._id.toString(),
                   });
                 }
               }
@@ -979,6 +1305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 // Broadcast restart
                 io.to(`call:${roomId}`).emit("call:meeting-active", {
                   startTime: callStartedAt(restarted),
+                  meetingId: existingMeeting._id.toString(),
                 });
               }
               // logic: if status is 'scheduled' and we now have 2 people, ACTIVATE
@@ -991,6 +1318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 // Broadcast start
                 io.to(`call:${roomId}`).emit("call:meeting-active", {
                   startTime: callStartedAt(activated),
+                  meetingId: existingMeeting._id.toString(),
                 });
               }
             }
@@ -1045,10 +1373,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get current meeting start time if active. The timer in the call counts
       // from when the call began, not from the slot it was booked for.
       let meetingStartTime = null;
+      // The call screen needs the meeting's id to send the caller to its
+      // summary afterwards; without it, hanging up could only go back to the
+      // dashboard and every summary page was unreachable.
+      let roomMeetingId: string | null = null;
       try {
         const m = await mongoService.getMeetingByRoomId(roomId);
-        if (m && m.status === "active") {
-          meetingStartTime = callStartedAt(m);
+        if (m) {
+          roomMeetingId = m._id.toString();
+          if (m.status === "active") {
+            meetingStartTime = callStartedAt(m);
+          }
         }
       } catch (e) {
         logger.error("Error fetching start time", e);
@@ -1057,6 +1392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       socket.emit("call:existing-users", {
         participants: participantsWithData,
         startTime: meetingStartTime,
+        meetingId: roomMeetingId,
       });
 
       // Send previous room chat history to joining user
@@ -1328,11 +1664,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Fetch user name for display
             let speakerName = "Speaker";
             try {
-              // We can fetch from DB or maybe we have a cache. For now, DB fetch is safe.
-              // We need to import User model if not available in this scope, but it is available in file.
-              const user = await User.findById(userId);
+              // `name` is what a user is called here; there is no `displayName`
+              // on this model, so asking for one always fell through to the
+              // username and captions never showed a real name.
+              const user = await User.findById(userId).select("name username");
               if (user) {
-                speakerName = (user as any).displayName || user.username || "Speaker";
+                speakerName = user.name || user.username || "Speaker";
               }
             } catch (e) {
               logger.error("Error fetching speaker name:", e);

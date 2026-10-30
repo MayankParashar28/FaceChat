@@ -1,5 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { auth } from "./firebase";
+import { readSessionToken } from "./sessionCredential";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -40,9 +41,12 @@ async function throwIfResNotOk(res: Response) {
 
 /**
  * Resolve an auth token for API calls that build their own Authorization header.
- * Prefers the Firebase ID token when a Firebase session exists, and falls back
- * to the DB-login identifier (uid) stored in localStorage — so API calls work
- * for both Firebase and email/password (DB) logins. Returns null if neither.
+ * Prefers the Firebase ID token when a Firebase session exists, and otherwise
+ * uses the session token the server issued at email/password login.
+ *
+ * It used to fall back to the account's own uid, which the server accepted as a
+ * credential — so every user id doubled as that user's password. Returns null
+ * if neither is available.
  */
 export async function getAuthToken(forceRefresh = false): Promise<string | null> {
   const user = auth.currentUser;
@@ -53,18 +57,7 @@ export async function getAuthToken(forceRefresh = false): Promise<string | null>
       console.error("Failed to get Firebase token:", error);
     }
   }
-  if (typeof window !== "undefined") {
-    try {
-      const raw = localStorage.getItem("facechat_mock_user");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.uid) return parsed.uid as string;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  return null;
+  return readSessionToken();
 }
 
 /**
@@ -84,19 +77,10 @@ async function getAuthHeaders(forceRefresh = false): Promise<Record<string, stri
     }
   }
 
-  // Fallback to local user token in localStorage
-  if (typeof window !== "undefined") {
-    const rawMock = localStorage.getItem("facechat_mock_user");
-    if (rawMock) {
-      try {
-        const parsed = JSON.parse(rawMock);
-        if (parsed?.uid) {
-          return {
-            Authorization: `Bearer ${parsed.uid}`,
-          };
-        }
-      } catch (e) {}
-    }
+  // Email/password session: the token the server issued at login.
+  const sessionToken = readSessionToken();
+  if (sessionToken) {
+    return { Authorization: `Bearer ${sessionToken}` };
   }
 
   return {};

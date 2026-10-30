@@ -4,7 +4,6 @@ import { getAuthToken } from "@/lib/queryClient";
 export interface UserSettings {
   autoJoinAudio: boolean;
   autoJoinVideo: boolean;
-  backgroundBlur: boolean;
   emotionDetection: boolean;
   videoQuality: "sd" | "hd" | "full-hd";
   audioQuality: "standard" | "high" | "studio";
@@ -16,7 +15,6 @@ export interface UserSettings {
 const DEFAULT_SETTINGS: UserSettings = {
   autoJoinAudio: false,
   autoJoinVideo: false,
-  backgroundBlur: false,
   emotionDetection: true,
   videoQuality: "hd",
   audioQuality: "high",
@@ -66,7 +64,6 @@ function saveSettings(settings: UserSettings): void {
 const ACCOUNT_KEYS = [
   "autoJoinAudio",
   "autoJoinVideo",
-  "backgroundBlur",
   "emotionDetection",
   "videoQuality",
   "audioQuality",

@@ -47,7 +47,17 @@ export default function InviteHandler() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { kind?: string; conversationId?: string }) => {
+      // A GhostLink opens one chat and forms no connection, so go straight to
+      // that conversation — there is nothing in the connections list to find.
+      if (data?.kind === "ghost" && data.conversationId) {
+        toast({
+          title: "GhostLink opened 👻",
+          description: "This chat erases itself when the timer runs out.",
+        });
+        setLocation(`/chats?id=${data.conversationId}`);
+        return;
+      }
       toast({ title: "Connected!", description: "You are now connected." });
       // Redirect to chat with the new connection or dashboard
       setLocation("/chats");
@@ -92,7 +102,7 @@ export default function InviteHandler() {
         <Card className="max-w-md w-full">
           <CardHeader className="text-center">
             <Avatar className="w-20 h-20 mx-auto mb-4">
-              <AvatarImage src={getAvatarUrl(invite.creator.avatar)} />
+              <AvatarImage src={getAvatarUrl(invite.creator.avatar, invite.creator.username)} />
               <AvatarFallback>{getInitials(invite.creator.name)}</AvatarFallback>
             </Avatar>
             <CardTitle>Join {invite.creator.name} on FaceCallAI</CardTitle>
@@ -120,19 +130,34 @@ export default function InviteHandler() {
       <Card className="max-w-md w-full border-border/50 backdrop-blur-xl bg-background/50 shadow-2xl relative z-10">
         <CardHeader className="text-center pb-2">
           <Avatar className="w-24 h-24 mx-auto mb-6 ring-4 ring-background shadow-xl">
-            <AvatarImage src={getAvatarUrl(invite.creator.avatar)} />
+            <AvatarImage src={getAvatarUrl(invite.creator.avatar, invite.creator.username)} />
             <AvatarFallback>{getInitials(invite.creator.name)}</AvatarFallback>
           </Avatar>
           <CardTitle className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-blue-500">
             {invite.creator.name}
           </CardTitle>
           <CardDescription className="text-base mt-2">
-            has invited you to connect on FaceCallAI
+            {invite.kind === "ghost"
+              ? "has sent you a GhostLink 👻"
+              : "has invited you to connect on FaceCallAI"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6 pt-6">
           <div className="text-center text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg border border-border/50">
-            Accepting will add them to your connections and allow messaging.
+            {invite.kind === "ghost" ? (
+              <>
+                This opens a single chat that deletes itself
+                {typeof invite.chatLifetimeMs === "number"
+                  ? ` after ${Math.round(invite.chatLifetimeMs / 60000)} minute${
+                      Math.round(invite.chatLifetimeMs / 60000) === 1 ? "" : "s"
+                    }`
+                  : ""}
+                , messages and files included. You will not be added to each other's connections,
+                and the link stops working once you open it.
+              </>
+            ) : (
+              "Accepting will add them to your connections and allow messaging."
+            )}
           </div>
           <Button
             size="lg"

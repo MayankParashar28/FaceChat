@@ -27,7 +27,6 @@ const KEYWORDS: Record<string, EffectType> = {
   flame: "fire",
   lit: "fire",
   ice: "ice",
-  try: "ice",
   cold: "ice",
   freeze: "ice",
   chill: "ice",

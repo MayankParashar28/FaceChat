@@ -59,16 +59,16 @@ export default function Landing() {
     },
     {
       icon: Shield,
-      title: "Facial Recognition",
+      title: "Mutual Connections",
       description:
-        "Secure authentication and attendance tracking using advanced facial recognition technology.",
+        "Messaging and calls open up only once two people have found each other, so nobody can reach you uninvited.",
       color: "from-blue-500 to-cyan-500",
     },
     {
       icon: Users,
-      title: "Smart Collaboration",
+      title: "Group Calls",
       description:
-        "Seamless video calls with up to 6 participants, screen sharing, and intelligent backgrounds.",
+        "Video calls for a small group, with screen sharing, in-call chat and live reactions.",
       color: "from-emerald-500 to-teal-500",
     },
     {
@@ -80,16 +80,16 @@ export default function Landing() {
     },
     {
       icon: Zap,
-      title: "Instant Filters",
+      title: "Live Captions",
       description:
-        "Apply AI-powered filters and background blur in real-time for professional appearance.",
+        "Switch on captions and what is said is transcribed and shown to the room as it happens.",
       color: "from-yellow-500 to-amber-500",
     },
     {
       icon: Video,
-      title: "HD Quality",
+      title: "Your Devices, Your Quality",
       description:
-        "Crystal-clear video and audio with adaptive quality for smooth calling experience.",
+        "Pick the camera, microphone and speaker you want, at the video quality you choose.",
       color: "from-pink-500 to-rose-500",
     },
   ];
@@ -119,7 +119,7 @@ export default function Landing() {
       <motion.nav
         initial={{ y: -100 }}
         animate={{ y: 0 }}
-        className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/60 border-b border-white/10"
+        className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/60 border-b border-border"
       >
         <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 md:h-20 flex items-center justify-between">
           <motion.div className="flex items-center gap-2 md:gap-3" whileHover={{ scale: 1.05 }}>
@@ -205,8 +205,8 @@ export default function Landing() {
               <p className="text-lg md:text-xl text-muted-foreground mb-8 md:mb-10 leading-relaxed max-w-lg lg:max-w-none">
                 Experience the future of video communication with intelligent features like{" "}
                 <span className="text-foreground font-medium">emotion detection</span>,{" "}
-                <span className="text-foreground font-medium">facial recognition</span>, and{" "}
-                <span className="text-foreground font-medium">smart attendance</span>.
+                <span className="text-foreground font-medium">live captions</span>, and{" "}
+                <span className="text-foreground font-medium">post-call analytics</span>.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-4 mb-10 md:mb-12">
@@ -229,29 +229,6 @@ export default function Landing() {
                     <ArrowRight className="w-5 h-5" />
                   </Button>
                 </Link>
-              </div>
-
-              {/* Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-6 md:gap-8 pt-8 border-t border-white/10">
-                {[
-                  { value: "50K+", label: "Active Users" },
-                  { value: "1M+", label: "Meetings" },
-                  { value: "99.9%", label: "Uptime" },
-                ].map((stat, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5 + i * 0.1 }}
-                  >
-                    <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-violet-500 bg-clip-text text-transparent">
-                      {stat.value}
-                    </div>
-                    <div className="text-xs md:text-sm text-muted-foreground mt-1">
-                      {stat.label}
-                    </div>
-                  </motion.div>
-                ))}
               </div>
             </motion.div>
 
@@ -372,7 +349,7 @@ export default function Landing() {
           >
             <h2 className="text-3xl md:text-4xl font-bold mb-3 md:mb-4">Perfect For Every Team</h2>
             <p className="text-base md:text-lg text-muted-foreground">
-              Trusted by professionals across industries
+              Built for the kinds of calls where attention matters
             </p>
           </motion.div>
 
@@ -387,7 +364,7 @@ export default function Landing() {
                 whileHover={{ y: -10, scale: 1.05 }}
                 className="relative group"
               >
-                <div className="p-6 rounded-2xl bg-gradient-to-br from-card to-card/50 backdrop-blur-sm border border-white/10 text-center">
+                <div className="p-6 rounded-2xl bg-gradient-to-br from-card to-card/50 backdrop-blur-sm border border-border text-center">
                   <motion.div
                     className="w-14 h-14 md:w-16 md:h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-primary to-violet-500 flex items-center justify-center shadow-lg"
                     whileHover={{ rotate: 360 }}
@@ -438,7 +415,7 @@ export default function Landing() {
                 <div
                   className={`absolute -inset-1 bg-gradient-to-r ${feature.color} opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 rounded-2xl`}
                 />
-                <div className="relative p-6 md:p-8 rounded-2xl bg-card/80 backdrop-blur-sm border border-white/10 h-full hover:border-white/20 transition-colors">
+                <div className="relative p-6 md:p-8 rounded-2xl bg-card/80 backdrop-blur-sm border border-border h-full hover:border-primary/40 transition-colors">
                   <motion.div
                     className={`w-14 h-14 md:w-16 md:h-16 rounded-xl bg-gradient-to-r ${feature.color} flex items-center justify-center mb-4 md:mb-6 shadow-lg`}
                     whileHover={{ rotate: 360 }}
@@ -479,7 +456,7 @@ export default function Landing() {
               {
                 step: "01",
                 title: "Sign Up",
-                desc: "Create your account with email or facial recognition",
+                desc: "Create your account with your email address",
                 icon: Lock,
               },
               {
@@ -552,7 +529,7 @@ export default function Landing() {
               </span>
             </h2>
             <p className="text-lg text-muted-foreground mb-8 max-w-xl mx-auto">
-              Join thousands using AI to make video calls smarter and more productive.
+              Create an account and start a call in under a minute.
             </p>
             <Link href="/login">
               <Button size="lg" className="px-8 h-14 text-lg gap-3 shadow-2xl shadow-primary/30">
@@ -565,39 +542,13 @@ export default function Landing() {
       </section>
 
       {/* Footer */}
-      <footer className="py-8 px-6 border-t border-white/10 relative z-10">
+      <footer className="py-8 px-6 border-t border-border relative z-10">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <LogoMark className="h-6 w-6" />
             <span className="font-bold">AI Meet</span>
           </div>
-          <div className="flex items-center gap-6">
-            <a
-              href="#"
-              className="text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              Privacy
-            </a>
-            <a
-              href="#"
-              className="text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              Terms
-            </a>
-            <a
-              href="#"
-              className="text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              Twitter
-            </a>
-            <a
-              href="#"
-              className="text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              GitHub
-            </a>
-          </div>
-          <p className="text-xs text-muted-foreground select-none">© 2025 AI Meet</p>
+          <p className="text-xs text-muted-foreground select-none">© 2026 AI Meet</p>
         </div>
       </footer>
     </div>

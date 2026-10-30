@@ -85,7 +85,12 @@ export async function verifyFirebaseToken(idToken: string) {
       emailVerified: decodedToken.email_verified,
     };
   } catch (error) {
-    logger.error("Firebase token verification failed:", error);
+    // A credential that does not verify is not a server error. This logged the
+    // whole FirebaseAuthError with its stack at ERROR level, so every rejected
+    // token — now including every probe at the door — produced ~20 lines of
+    // log. Keep the reason, drop the stack.
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn(`Firebase token verification failed: ${reason}`);
     throw new Error("Invalid Firebase token");
   }
 }

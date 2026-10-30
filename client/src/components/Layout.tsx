@@ -115,7 +115,7 @@ export default function Layout({ children }: LayoutProps) {
             <div className="mt-auto pt-6 border-t border-border group-data-[collapsible=icon]:hidden">
               <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 border border-border hover:bg-accent transition-colors cursor-pointer group">
                 <Avatar className="h-9 w-9 md:h-10 md:w-10 border-2 border-primary/20 group-hover:border-primary/50 transition-colors">
-                  <AvatarImage src={getAvatarUrl(user?.photoURL, user?.uid, user?.email)} />
+                  <AvatarImage src={getAvatarUrl(user?.photoURL, user?.uid)} />
                   <AvatarFallback>{getInitials(user?.displayName, user?.email)}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">

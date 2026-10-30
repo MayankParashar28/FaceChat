@@ -11,8 +11,7 @@ const __dirname = dirname(__filename);
 export { log, serveStatic } from "./static";
 
 export async function setupVite(app: Express, server: Server) {
-  const { createServer: createViteServer, createLogger } = await import("vite");
-  const viteLogger = createLogger();
+  const { createServer: createViteServer } = await import("vite");
 
   const serverOptions = {
     middlewareMode: true,
@@ -28,17 +27,18 @@ export async function setupVite(app: Express, server: Server) {
     console.error("Failed to load viteConfig:", error);
     throw error;
   }
+  // Vite's own logger, deliberately. The scaffold this started from wrapped it
+  // with a logger whose `error` called process.exit(1), which meant any message
+  // Vite logged at error level killed the whole process — and a JSX typo in a
+  // client file is logged at error level. One bad keystroke took down the API,
+  // socket.io and the cron jobs with it, and left the browser unable to connect
+  // until someone restarted by hand.
+  //
+  // A compile error belongs to one module, not to the server. Logged and left
+  // alone, Vite serves its own error overlay and recovers on the next save.
   const vite = await createViteServer({
     ...viteConfig,
-
     configFile: false,
-    customLogger: {
-      ...viteLogger,
-      error: (msg, options) => {
-        viteLogger.error(msg, options);
-        process.exit(1);
-      },
-    },
     server: serverOptions,
     appType: "custom",
   });

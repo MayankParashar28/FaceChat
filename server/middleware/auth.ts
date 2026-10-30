@@ -1,8 +1,9 @@
 import { logger } from "../utils/logger";
 import type { Request, Response, NextFunction } from "express";
-import mongoose from "mongoose";
 import { verifyFirebaseToken } from "../firebase/admin";
 import { mongoService } from "../services/mongodb";
+import { RevokedSession } from "../models";
+import { looksLikeSessionToken, verifySessionToken } from "../services/sessionToken";
 
 // Extend Express Request to include user info
 declare global {
@@ -41,32 +42,46 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       return res.status(401).json({ error: "Authentication required" });
     }
 
-    let uid = token;
+    let uid: string;
     let email: string | null = null;
     let name: string | null = null;
     let emailVerified = true;
     let dbUser: any = null;
 
-    // 1. An existing account, looked up by the identifier the client holds.
-    //    Email/password signups get a generated `user_<ts>_<rand>` firebaseUid
-    //    (see routes/auth.ts), so they resolve here; the id forms cover clients
-    //    that kept a MongoDB id instead.
-    try {
-      dbUser = await mongoService.getUserByFirebaseUid(token);
-      if (!dbUser && mongoose.Types.ObjectId.isValid(token)) {
-        dbUser = await mongoService.getUserById(token);
+    // 1. A session token this server issued at login (email/password accounts).
+    //
+    //    What stood here was a lookup of the token *as an identifier*:
+    //    getUserByFirebaseUid(token), then a MongoDB id, then `user_<id>`. So
+    //    holding someone's id was the same as holding their password — and ids
+    //    are handed out routinely in conversation participants, search results
+    //    and message payloads. Any signed-in person could act as anyone whose
+    //    id they had seen.
+    if (looksLikeSessionToken(token)) {
+      const claims = await verifySessionToken(token);
+      if (!claims) {
+        logger.warn("Rejected an invalid or expired session token");
+        return res.status(401).json({ error: "Invalid or expired credentials" });
       }
-      if (!dbUser && token.startsWith("user_")) {
-        const candidate = token.slice("user_".length);
-        if (mongoose.Types.ObjectId.isValid(candidate)) {
-          dbUser = await mongoService.getUserById(candidate);
-        }
-      }
-    } catch (err) {
-      logger.error("Error looking up user during authentication:", err);
-    }
 
-    if (dbUser) {
+      dbUser = await mongoService.getUserById(claims.sub);
+      if (!dbUser) {
+        // Signed correctly, but the account is gone.
+        return res.status(401).json({ error: "Invalid or expired credentials" });
+      }
+
+      // Signed out everywhere: the account's version has moved on, so every
+      // token minted under the old one is dead. No per-token bookkeeping.
+      if ((dbUser.tokenVersion ?? 0) !== claims.ver) {
+        logger.warn("Rejected a session token from a revoked generation");
+        return res.status(401).json({ error: "Invalid or expired credentials" });
+      }
+
+      // Signed out individually: this one token was named and refused.
+      if (claims.jti && (await RevokedSession.exists({ jti: claims.jti }))) {
+        logger.warn("Rejected a signed-out session token");
+        return res.status(401).json({ error: "Invalid or expired credentials" });
+      }
+
       uid = dbUser.firebaseUid || dbUser._id.toString();
       email = dbUser.email;
       name = dbUser.name;

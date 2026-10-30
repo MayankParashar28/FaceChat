@@ -29,15 +29,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/lib/auth";
-import { auth } from "@/lib/firebase";
 import { getInitials } from "@/lib/utils";
-import { getAuthToken } from "@/lib/queryClient";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSettings } from "@/lib/settings";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SmartPulse } from "@/components/SmartPulse";
 import { useAudioAnalysis } from "@/hooks/useAudioAnalysis";
+import { getAuthToken } from "@/lib/queryClient";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useFaceExpression } from "@/hooks/useFaceExpression";
 import { VoiceEffectsOverlay } from "@/components/VoiceEffectsOverlay";
@@ -266,7 +265,7 @@ const RemoteParticipantVideo = memo(
             <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-card via-card to-muted">
               <Avatar className="h-[38%] w-auto aspect-square max-h-24 min-h-10 ring-4 ring-background shadow-lg">
                 <AvatarImage src={participant.avatar} />
-                <AvatarFallback className="bg-primary text-white text-2xl">
+                <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
                   {getInitials(participant.name)}
                 </AvatarFallback>
               </Avatar>
@@ -348,7 +347,9 @@ export default function VideoCall() {
   });
   const roomId = params?.roomId || "";
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [meetingId] = useState<string | null>(null);
+  // The meeting the server keeps for this room, so hanging up can open its
+  // summary. The server sends it on join and again when the call activates.
+  const [meetingId, setMeetingId] = useState<string | null>(null);
 
   // Outgoing-call context (set by Chats when starting a call): show a
   // "Ringing…" state until the other side answers or declines.
@@ -356,32 +357,53 @@ export default function VideoCall() {
     typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const isOutgoing = callQuery?.get("outgoing") === "1";
   const outgoingName = callQuery?.get("name") || "";
+  // People the dashboard asked us to ring once we are in the room. Ids are
+  // whatever that page had to hand; the server resolves either form.
+  const inviteeIds = (callQuery?.get("invite") || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
   const [isRinging, setIsRinging] = useState(isOutgoing);
 
-  // Fetch initial chat history for the room via HTTP
+  // Fetch initial chat history for the room via HTTP. The server only hands
+  // this to someone who was in the meeting, so it goes out signed in.
   useEffect(() => {
     if (!roomId) return;
-    fetch(`/api/meetings/room/${encodeURIComponent(roomId)}/messages`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          const formatted: ChatMessage[] = data.map((m: any) => ({
-            id: m._id ? m._id.toString() : Date.now().toString(),
-            socketId: "",
-            userId: m.senderId?.firebaseUid || m.senderId?._id?.toString() || "",
-            sender: m.senderId?.name || "Participant",
-            avatar: m.senderId?.avatar,
-            message: m.content,
-            time: m.timestamp
-              ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-              : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            isLocal:
-              m.senderId?.firebaseUid === user?.uid || m.senderId?._id === (user as any)?._id,
-          }));
-          setChatMessages(formatted);
-        }
+    let cancelled = false;
+    (async () => {
+      const token = await getAuthToken();
+      if (cancelled || !token) return;
+      await fetch(`/api/meetings/room/${encodeURIComponent(roomId)}/messages`, {
+        headers: { Authorization: `Bearer ${token}` },
       })
-      .catch((err) => console.error("Error fetching room chat history:", err));
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          if (cancelled) return;
+          if (Array.isArray(data) && data.length > 0) {
+            const formatted: ChatMessage[] = data.map((m: any) => ({
+              id: m._id ? m._id.toString() : Date.now().toString(),
+              socketId: "",
+              userId: m.senderId?.firebaseUid || m.senderId?._id?.toString() || "",
+              sender: m.senderId?.name || "Participant",
+              avatar: m.senderId?.avatar,
+              message: m.content,
+              time: m.timestamp
+                ? new Date(m.timestamp).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              isLocal:
+                m.senderId?.firebaseUid === user?.uid || m.senderId?._id === (user as any)?._id,
+            }));
+            setChatMessages(formatted);
+          }
+        })
+        .catch((err) => console.error("Error fetching room chat history:", err));
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [roomId, user]);
 
   // UI State
@@ -394,15 +416,13 @@ export default function VideoCall() {
   const [copied, setCopied] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  const [, setIsRecording] = useState(false);
-  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [showCaptions, setShowCaptions] = useState(false);
   const [showReactionsMenu, setShowReactionsMenu] = useState(false);
 
   const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number }[]>([]);
 
   // Captions State
-  const { transcript, startRecognition } = useSpeechRecognition();
+  const { transcript, startRecognition, stopRecognition } = useSpeechRecognition();
   const [captions, setCaptions] = useState<{
     userId: string;
     userName?: string;
@@ -422,10 +442,7 @@ export default function VideoCall() {
     };
   }, [isSidebarOpen]);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRecorderRef = useRef<MediaRecorder | null>(null); // Dedicated recorder for captions
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -437,6 +454,10 @@ export default function VideoCall() {
   // real frames from the displayed video element.
   const { expression, confidence, status: emotionStatus } = useFaceExpression(localVideoRef);
   const { videoDevices, audioInputDevices, audioOutputDevices } = useMediaDevices();
+  // Only Chromium lets a page choose which speaker a media element plays
+  // through. Elsewhere the picker would save a choice nothing could act on.
+  const canChooseSpeaker =
+    typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // Below md the toolbar keeps only the primary controls; the rest move into an
   // overflow menu. Rendered rather than CSS-hidden so crossing the breakpoint
@@ -448,6 +469,13 @@ export default function VideoCall() {
     timestamp: 0,
   });
   const callStartTimeRef = useRef<number | null>(null);
+  const invitesSentRef = useRef(false);
+  // Read by the media setup when it re-acquires the camera or microphone, so a
+  // device or quality change keeps whatever the mute buttons currently say.
+  const isMicOnRef = useRef(isMicOn);
+  const isVideoOnRef = useRef(isVideoOn);
+  isMicOnRef.current = isMicOn;
+  isVideoOnRef.current = isVideoOn;
   const screenStreamRef = useRef<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   // The video track peers are actually receiving: the camera normally, the
@@ -524,10 +552,20 @@ export default function VideoCall() {
   // Debug Face Detection - Removed
   // useEffect(() => { ... }, []);
 
-  // --- Start Local Speech Recognition for Effects ---
+  // --- Local Speech Recognition, for the keyword effects ---
+  //
+  // This listens to the microphone, so it follows the mute button: it used to
+  // start on mount and keep listening while muted, and never stopped when the
+  // call screen closed. Both calls are no-ops when recognition is already in
+  // that state, so this effect can re-run freely.
   useEffect(() => {
-    startRecognition();
-  }, [startRecognition]);
+    if (isMicOn) startRecognition();
+    else stopRecognition();
+  }, [isMicOn, startRecognition, stopRecognition]);
+
+  const stopRecognitionRef = useRef(stopRecognition);
+  stopRecognitionRef.current = stopRecognition;
+  useEffect(() => () => stopRecognitionRef.current(), []);
 
   // --- Live Captions Logic (Server-Side Streaming) ---
   //
@@ -641,17 +679,46 @@ export default function VideoCall() {
       if (!user?.uid || !roomId) return;
 
       try {
-        let token = await auth.currentUser?.getIdToken();
-        if (!token) {
-          token = user.uid;
+        // getAuthToken handles both session kinds. This used to fall back to
+        // user.uid, which the server accepted as a credential.
+        const token = await getAuthToken();
+        if (token) {
+          newSocket.emit("user:online", { firebaseToken: token });
         }
-        newSocket.emit("user:online", { firebaseToken: token });
       } catch (e) {
         console.error("Error getting token:", e);
       }
 
       console.log("Emitting call:join for room:", roomId, "userId:", user.uid);
       newSocket.emit("call:join", { roomId, userId: user.uid });
+
+      // Ring anyone this call was started to reach. Only on the first connect:
+      // a reconnect should not make their phone ring again.
+      if (!invitesSentRef.current && inviteeIds.length) {
+        invitesSentRef.current = true;
+        inviteeIds.forEach((inviteeId) => {
+          newSocket.emit(
+            "call:invite",
+            {
+              toUserId: inviteeId,
+              fromUserId: user.uid,
+              fromName: user.displayName || user.username,
+              fromAvatar: user.photoURL,
+              roomId,
+              callType: "video",
+            },
+            (result?: { ok: boolean; message?: string }) => {
+              if (result && result.ok === false) {
+                toast({
+                  variant: "destructive",
+                  title: "Could not invite",
+                  description: result.message || "That person could not be invited.",
+                });
+              }
+            }
+          );
+        });
+      }
     };
 
     newSocket.on("connect", handleConnect);
@@ -686,8 +753,18 @@ export default function VideoCall() {
     // B: Existing participants (We join)
     newSocket.on(
       "call:existing-users",
-      ({ participants: existingUsers, startTime }: { participants: any[]; startTime?: string }) => {
+      ({
+        participants: existingUsers,
+        startTime,
+        meetingId: roomMeetingId,
+      }: {
+        participants: any[];
+        startTime?: string;
+        meetingId?: string | null;
+      }) => {
         console.log("Existing users received:", existingUsers.length);
+
+        if (roomMeetingId) setMeetingId(roomMeetingId);
 
         if (startTime) {
           console.log("Syncing timer with server time:", startTime);
@@ -719,11 +796,15 @@ export default function VideoCall() {
     });
 
     // D: Meeting Activated
-    newSocket.on("call:meeting-active", ({ startTime }: { startTime: string }) => {
-      console.log("Meeting Activated! Syncing timer:", startTime);
-      callStartTimeRef.current = new Date(startTime).getTime();
-      setCallDuration(0);
-    });
+    newSocket.on(
+      "call:meeting-active",
+      ({ startTime, meetingId: roomMeetingId }: { startTime: string; meetingId?: string }) => {
+        console.log("Meeting Activated! Syncing timer:", startTime);
+        if (roomMeetingId) setMeetingId(roomMeetingId);
+        callStartTimeRef.current = new Date(startTime).getTime();
+        setCallDuration(0);
+      }
+    );
 
     // E: Signaling
     newSocket.on("call:signal", ({ signal, senderId }) => {
@@ -894,9 +975,14 @@ export default function VideoCall() {
           },
         });
 
-        // Apply initial settings
-        stream.getAudioTracks().forEach((t) => (t.enabled = settings.autoJoinAudio));
-        stream.getVideoTracks().forEach((t) => (t.enabled = settings.autoJoinVideo));
+        // Keep the mute state the call is actually in. This effect also runs
+        // when the camera, microphone or quality changes mid-call, and it used
+        // to reset both tracks to the auto-join defaults — switching camera
+        // while muted unmuted you without saying so.
+        const micOn = isMicOnRef.current;
+        const videoOn = isVideoOnRef.current;
+        stream.getAudioTracks().forEach((t) => (t.enabled = micOn));
+        stream.getVideoTracks().forEach((t) => (t.enabled = videoOn));
 
         setLocalStream(stream);
         if (localVideoRef.current) {
@@ -912,8 +998,8 @@ export default function VideoCall() {
             name: user?.displayName || "You",
             avatar: user?.photoURL || "",
             isLocal: true,
-            isVideoOn: settings.autoJoinVideo,
-            isAudioOn: settings.autoJoinAudio,
+            isVideoOn: videoOn,
+            isAudioOn: micOn,
             stream: stream,
           });
           return newMap;
@@ -931,8 +1017,11 @@ export default function VideoCall() {
     initMedia();
 
     return () => {
-      // Cleanup local stream on unmount
-      localStream?.getTracks().forEach((track) => track.stop());
+      // Stop the stream this effect is replacing, or the one in use when the
+      // call screen closes. Reading the state here caught whatever `localStream`
+      // held when the effect ran — null on the first pass — so switching camera
+      // mid-call left the old one running, light and all.
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, [
     settings.videoQuality,
@@ -1151,26 +1240,14 @@ export default function VideoCall() {
     }
   };
 
-  const endCall = async () => {
-    try {
-      if (meetingId) {
-        const token = await getAuthToken();
-        if (token) {
-          await fetch(`/api/meetings/${meetingId}/status`, {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ status: "ended" }),
-          });
-        }
-        setLocation(`/summary/${meetingId}`);
-      } else {
-        setLocation("/dashboard");
-      }
-    } catch (error) {
-      console.error("Error ending call:", error);
+  const endCall = () => {
+    // The server ends the meeting itself once the last person leaves, and works
+    // out the duration from its own clock — this side only decides where to go
+    // next. A call that never started (nobody else joined) has nothing to show,
+    // so it goes back to the dashboard instead of an empty summary.
+    if (meetingId && callStartTimeRef.current) {
+      setLocation(`/summary/${meetingId}`);
+    } else {
       setLocation("/dashboard");
     }
   };
@@ -1200,85 +1277,6 @@ export default function VideoCall() {
     setMessage("");
   };
 
-  // Unwired feature (no UI control yet); kept for future use.
-  const _startRecording = async () => {
-    try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: "screen" } as any,
-        audio: true,
-      });
-
-      // Combine screen audio with local microphone audio
-      const audioContext = new AudioContext();
-      const destination = audioContext.createMediaStreamDestination();
-
-      // Add screen audio
-      screenStream.getAudioTracks().forEach((track) => {
-        const source = audioContext.createMediaStreamSource(new MediaStream([track]));
-        source.connect(destination);
-      });
-
-      // Add local microphone audio if available
-      if (localStream && localStream.getAudioTracks().length > 0) {
-        localStream.getAudioTracks().forEach((track) => {
-          const source = audioContext.createMediaStreamSource(new MediaStream([track]));
-          source.connect(destination);
-        });
-      }
-
-      // Create a new stream with screen video and combined audio
-      const combinedStream = new MediaStream([
-        ...screenStream.getVideoTracks(),
-        ...destination.stream.getAudioTracks(),
-      ]);
-
-      const recorder = new MediaRecorder(combinedStream);
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          recordedChunksRef.current.push(e.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `recording - ${new Date().toISOString()}.webm`;
-        a.click();
-        URL.revokeObjectURL(url);
-        recordedChunksRef.current = [];
-        setIsRecording(false);
-        combinedStream.getTracks().forEach((t) => t.stop()); // Stop all tracks from the combined stream
-        screenStream.getTracks().forEach((t) => t.stop()); // Ensure original screen stream tracks are stopped
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-
-      // Handle user stopping share via browser UI
-      screenStream.getVideoTracks()[0].onended = () => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-          mediaRecorderRef.current.stop();
-        }
-      };
-    } catch (err) {
-      console.error("Recording failed", err);
-      toast({
-        title: "Recording Error",
-        description: "Failed to start recording. Make sure you grant screen and audio permissions.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const _stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
   const sendReaction = (emoji: string) => {
     setShowReactionsMenu(false);
     socket?.emit("call:reaction", { roomId, emoji });
@@ -1290,24 +1288,19 @@ export default function VideoCall() {
     }, 2000);
   };
 
-  const _toggleMusic = () => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio(
-        "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3"
-      );
-      audioRef.current.loop = true;
-      audioRef.current.volume = 0.2; // Low volume background
-    }
+  // Route call audio to the speaker the user picked. The setting was saved and
+  // never applied before, so choosing a speaker changed nothing.
+  useEffect(() => {
+    const deviceId = settings.audioOutputDeviceId;
+    if (!deviceId || !canChooseSpeaker) return;
+    document.querySelectorAll("video, audio").forEach((element) => {
+      const media = element as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
+      media.setSinkId?.(deviceId).catch((error) => {
+        console.warn("Could not switch speaker", error);
+      });
+    });
+  }, [settings.audioOutputDeviceId, canChooseSpeaker, participants]);
 
-    if (isMusicPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play().catch((e) => console.error("Audio play failed", e));
-    }
-    setIsMusicPlaying(!isMusicPlaying);
-  };
-
-  // --- Timer ---
   // --- Timer ---
   useEffect(() => {
     const i = setInterval(() => {
@@ -2012,7 +2005,7 @@ export default function VideoCall() {
                 <SelectTrigger className="w-full bg-muted border-border text-foreground">
                   <SelectValue placeholder="Select Camera" />
                 </SelectTrigger>
-                <SelectContent className="bg-zinc-900 border-border text-foreground">
+                <SelectContent className="bg-popover border-border text-popover-foreground">
                   {videoDevices.map((device) => (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
                       {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
@@ -2032,7 +2025,7 @@ export default function VideoCall() {
                 <SelectTrigger className="w-full bg-muted border-border text-foreground">
                   <SelectValue placeholder="Select Microphone" />
                 </SelectTrigger>
-                <SelectContent className="bg-zinc-900 border-border text-foreground">
+                <SelectContent className="bg-popover border-border text-popover-foreground">
                   {audioInputDevices.map((device) => (
                     <SelectItem key={device.deviceId} value={device.deviceId}>
                       {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
@@ -2043,7 +2036,7 @@ export default function VideoCall() {
             </div>
 
             {/* Output Selection (Chrome only usually) */}
-            {audioOutputDevices.length > 0 && (
+            {canChooseSpeaker && audioOutputDevices.length > 0 && (
               <div className="space-y-2">
                 <Label>Speaker</Label>
                 <Select
@@ -2053,7 +2046,7 @@ export default function VideoCall() {
                   <SelectTrigger className="w-full bg-muted border-border text-foreground">
                     <SelectValue placeholder="Select Speaker" />
                   </SelectTrigger>
-                  <SelectContent className="bg-zinc-900 border-border text-foreground">
+                  <SelectContent className="bg-popover border-border text-popover-foreground">
                     {audioOutputDevices.map((device) => (
                       <SelectItem key={device.deviceId} value={device.deviceId}>
                         {device.label || `Speaker ${device.deviceId.slice(0, 5)}...`}
