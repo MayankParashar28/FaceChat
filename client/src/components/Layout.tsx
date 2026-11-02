@@ -58,7 +58,14 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <SidebarProvider defaultOpen={false}>
       <IncomingCallManager />
-      <div className="flex h-screen w-full bg-background/80 backdrop-blur-3xl overflow-hidden">
+      {/* `h-dvh`, not `h-screen`. `100vh` on a phone is the *large* viewport —
+          the height the page would have if the browser's address bar were
+          hidden — so the shell was taller than what you can actually see, and
+          the document scrolled by exactly that difference. That is the whole
+          page moving under you, on every page here, and on a chat screen it
+          reads as the chat refusing to stay put. `100dvh` is the viewport as
+          it is right now, so there is nothing left over to scroll. */}
+      <div className="flex h-dvh w-full overflow-hidden bg-background/80 backdrop-blur-3xl">
         {/* Background Gradients */}
         <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/5 blur-[100px] animate-pulse-glow" />
@@ -150,7 +157,7 @@ export default function Layout({ children }: LayoutProps) {
             <ThemeToggle />
           </header>
 
-          <main className="flex-1 overflow-y-auto px-4 py-6 md:p-6 scrollbar-hide w-full">
+          <main className="w-full flex-1 overflow-y-auto overscroll-contain px-4 py-6 scrollbar-hide md:p-6">
             {children}
           </main>
         </div>

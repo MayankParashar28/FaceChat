@@ -2464,7 +2464,13 @@ export default function Chats() {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-8rem)] w-full overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+    // `h-full`, not a height worked out from the viewport. This sits inside a
+    // `main` that is already exactly as tall as the space left over, so
+    // `100dvh` minus a guess at the chrome was a second, independent answer to
+    // the same question — right only while that guess stayed right. Filling the
+    // parent keeps one source of truth, and the message list below is then the
+    // only thing with anything to scroll.
+    <div className="flex h-full w-full overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className="flex-1 flex overflow-hidden">
         {/* Chat List */}
         <div

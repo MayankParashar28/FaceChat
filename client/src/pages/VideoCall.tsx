@@ -1353,7 +1353,7 @@ export default function VideoCall() {
   };
 
   return (
-    <div className="h-screen w-full bg-gradient-to-b from-muted/40 via-background to-muted/60 overflow-hidden relative font-sans">
+    <div className="relative h-dvh w-full overflow-hidden bg-gradient-to-b from-muted/40 via-background to-muted/60 font-sans">
       {/* Outgoing call: waiting for the other side to pick up */}
       {isRinging && (
         <div className="absolute top-20 left-1/2 z-50 -translate-x-1/2">
