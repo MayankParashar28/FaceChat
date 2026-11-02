@@ -121,6 +121,18 @@ const IMAGE_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
 const FILE_ACCEPT = "application/pdf,text/plain,text/csv,application/zip,.doc,.docx,.xls,.xlsx";
 
 /**
+ * Whether the list and a conversation fit side by side.
+ *
+ * Tailwind's `md`, which is the breakpoint the two panes are laid out on: at
+ * and above it both are on screen at once, below it they take turns. Read at
+ * the moment it is needed rather than held in state, since the one decision
+ * that asks — whether to open a conversation nobody picked — happens once, on
+ * arrival.
+ */
+const hasRoomForBoth = () =>
+  typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches;
+
+/**
  * The one line a reply shows of what it answers.
  *
  * Raw rather than a ready-made sentence: `describeMessage` turns it into one,
@@ -1220,20 +1232,62 @@ export default function Chats() {
     }
   };
 
-  // Restore or auto-select valid conversation on initial conversations load
+  /**
+   * Closing the open conversation — the other half of `handleSelectChat`.
+   *
+   * It has to undo all three places a selection is remembered, not just the
+   * state. Clearing the state alone left `?id=` in the address bar and the id
+   * in localStorage, and the restore effect below reads both: it saw no
+   * selection, found the id still written down, and reopened the very
+   * conversation that had just been closed. On a phone, where the list and the
+   * conversation share the screen, that made the back button do nothing at
+   * all — the only way back to the list was gone.
+   */
+  const clearSelectedChat = () => {
+    selectedChatRef.current = null;
+    setSelectedChat(null);
+
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("facechat_selected_chat");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("id");
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  /**
+   * What to have open when the conversations first arrive.
+   *
+   * Three different things used to count as "where you were", and on a phone
+   * only one of them should: a conversation named in the address bar is a link
+   * somebody followed and it opens, while the id left in localStorage and the
+   * fall back to the newest conversation are conveniences for the desktop
+   * layout, where the list never leaves the screen. Applying them on a phone
+   * opened a conversation nobody asked for and hid the list behind it — so
+   * arriving at Chats meant arriving inside a chat, with no sign of anyone else
+   * to message.
+   */
   useEffect(() => {
-    if (conversations.length > 0 && !selectedChat) {
-      const savedId =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("id") ||
-            localStorage.getItem("facechat_selected_chat")
-          : null;
-      const validSaved = conversations.find((c) => c.id === savedId);
-      if (validSaved) {
-        handleSelectChat(validSaved.id);
-      } else if (conversations[0]?.id) {
-        handleSelectChat(conversations[0].id);
-      }
+    if (conversations.length === 0 || selectedChat) return;
+
+    const linkedId =
+      typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("id") : null;
+    const linked = conversations.find((c) => c.id === linkedId);
+    if (linked) {
+      handleSelectChat(linked.id);
+      return;
+    }
+
+    // Below `md` the list is the whole screen, and it is where Chats opens.
+    if (!hasRoomForBoth()) return;
+
+    const rememberedId =
+      typeof window !== "undefined" ? localStorage.getItem("facechat_selected_chat") : null;
+    const remembered = conversations.find((c) => c.id === rememberedId);
+    if (remembered) {
+      handleSelectChat(remembered.id);
+    } else if (conversations[0]?.id) {
+      handleSelectChat(conversations[0].id);
     }
   }, [conversations, selectedChat]);
 
@@ -2051,10 +2105,7 @@ export default function Chats() {
     // countdown — and then the message saying it vanished — for an empty pane
     // before anybody could read either.
     if (ghostDeadline?.chatId === selectedChat) return;
-    setSelectedChat(null);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("facechat_selected_chat");
-    }
+    clearSelectedChat();
   }, [selectedChat, selectedConversation, isLoadingConversations, ghostDeadline]);
 
   // Clear newConversation once it appears in the conversations list
@@ -2188,7 +2239,7 @@ export default function Chats() {
       if (res.ok) {
         await refetchConversations();
         if (selectedChat === conversationId) {
-          setSelectedChat(null);
+          clearSelectedChat();
         }
         toast({
           title: "Removed",
@@ -2423,7 +2474,7 @@ export default function Chats() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search conversations..."
+                placeholder="Search people or chats..."
                 className="pl-10 bg-muted/40 border-border focus:bg-accent transition-all rounded-full"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -2632,7 +2683,7 @@ export default function Chats() {
               className="mt-4"
               onClick={() => {
                 setVanishedChatId(null);
-                setSelectedChat(null);
+                clearSelectedChat();
               }}
             >
               Back to chats
@@ -2659,18 +2710,22 @@ export default function Chats() {
               </div>
             )}
             {/* Chat Header */}
-            <div className="p-4 border-b border-border bg-muted/40 backdrop-blur-sm flex items-center justify-between z-10 shrink-0">
-              <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/40 p-3 backdrop-blur-sm z-10 md:p-4">
+              {/* `min-w-0` so the name truncates instead of wrapping: without
+                  it a two-word name pushed this header to two lines on a
+                  phone, taking the height off the messages. */}
+              <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="md:hidden -ml-2 hover:bg-accent"
-                  onClick={() => setSelectedChat(null)}
+                  className="md:hidden -ml-1 shrink-0 hover:bg-accent"
+                  onClick={clearSelectedChat}
+                  aria-label="Back to conversations"
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
-                <div className="relative">
-                  <Avatar className="h-10 w-10 border border-border">
+                <div className="relative shrink-0">
+                  <Avatar className="h-9 w-9 border border-border md:h-10 md:w-10">
                     {!selectedConversation.isGroup &&
                       selectedConversation.participants.find((p) => p.firebaseUid !== user?.uid)
                         ?.avatar && (
@@ -2699,9 +2754,11 @@ export default function Chats() {
                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-background rounded-full" />
                   )}
                 </div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="font-semibold">{getConversationName(selectedConversation)}</p>
+                    <p className="truncate font-semibold">
+                      {getConversationName(selectedConversation)}
+                    </p>
                     {isUserOnline(selectedConversation) && (
                       <span className="text-xs text-muted-foreground">•</span>
                     )}
@@ -2721,12 +2778,13 @@ export default function Chats() {
                   ) : null}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-0.5 md:gap-2">
                 <Button
                   variant="ghost"
                   size="icon"
                   className="hover:bg-accent"
                   onClick={() => startCall("audio")}
+                  aria-label="Start an audio call"
                 >
                   <Phone className="h-5 w-5" />
                 </Button>
@@ -2735,12 +2793,18 @@ export default function Chats() {
                   size="icon"
                   className="hover:bg-accent"
                   onClick={() => startCall("video")}
+                  aria-label="Start a video call"
                 >
                   <VideoIcon className="h-5 w-5" />
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="hover:bg-accent">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="hover:bg-accent"
+                      aria-label="Conversation options"
+                    >
                       <MoreVertical className="h-5 w-5" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -2851,7 +2915,7 @@ export default function Chats() {
                     variant="outline"
                     className="mt-2"
                     onClick={() => {
-                      setSelectedChat(null);
+                      clearSelectedChat();
                       queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
                     }}
                   >
@@ -3344,7 +3408,7 @@ export default function Chats() {
                     <div className="relative">
                       <Input
                         ref={composerRef}
-                        placeholder={editingMessage ? "Edit your message..." : "Type a message..."}
+                        placeholder={editingMessage ? "Edit message" : "Message"}
                         value={message}
                         onChange={(e) => handleTyping(e.target.value)}
                         onPaste={handlePaste}
@@ -3356,7 +3420,7 @@ export default function Chats() {
                             cancelCompose();
                           }
                         }}
-                        className="pr-24 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
+                        className="pr-28 bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
                       />
                       <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1">
                         <input
@@ -3404,6 +3468,7 @@ export default function Chats() {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 hover:bg-accent text-muted-foreground hover:text-foreground"
+                              aria-label="Insert an emoji"
                             >
                               <Smile className="h-4 w-4" />
                             </Button>

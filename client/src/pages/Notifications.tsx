@@ -31,6 +31,8 @@ export default function Notifications() {
   const refreshNotifications = useRefreshNotifications();
   const [, setLocation] = useLocation();
   const [pendingDelete, setPendingDelete] = useState<Notification | null>(null);
+  // The notification whose destination is being looked up, if any.
+  const [resolving, setResolving] = useState<string | null>(null);
 
   const { data: notifications = [], isLoading } = useNotifications(!!user);
   const unreadCount = countUnread(notifications);
@@ -38,7 +40,7 @@ export default function Notifications() {
   // A fetch that resolves is not a fetch that succeeded: these all ignored the
   // response, so a 403 or 500 still ran onSuccess and the UI claimed the action
   // had worked until the next refetch put the row back.
-  const notificationRequest = async (path: string, method: "PUT" | "DELETE") => {
+  const notificationRequest = async (path: string, method: "GET" | "PUT" | "DELETE") => {
     const token = await getAuthToken();
     const res = await fetch(`/api/notifications${path}`, {
       method,
@@ -76,19 +78,35 @@ export default function Notifications() {
   });
 
   /**
-   * Both a new match and a missed call are answered in the same place: the
-   * chat list. The notification carries a relatedId — a Connection for a
-   * match, a Meeting for a missed call — but neither maps to a conversation
-   * without an endpoint that does not exist yet, so the list is as specific as
-   * this can honestly be. A "system" notification has nowhere to go at all,
-   * which is why only the other two are given a cursor.
+   * A notification can be followed if it is about something — which is exactly
+   * what `relatedId` records. Where that leads is the server's answer, since
+   * the id names a row in one of three collections and says which in none of
+   * them; asking is also what keeps the lookup scoped to the person asking.
    */
-  const isActionable = (notif: Notification) =>
-    notif.type === "match" || notif.type === "missed_call";
+  const isActionable = (notif: Notification) => !!notif.relatedId;
 
-  const handleAction = (notif: Notification) => {
+  const handleAction = async (notif: Notification) => {
     if (!notif.isRead) markReadMutation.mutate(notif._id);
-    if (isActionable(notif)) setLocation("/chats");
+    if (!isActionable(notif) || resolving) return;
+
+    setResolving(notif._id);
+    try {
+      const { path } = await notificationRequest(`/${notif._id}/target`, "GET");
+      if (path) {
+        setLocation(path);
+      } else {
+        // The chat, call or match this was about is gone. Saying so beats
+        // navigating somewhere plausible and letting them work it out.
+        toast({
+          title: "Nothing left to open",
+          description: "Whatever this was about is no longer there.",
+        });
+      }
+    } catch (error) {
+      showError(error as Error);
+    } finally {
+      setResolving(null);
+    }
   };
 
   const getIcon = (type: string) => {
@@ -165,8 +183,13 @@ export default function Notifications() {
                 {getIcon(notif.type)}
               </div>
 
-              <div
-                className={`flex-1 min-w-0 ${isActionable(notif) ? "cursor-pointer" : ""}`}
+              <button
+                type="button"
+                disabled={!isActionable(notif)}
+                aria-busy={resolving === notif._id}
+                className={`min-w-0 flex-1 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  isActionable(notif) ? "cursor-pointer" : "cursor-default"
+                }`}
                 onClick={() => handleAction(notif)}
               >
                 {/* Wraps rather than squeezing: the timestamp is nowrap, so on a
@@ -186,12 +209,33 @@ export default function Notifications() {
                 >
                   {notif.message}
                 </p>
-              </div>
+                {resolving === notif._id && (
+                  <span className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    Opening…
+                  </span>
+                )}
+              </button>
 
+              {/* An always-present slot, so a row does not change width when it
+                  is read. The dot used to be absolutely positioned in the
+                  corner the delete button occupies — unnoticed only because
+                  that button was invisible until hover. */}
+              <span className="mt-3 flex h-2 w-2 shrink-0 items-center justify-center">
+                {!notif.isRead && (
+                  <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />
+                )}
+              </span>
+
+              {/* Hover governed this alone, so on a touch screen the control
+                  did not exist: there was no way to clear a notification from a
+                  phone. Always there below md, revealed on hover or focus on a
+                  pointer device. */}
               <Button
                 variant="ghost"
                 size="icon"
-                className="opacity-0 group-hover:opacity-100 transition-opacity -mr-2 text-muted-foreground hover:text-destructive"
+                aria-label={`Delete "${notif.title}"`}
+                className="-mr-2 shrink-0 text-muted-foreground transition-opacity hover:text-destructive md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                 onClick={(e) => {
                   e.stopPropagation();
                   setPendingDelete(notif);
@@ -199,10 +243,6 @@ export default function Notifications() {
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
-
-              {!notif.isRead && (
-                <div className="absolute top-4 right-4 h-2 w-2 rounded-full bg-primary" />
-              )}
             </div>
           ))
         )}

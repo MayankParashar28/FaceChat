@@ -121,6 +121,12 @@ export function DeleteAccountDialog({
             <Input
               id="delete-confirm"
               ref={confirmRef}
+              // The label's styled DELETE sits in a span, and the name a
+              // screen reader reads off it came back as "Type to confirm" —
+              // the one word that says what to type, dropped. Spelling the
+              // instruction out here does not depend on how that label is
+              // flattened.
+              aria-label="Type DELETE in capitals to confirm"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               autoComplete="off"
