@@ -17,6 +17,75 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+const isProduction = process.env.NODE_ENV === "production";
+
+/**
+ * Content-Security-Policy, built from the origins this client actually loads.
+ *
+ * Anything listed here should be a host the app really talks to, not a
+ * precaution: every extra source is one more place an injected script would
+ * be allowed to send data. The awkward entries are explained where they sit.
+ */
+const cspDirectives: Record<string, string[]> = {
+  "default-src": ["'self'"],
+  "base-uri": ["'self'"],
+  "object-src": ["'none'"],
+  // The modern spelling of the `X-Frame-Options: DENY` set below. Both go out,
+  // because the older header is still what some scanners look for.
+  "frame-ancestors": ["'none'"],
+  "form-action": ["'self'"],
+  // `wasm-unsafe-eval`, not `unsafe-eval`: face-api.js runs on TensorFlow.js,
+  // which compiles a WebAssembly module when it cannot get a WebGL context.
+  // apis.google.com is pulled in by Firebase's Google sign-in.
+  "script-src": ["'self'", "'wasm-unsafe-eval'", "https://apis.google.com"],
+  // Radix and framer-motion both animate by writing to the `style` attribute,
+  // so inline styles cannot be refused without rewriting the component layer.
+  // Scripts stay locked down, which is the half that carries the risk.
+  "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+  "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+  // blob: is the camera preview and anything drawn to a canvas;
+  // lh3.googleusercontent.com is the avatar Google hands back after sign-in.
+  "img-src": [
+    "'self'",
+    "data:",
+    "blob:",
+    "https://res.cloudinary.com",
+    "https://lh3.googleusercontent.com",
+  ],
+  "media-src": ["'self'", "blob:"],
+  "worker-src": ["'self'", "blob:"],
+  "connect-src": [
+    "'self'",
+    "https://justadudewhohacks.github.io", // face-api.js model weights
+    // The only two Google hosts the built bundle actually names. A wildcard
+    // over *.googleapis.com would also hand an injected script Drive, Gmail
+    // and every other Google API as a place to send what it scrapes.
+    "https://identitytoolkit.googleapis.com", // Firebase Auth
+    "https://securetoken.googleapis.com", // Firebase ID token refresh
+    "https://*.firebaseio.com",
+    "wss://*.firebaseio.com",
+    "https://res.cloudinary.com",
+  ],
+  // Firebase Auth keeps a hidden iframe on its own auth domain, and the
+  // Google sign-in popup runs on accounts.google.com.
+  "frame-src": ["'self'", "https://*.firebaseapp.com", "https://accounts.google.com"],
+};
+
+if (isProduction) {
+  cspDirectives["upgrade-insecure-requests"] = [];
+} else {
+  // Vite's dev server injects its client inline and talks back over a
+  // websocket. Neither of those exists in a built bundle, so the production
+  // policy above stays strict.
+  cspDirectives["script-src"].push("'unsafe-inline'", "'unsafe-eval'");
+  cspDirectives["connect-src"].push("ws:", "http://localhost:*");
+}
+
+const contentSecurityPolicy = Object.entries(cspDirectives)
+  .map(([directive, sources]) => (sources.length ? `${directive} ${sources.join(" ")}` : directive))
+  .join("; ");
+
 // Security headers middleware
 app.use((req, res, next) => {
   // CORS configuration
@@ -37,6 +106,17 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Content-Security-Policy", contentSecurityPolicy);
+
+  // HSTS only on a request that actually arrived encrypted. Render terminates
+  // TLS in front of this process, so `req.secure` is false here and
+  // `x-forwarded-proto` is the only honest signal. Sending it over plain HTTP
+  // means nothing, and sending it from localhost would pin the browser to
+  // HTTPS for every other project ever served from that port.
+  if (isProduction && req.headers["x-forwarded-proto"] === "https") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
 
   // Handle preflight requests
   if (req.method === "OPTIONS") {
